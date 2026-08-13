@@ -11,3 +11,12 @@ jobs:
       # Step 5 - Checkout Source Code
       - name: Checkout code
         uses: actions/checkout@v4
+      # Step 6 - Dependency Installation
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
