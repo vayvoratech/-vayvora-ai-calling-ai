@@ -1,16 +1,13 @@
 name: CI Pipeline
-
 on:
   push:
     branches: [main]
-
   pull_request:
     branches: [main]
-
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Run CI Pipeline
-        run: echo "CI pipeline triggered successfully"
+      # Step 5 - Checkout Source Code
+      - name: Checkout code
+        uses: actions/checkout@v4
