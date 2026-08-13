@@ -33,3 +33,8 @@ jobs:
         run: |
           pip install pytest
           pytest -v
+        # Step 10 - Security & Vulnerability Scan
+      - name: Security Scan
+        run: |
+          pip install pip-audit
+          pip-audit
