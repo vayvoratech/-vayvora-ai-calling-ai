@@ -39,3 +39,7 @@ models/**/runs/
 
 # Local STT audio recordings
 data/stt/*.wav
+.env
+__pycache__/
+venv/
+token.json
