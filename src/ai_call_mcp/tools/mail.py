@@ -1,59 +1,158 @@
+import email
+import imaplib
 import os
 import smtplib
-import imaplib
-import email
 from email.message import EmailMessage
-from fastmcp import FastMCP
 
-def register_mail_tools(mcp: FastMCP):
-    MAIL_HOST = os.getenv("MAIL_HOST", "localhost")
-    MAIL_PORT_SMTP = int(os.getenv("MAIL_PORT_SMTP", "587"))
-    MAIL_PORT_IMAP = int(os.getenv("MAIL_PORT_IMAP", "993"))
-    MAIL_USER = os.getenv("MAIL_USER", "")
-    MAIL_PASS = os.getenv("MAIL_PASS", "")
+from mcp.server.fastmcp import FastMCP
+
+
+def register_mail_tools(mcp: FastMCP) -> None:
+    """Register email tools with the MCP server."""
+
+    smtp_host = os.getenv("MAIL_HOST_SMTP", "localhost")
+    imap_host = os.getenv("MAIL_HOST_IMAP", "localhost")
+
+    smtp_port = int(
+        os.getenv("MAIL_PORT_SMTP", "587")
+    )
+
+    imap_port = int(
+        os.getenv("MAIL_PORT_IMAP", "993")
+    )
+
+    mail_user = os.getenv("MAIL_USER", "")
+    mail_pass = os.getenv("MAIL_PASS", "")
 
     @mcp.tool()
-    async def mail_send(to: str, subject: str, body: str) -> str:
-        """Send an email using standard SMTP natively via Python."""
-        msg = EmailMessage()
-        msg.set_content(body)
-        msg['Subject'] = subject
-        msg['From'] = MAIL_USER
-        msg['To'] = to
+    async def mail_send(
+        to: str,
+        subject: str,
+        body: str,
+    ) -> str:
+        """Send an email using SMTP."""
+
+        if not to.strip():
+            raise ValueError("Recipient email cannot be empty.")
+
+        if not subject.strip():
+            raise ValueError("Email subject cannot be empty.")
+
+        message = EmailMessage()
+        message.set_content(body)
+        message["Subject"] = subject
+        message["From"] = mail_user
+        message["To"] = to
 
         try:
-            # Connect to local/self-hosted SMTP server directly
-            with smtplib.SMTP(MAIL_HOST, MAIL_PORT_SMTP) as server:
+            with smtplib.SMTP(
+                smtp_host,
+                smtp_port,
+                timeout=10,
+            ) as server:
                 server.starttls()
-                server.login(MAIL_USER, MAIL_PASS)
-                server.send_message(msg)
+                server.login(
+                    mail_user,
+                    mail_pass,
+                )
+                server.send_message(message)
+
             return f"Successfully sent email to {to}."
-        except Exception as e:
-            raise RuntimeError(f"Failed to send email: {str(e)}")
+
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to send email: {exc}"
+            ) from exc
 
     @mcp.tool()
-    async def mail_read_recent(limit: int = 5) -> str:
-        """Read recent emails from your self-hosted IMAP inbox natively."""
-        try:
-            mail = imaplib.IMAP4_SSL(MAIL_HOST, MAIL_PORT_IMAP)
-            mail.login(MAIL_USER, MAIL_PASS)
-            mail.select("inbox")
+    async def mail_read_recent(
+        limit: int = 5,
+    ) -> str:
+        """Read recent emails from the IMAP inbox."""
 
-            status, messages = mail.search(None, "ALL")
+        if limit < 1:
+            raise ValueError(
+                "Limit must be at least 1."
+            )
+
+        mail = None
+
+        try:
+            mail = imaplib.IMAP4_SSL(
+                imap_host,
+                imap_port,
+                timeout=10,
+            )
+
+            mail.login(
+                mail_user,
+                mail_pass,
+            )
+
+            status, _ = mail.select("INBOX")
+
+            if status != "OK":
+                return "Unable to open the inbox."
+
+            status, messages = mail.search(
+                None,
+                "ALL",
+            )
+
             if status != "OK":
                 return "No messages found."
 
             mail_ids = messages[0].split()
-            recent_ids = mail_ids[-limit:]
-            
-            output = []
-            for num in recent_ids:
-                status, data = mail.fetch(num, "(RFC822)")
-                if status == "OK":
-                    msg = email.message_from_bytes(data[0][1])
-                    output.append(f"From: {msg['From']} | Subject: {msg['Subject']}")
 
-            mail.logout()
-            return "\n".join(output)
-        except Exception as e:
-            raise RuntimeError(f"Failed to read mail via IMAP: {str(e)}")
+            if not mail_ids:
+                return "No messages found."
+
+            recent_ids = mail_ids[-limit:]
+            output = []
+
+            for message_id in reversed(recent_ids):
+                status, data = mail.fetch(
+                    message_id,
+                    "(RFC822)",
+                )
+
+                if status != "OK":
+                    continue
+
+                raw_message = data[0][1]
+
+                parsed_message = email.message_from_bytes(
+                    raw_message
+                )
+
+                sender = parsed_message.get(
+                    "From",
+                    "Unknown sender",
+                )
+
+                subject = parsed_message.get(
+                    "Subject",
+                    "(No subject)",
+                )
+
+                output.append(
+                    f"From: {sender} | Subject: {subject}"
+                )
+
+            return (
+                "\n".join(output)
+                if output
+                else "No messages found."
+            )
+
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to read mail via IMAP: {exc}"
+            ) from exc
+
+        finally:
+            if mail is not None:
+                try:
+                    mail.logout()
+                except Exception:
+                    pass
