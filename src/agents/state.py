@@ -39,8 +39,10 @@ class AgentState(TypedDict, total=False):
     # ─────────────────────────────────────────────
     # RAG
     # ─────────────────────────────────────────────
-    rag_required: bool
-    rag_context: list[str]
+    
+    tenant_id: str
+    rag_context: str
+    rag_response: Any
 
     # ─────────────────────────────────────────────
     # MCP / TOOLS

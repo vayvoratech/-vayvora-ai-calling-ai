@@ -1,0 +1,134 @@
+import numpy as np
+from redisvl.index import SearchIndex
+from redisvl.query import VectorQuery
+from redisvl.schema import IndexSchema
+
+from src.memory.redis_client import redis_client
+from src.rag.config import rag_config
+
+
+class RAGVectorStore:
+    """
+    Redis Vector Search storage for RAG documents.
+
+    This is intentionally separate from the existing agent-memory
+    vector index.
+    """
+
+    def __init__(self):
+        schema = {
+            "index": {
+                "name": rag_config.redis_index_name,
+                "prefix": rag_config.redis_key_prefix,
+                "storage_type": "hash",
+            },
+            "fields": [
+                {
+                    "name": "text",
+                    "type": "text",
+                },
+                {
+                    "name": "document_id",
+                    "type": "text",
+                },
+                {
+                    "name": "tenant_id",
+                    "type": "text",
+                },
+                {
+                    "name": "source",
+                    "type": "text",
+                },
+                {
+                    "name": "category",
+                    "type": "text",
+                },
+                {
+                    "name": "section",
+                    "type": "text",
+                },
+                {
+                    "name": "vector",
+                    "type": "vector",
+                    "attrs": {
+                        "algorithm": "HNSW",
+                        "datatype": "FLOAT32",
+                        "dims": rag_config.embedding_dimension,
+                        "distance_metric": "COSINE",
+                    },
+                },
+            ],
+        }
+
+        self.index = SearchIndex(
+            IndexSchema.from_dict(schema),
+            redis_client,
+        )
+
+    def create_index(self) -> None:
+        """
+        Create the RAG index if it does not already exist.
+        """
+        self.index.create(overwrite=False)
+
+    def add_chunks(
+        self,
+        chunks,
+        vectors: list[list[float]],
+    ) -> None:
+
+        if len(chunks) != len(vectors):
+            raise ValueError(
+                "Number of chunks and vectors must match."
+            )
+
+        data = []
+
+        for chunk, vector in zip(chunks, vectors):
+            vector_bytes = np.asarray(
+                vector,
+                dtype=np.float32,
+            ).tobytes()
+
+            data.append(
+                {
+                    "id": chunk.chunk_id,
+                    "text": chunk.text,
+                    "document_id": chunk.document_id,
+                    "tenant_id": chunk.tenant_id,
+                    "source": chunk.source,
+                    "category": chunk.category,
+                    "section": chunk.section or "",
+                    "vector": vector_bytes,
+                }
+            )
+
+        if data:
+            self.index.load(data)
+
+    def search(
+        self,
+        query_vector: list[float],
+        top_k: int | None = None,
+    ):
+
+        query = VectorQuery(
+            vector=query_vector,
+            vector_field_name="vector",
+            num_results=top_k or rag_config.top_k,
+            return_fields=[
+                "text",
+                "document_id",
+                "tenant_id",
+                "source",
+                "category",
+                "section",
+            ],
+        )
+
+        return self.index.query(query)
+
+
+
+q
+

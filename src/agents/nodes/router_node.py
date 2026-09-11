@@ -10,9 +10,13 @@ class RouterNode:
     Routes:
         direct -> fixed/common responses
         llm    -> normal conversation
-        rag    -> knowledge retrieval + one LLM call
-        mcp    -> live data/action + one LLM call
+        rag    -> knowledge retrieval + LLM
+        mcp    -> live data/action + LLM
     """
+
+    # ---------------------------------------------------------
+    # Direct / fixed responses
+    # ---------------------------------------------------------
 
     DIRECT_PHRASES = (
         "hello",
@@ -26,6 +30,10 @@ class RouterNode:
         "bye",
         "goodbye",
     )
+
+    # ---------------------------------------------------------
+    # MCP / live actions
+    # ---------------------------------------------------------
 
     MCP_KEYWORDS = (
         "book",
@@ -43,27 +51,56 @@ class RouterNode:
         "my email",
     )
 
+    # ---------------------------------------------------------
+    # Knowledge-base / RAG requests
+    # ---------------------------------------------------------
+
     RAG_KEYWORDS = (
         "policy",
         "policies",
         "pricing",
         "price",
+        "prices",
         "refund",
         "documentation",
+        "document",
         "docs",
         "information",
         "details",
         "explain",
         "what is",
+        "what are",
+        "what does",
+        "what do",
         "how does",
         "how do",
+        "why",
         "eligibility",
+        "eligible",
         "terms",
         "conditions",
+        "services",
+        "service",
+        "company",
+        "about vayvora",
+        "about the company",
+        "portfolio",
+        "support",
+        "contact",
+        "career",
+        "careers",
     )
+
+    # ---------------------------------------------------------
+    # Router
+    # ---------------------------------------------------------
 
     async def run(self, state: AgentState) -> AgentState:
         user_input = state.get("user_input", "").strip()
+
+        # -----------------------------------------------------
+        # Empty input
+        # -----------------------------------------------------
 
         if not user_input:
             return {
@@ -79,7 +116,10 @@ class RouterNode:
 
         text = user_input.lower()
 
-        # 1. Fixed/common responses — fastest path.
+        # -----------------------------------------------------
+        # 1. Direct / fixed responses
+        # -----------------------------------------------------
+
         if self._is_direct(text):
             return {
                 **state,
@@ -91,7 +131,10 @@ class RouterNode:
                 "is_complete": False,
             }
 
-        # 2. Live actions / external data.
+        # -----------------------------------------------------
+        # 2. MCP / live actions
+        # -----------------------------------------------------
+
         if self._contains_keyword(text, self.MCP_KEYWORDS):
             return {
                 **state,
@@ -103,7 +146,10 @@ class RouterNode:
                 "is_complete": False,
             }
 
-        # 3. Internal knowledge / documentation.
+        # -----------------------------------------------------
+        # 3. Knowledge-base / RAG
+        # -----------------------------------------------------
+
         if self._contains_keyword(text, self.RAG_KEYWORDS):
             return {
                 **state,
@@ -115,7 +161,10 @@ class RouterNode:
                 "is_complete": False,
             }
 
-        # 4. Normal conversation.
+        # -----------------------------------------------------
+        # 4. Normal conversation
+        # -----------------------------------------------------
+
         return {
             **state,
             "route": "llm",
@@ -126,13 +175,40 @@ class RouterNode:
             "is_complete": False,
         }
 
+    # ---------------------------------------------------------
+    # Direct phrase detection
+    # ---------------------------------------------------------
+
     @staticmethod
     def _is_direct(text: str) -> bool:
+        """
+        Detect simple fixed/common conversational phrases.
+        """
+
+        normalized = text.strip().lower()
+
         return any(
-            text == phrase or text.startswith(f"{phrase} ")
+            normalized == phrase
+            or normalized.startswith(f"{phrase} ")
+            or normalized.endswith(f" {phrase}")
             for phrase in RouterNode.DIRECT_PHRASES
         )
 
+    # ---------------------------------------------------------
+    # Keyword detection
+    # ---------------------------------------------------------
+
     @staticmethod
-    def _contains_keyword(text: str, keywords: tuple[str, ...]) -> bool:
-        return any(keyword in text for keyword in keywords)
+    def _contains_keyword(
+        text: str,
+        keywords: tuple[str, ...],
+    ) -> bool:
+        """
+        Detect whether any configured keyword/phrase
+        occurs in the user input.
+        """
+
+        return any(
+            keyword in text
+            for keyword in keywords
+        )

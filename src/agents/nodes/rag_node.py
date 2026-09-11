@@ -5,11 +5,15 @@ from src.agents.state import AgentState
 
 class RAGNode:
     """
-    Retrieves relevant knowledge for the agent.
+    Retrieves grounded knowledge for the agent.
 
-    RAG only runs when the router determines that external
-    knowledge is required and memory does not already contain
-    sufficient context.
+    RAG runs when:
+    - the router requests knowledge retrieval
+    - memory did not already satisfy the request
+    - the user has provided a valid query
+
+    The node stores both the structured RAG response and the
+    final context that should be supplied to the LLM.
     """
 
     def __init__(self, retriever: Any = None):
@@ -17,19 +21,21 @@ class RAGNode:
 
     async def run(self, state: AgentState) -> AgentState:
         # Memory already has relevant information.
-        # Avoid an unnecessary RAG call.
         if state.get("memory_hit"):
             return {
                 **state,
                 "rag_required": False,
-                "rag_context": [],
+                "rag_context": "",
+                "rag_response": None,
             }
 
+        # RAG is not configured.
         if self.retriever is None:
             return {
                 **state,
                 "rag_required": False,
-                "rag_context": [],
+                "rag_context": "",
+                "rag_response": None,
                 "error": "RAG retriever is not configured.",
             }
 
@@ -39,27 +45,31 @@ class RAGNode:
             return {
                 **state,
                 "rag_required": False,
-                "rag_context": [],
+                "rag_context": "",
+                "rag_response": None,
             }
 
         try:
-            results = await self.retriever.search(
-                query=user_input
+            rag_response = await self.retriever.search(
+                query=user_input,
+                tenant_id=state.get("tenant_id", "default"),
             )
 
-            context = list(results) if results else []
+            context = rag_response.context
 
             return {
                 **state,
-                "rag_required": bool(context),
+                "rag_required": rag_response.has_relevant_context,
                 "rag_context": context,
+                "rag_response": rag_response,
+                "error": None,
             }
 
         except Exception as exc:
-            # RAG failure should not terminate the call.
             return {
                 **state,
                 "rag_required": False,
-                "rag_context": [],
-                "error": str(exc),
+                "rag_context": "",
+                "rag_response": None,
+                "error": f"RAG retrieval failed: {exc}",
             }
