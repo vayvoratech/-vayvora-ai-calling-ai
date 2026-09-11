@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vayvora AI Voice Agent</title>
+
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            margin: 0;
+            font-family: Arial, Helvetica, sans-serif;
+            background: #f5f7fb;
+            color: #1f2937;
+        }
+        .container { max-width: 900px; margin: 40px auto; padding: 20px; }
+        .card {
+            background: white;
+            border-radius: 16px;
+            padding: 30px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+        }
+        h1 { margin-top: 0; text-align: center; }
+        .subtitle { text-align: center; color: #6b7280; margin-bottom: 30px; }
+        .controls { display: flex; justify-content: center; gap: 15px; margin-bottom: 25px; }
+        button {
+            border: none;
+            padding: 12px 24px;
+            border-radius: 10px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #startBtn { background: #2563eb; color: white; }
+        #stopBtn { background: #dc2626; color: white; }
+        button:disabled { opacity: 0.5; cursor: not-allowed; }
+        .status {
+            text-align: center;
+            padding: 12px;
+            border-radius: 10px;
+            background: #eef2ff;
+            margin-bottom: 20px;
+            font-weight: bold;
+        }
+        .section { margin-top: 25px; }
+        .section h2 { font-size: 18px; margin-bottom: 10px; }
+        #transcript {
+            min-height: 100px;
+            max-height: 250px;
+            overflow-y: auto;
+            padding: 15px;
+            background: #f9fafb;
+            border-radius: 10px;
+            border: 1px solid #e5e7eb;
+        }
+        .message {
+            padding: 10px 12px;
+            margin-bottom: 10px;
+            border-radius: 8px;
+            line-height: 1.5;
+        }
+        .user { background: #dbeafe; }
+        .assistant { background: #dcfce7; }
+        .system { background: #f3f4f6; color: #6b7280; font-size: 14px; }
+        #logs {
+            height: 180px;
+            overflow-y: auto;
+            background: #111827;
+            color: #d1d5db;
+            padding: 12px;
+            border-radius: 10px;
+            font-family: Consolas, monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+        }
+        .info { margin-top: 15px; font-size: 13px; color: #6b7280; text-align: center; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="card">
+        <h1>Vayvora AI</h1>
+        <div class="subtitle">Real-Time AI Voice Assistant</div>
+        <div class="controls">
+            <button id="startBtn">Start Conversation</button>
+            <button id="stopBtn" disabled>Stop</button>
+        </div>
+        <div id="status" class="status">Disconnected</div>
+
+        <div class="section">
+            <h2>Conversation</h2>
+            <div id="transcript">
+                <div class="message system">Click "Start Conversation" to begin.</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>System Logs</h2>
+            <div id="logs"></div>
+        </div>
+
+        <div class="info">
+            Browser Microphone → WebSocket → FastAPI → VAD → Parakeet STT → Gemini → Deepgram TTS → Browser
+        </div>
+    </div>
+</div>
+
+<script>
+const WS_URL = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/media-stream`;
+
+const startBtn = document.getElementById("startBtn");
+const stopBtn = document.getElementById("stopBtn");
+const statusElement = document.getElementById("status");
+const transcriptElement = document.getElementById("transcript");
+const logsElement = document.getElementById("logs");
+
+let websocket = null;
+let mediaStream = null;
+let audioContext = null;
+let source = null;
+let processor = null;
+let pcmPlayer = null;
+let isRunning = false;
+let currentAssistantMessage = null;
+
+function log(message) {
+    const time = new Date().toLocaleTimeString();
+    logsElement.textContent += `[${time}] ${message}\n`;
+    logsElement.scrollTop = logsElement.scrollHeight;
+    console.log(message);
+}
+
+function setStatus(message) {
+    statusElement.textContent = message;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement("div");
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function addTranscript(role, text) {
+    if (!text || !text.trim()) return;
+    const message = document.createElement("div");
+    message.classList.add("message");
+    if (role === "user") {
+        message.classList.add("user");
+        message.innerHTML = `<strong>You:</strong> ${escapeHtml(text)}`;
+    } else if (role === "assistant") {
+        message.classList.add("assistant");
+        message.innerHTML = `<strong>Vayvora:</strong> ${escapeHtml(text)}`;
+    } else {
+        message.classList.add("system");
+        message.innerHTML = escapeHtml(text);
+    }
+    transcriptElement.appendChild(message);
+    transcriptElement.scrollTop = transcriptElement.scrollHeight;
+}
+
+async function createPCMPlayer() {
+    if (!audioContext) throw new Error("AudioContext is not initialized");
+    await audioContext.audioWorklet.addModule("/pcm-player.js");
+    pcmPlayer = new AudioWorkletNode(audioContext, "pcm-player");
+    pcmPlayer.connect(audioContext.destination);
+}
+
+function clearAudioBuffer() {
+    if (!pcmPlayer) return;
+    pcmPlayer.port.postMessage({ type: "clear" });
+}
+
+function playPCM16(arrayBuffer) {
+    if (!pcmPlayer) return;
+    const copy = arrayBuffer.slice(0);
+    pcmPlayer.port.postMessage({ type: "audio", buffer: copy }, [copy]);
+}
+
+async function startMicrophone() {
+    mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+            channelCount: 1,
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+        }
+    });
+}
+
+async function startAudioProcessing() {
+    audioContext = new AudioContext();
+    if (audioContext.state === "suspended") {
+        await audioContext.resume();
+    }
+    await createPCMPlayer();
+
+    source = audioContext.createMediaStreamSource(mediaStream);
+    processor = audioContext.createScriptProcessor(4096, 1, 1);
+
+    processor.onaudioprocess = function(event) {
+        if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
+
+        const inputData = event.inputBuffer.getChannelData(0);
+        const pcm16 = new Int16Array(inputData.length);
+
+        for (let i = 0; i < inputData.length; i++) {
+            let sample = Math.max(-1, Math.min(1, inputData[i]));
+            pcm16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+        }
+
+        websocket.send(pcm16.buffer);
+    };
+
+    source.connect(processor);
+    processor.connect(audioContext.destination);
+}
+
+function connectWebSocket() {
+    return new Promise((resolve, reject) => {
+        websocket = new WebSocket(WS_URL);
+        websocket.binaryType = "arraybuffer";
+
+        websocket.onopen = async function() {
+            setStatus("Connected - Speak now");
+            try {
+                await startMicrophone();
+                await startAudioProcessing();
+                isRunning = true;
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                addTranscript("system", "Connected. You can start speaking.");
+                resolve();
+            } catch (error) {
+                log("Microphone error: " + error.message);
+                reject(error);
+            }
+        };
+
+        websocket.onmessage = function(event) {
+            if (event.data instanceof ArrayBuffer) {
+                playPCM16(event.data);
+                return;
+            }
+            if (event.data instanceof Blob) {
+                event.data.arrayBuffer().then(playPCM16);
+                return;
+            }
+            if (typeof event.data === "string") {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleServerMessage(data);
+                } catch (error) {
+                    log("Non-JSON: " + event.data);
+                }
+            }
+        };
+
+        websocket.onerror = function() {
+            setStatus("WebSocket Error");
+        };
+
+        websocket.onclose = function() {
+            setStatus("Disconnected");
+            cleanup();
+        };
+    });
+}
+
+function handleServerMessage(data) {
+    if (data.type === "transcript") {
+        addTranscript("user", data.text || "");
+        currentAssistantMessage = null;
+        return;
+    }
+
+    // REAL-TIME WORD DISPLAY
+    if (data.type === "llm_chunk") {
+        if (!currentAssistantMessage) {
+            currentAssistantMessage = document.createElement("div");
+            currentAssistantMessage.classList.add("message", "assistant");
+            currentAssistantMessage.innerHTML = "<strong>Vayvora:</strong> ";
+            transcriptElement.appendChild(currentAssistantMessage);
+        }
+        currentAssistantMessage.innerHTML += escapeHtml(data.text);
+        transcriptElement.scrollTop = transcriptElement.scrollHeight;
+        return;
+    }
+
+    if (data.type === "llm_complete") {
+        currentAssistantMessage = null;
+        return;
+    }
+
+    if (data.type === "speech_started") {
+        setStatus("Listening...");
+        return;
+    }
+
+    if (data.type === "interrupt") {
+        clearAudioBuffer();
+        currentAssistantMessage = null;
+        setStatus("Listening...");
+        return;
+    }
+
+    if (data.type === "tts_started") {
+        setStatus("Vayvora is speaking...");
+        return;
+    }
+
+    if (data.type === "tts_complete") {
+        setStatus("Connected - Speak now");
+        return;
+    }
+}
+
+function stopMicrophone() {
+    if (processor) {
+        try { processor.disconnect(); } catch (e) {}
+        processor = null;
+    }
+    if (source) {
+        try { source.disconnect(); } catch (e) {}
+        source = null;
+    }
+    if (mediaStream) {
+        mediaStream.getTracks().forEach(track => track.stop());
+        mediaStream = null;
+    }
+}
+
+async function stopAudio() {
+    stopMicrophone();
+    if (pcmPlayer) {
+        try { pcmPlayer.disconnect(); } catch (e) {}
+        pcmPlayer = null;
+    }
+    if (audioContext) {
+        try { await audioContext.close(); } catch (e) {}
+        audioContext = null;
+    }
+}
+
+async function cleanup() {
+    isRunning = false;
+    clearAudioBuffer();
+    await stopAudio();
+    websocket = null;
+    startBtn.disabled = false;
+    stopBtn.disabled = true;
+    currentAssistantMessage = null;
+}
+
+startBtn.onclick = async function() {
+    if (isRunning) return;
+    try {
+        setStatus("Connecting...");
+        await connectWebSocket();
+    } catch (error) {
+        setStatus("Failed to start");
+        await cleanup();
+    }
+};
+
+stopBtn.onclick = async function() {
+    isRunning = false;
+    stopMicrophone();
+    clearAudioBuffer();
+    if (websocket) {
+        try { websocket.close(); } catch (e) {}
+    }
+    await cleanup();
+    setStatus("Disconnected");
+    addTranscript("system", "Conversation stopped.");
+};
+
+window.addEventListener("beforeunload", function() {
+    stopMicrophone();
+    if (websocket) {
+        try { websocket.close(); } catch (e) {}
+    }
+});
+</script>
+</body>
+</html>
