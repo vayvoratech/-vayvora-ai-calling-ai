@@ -5,6 +5,7 @@ from src.agents.tools.mcp_bootstrap import (
     create_agent_tool_registry,
 )
 from src.agents.tools.mcp_client import MCPClient
+from src.rag.services.retriever import RAGRetriever
 
 
 class AgentRuntime:
@@ -13,9 +14,6 @@ class AgentRuntime:
 
     Initializes shared infrastructure once and reuses it
     across voice calls.
-
-    MCP connection is persistent instead of reconnecting
-    for every user request.
     """
 
     def __init__(
@@ -26,7 +24,9 @@ class AgentRuntime:
     ) -> None:
         self.llm = llm
         self.memory_store = memory_store
-        self.retriever = retriever
+
+        # Use the production RAG retriever by default.
+        self.retriever = retriever or RAGRetriever()
 
         self.agent: AgentGraph | None = None
         self.mcp_client: MCPClient | None = None

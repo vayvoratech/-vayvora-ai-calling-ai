@@ -1,0 +1,138 @@
+{
+  "careers/overview": {
+    "document_id": "careers/overview",
+    "source": "careers/overview.md",
+    "tenant_id": "default",
+    "content_hash": "0fe57974c83c6af3f82d9fdcfb1a59f8cf173d848013a991f33e04e6504c6ac8",
+    "version": "1",
+    "chunk_count": 9
+  },
+  "company/about": {
+    "document_id": "company/about",
+    "source": "company/about.md",
+    "tenant_id": "default",
+    "content_hash": "51899bd64dfb0cac939b9c3dd61a471bc4ddb5061e44724aa2cf7a6313e86f78",
+    "version": "1",
+    "chunk_count": 13
+  },
+  "company/contact": {
+    "document_id": "company/contact",
+    "source": "company/contact.md",
+    "tenant_id": "default",
+    "content_hash": "d591a814fdf0de1886777212f19a4a234263a916cc723c0492b02e588422c309",
+    "version": "1",
+    "chunk_count": 19
+  },
+  "company/faq": {
+    "document_id": "company/faq",
+    "source": "company/faq.md",
+    "tenant_id": "default",
+    "content_hash": "b6d9fc0327c6d2857a17c7eed65abfc64c2d72451453f71dd97e014a517885cc",
+    "version": "1",
+    "chunk_count": 27
+  },
+  "legal/overview": {
+    "document_id": "legal/overview",
+    "source": "legal/overview.md",
+    "tenant_id": "default",
+    "content_hash": "e73e2a9807705f86c14e7a4e2de9e6469de331081395da0ab75630da22e5837c",
+    "version": "1",
+    "chunk_count": 9
+  },
+  "portfolio/overview": {
+    "document_id": "portfolio/overview",
+    "source": "portfolio/overview.md",
+    "tenant_id": "default",
+    "content_hash": "db79d26a85c163288961015d5ac319614a4498ce3e2d6c920f4c823455aee795",
+    "version": "1",
+    "chunk_count": 7
+  },
+  "pricing/ai": {
+    "document_id": "pricing/ai",
+    "source": "pricing/ai.md",
+    "tenant_id": "default",
+    "content_hash": "3664dcfa60c03609a7cee22f83172cbe28b605c53307f266d25dbd26075d01bb",
+    "version": "1",
+    "chunk_count": 17
+  },
+  "pricing/maintenance": {
+    "document_id": "pricing/maintenance",
+    "source": "pricing/maintenance.md",
+    "tenant_id": "default",
+    "content_hash": "705f845e0ba0f609461562ee8a92df21188acefd152e624b29fa51e10f7469c3",
+    "version": "1",
+    "chunk_count": 15
+  },
+  "sales/payment": {
+    "document_id": "sales/payment",
+    "source": "sales/payment.md",
+    "tenant_id": "default",
+    "content_hash": "c79b1acd0246b7087a56a68c6884c1211492ba4e22c72e43d1dc88682913f3a0",
+    "version": "1",
+    "chunk_count": 10
+  },
+  "sales/process": {
+    "document_id": "sales/process",
+    "source": "sales/process.md",
+    "tenant_id": "default",
+    "content_hash": "ce99ecbad3dc867b034c77587ef0cd325816a8db965ef76151245946e8c15480",
+    "version": "1",
+    "chunk_count": 24
+  },
+  "sales/proposal": {
+    "document_id": "sales/proposal",
+    "source": "sales/proposal.md",
+    "tenant_id": "default",
+    "content_hash": "a6a41f38dfac3f5793166fa42a86f2c015a3e6f722de683da3400e8fe1fb5d5b",
+    "version": "1",
+    "chunk_count": 18
+  },
+  "services/ai_solutions": {
+    "document_id": "services/ai_solutions",
+    "source": "services/ai_solutions.md",
+    "tenant_id": "default",
+    "content_hash": "327b4a91f3f938b336b68c40701170c70aa3c6acbdd14c061e9a1582c0175a6f",
+    "version": "1",
+    "chunk_count": 27
+  },
+  "services/devops": {
+    "document_id": "services/devops",
+    "source": "services/devops.md",
+    "tenant_id": "default",
+    "content_hash": "ba0709607855d6857c63f2db77a7fa8c4c8be849226b2ecc032cf90b33dd37b3",
+    "version": "1",
+    "chunk_count": 15
+  },
+  "services/mobile": {
+    "document_id": "services/mobile",
+    "source": "services/mobile.md",
+    "tenant_id": "default",
+    "content_hash": "1132db6408d1a7b2ec0558372c1d0835c4c2d6d19f261341a9180e984f2dcedc",
+    "version": "1",
+    "chunk_count": 14
+  },
+  "services/saas": {
+    "document_id": "services/saas",
+    "source": "services/saas.md",
+    "tenant_id": "default",
+    "content_hash": "e5d7b1a2ad72e7392d0e6f749579c9594ff76883c6fe4e256e914d6ebde7678c",
+    "version": "1",
+    "chunk_count": 11
+  },
+  "services/web_development": {
+    "document_id": "services/web_development",
+    "source": "services/web_development.md",
+    "tenant_id": "default",
+    "content_hash": "e356f14f3064803c013e0881f9fcee46287af03f7fee014904b8a708389fd8c2",
+    "version": "1",
+    "chunk_count": 15
+  },
+  "support/overview": {
+    "document_id": "support/overview",
+    "source": "support/overview.md",
+    "tenant_id": "default",
+    "content_hash": "5ab7e77f9c2bbfeda67534ecf953465a56637a596e2dcb8131dc5ee900fe9c52",
+    "version": "1",
+    "chunk_count": 9
+  }
+}

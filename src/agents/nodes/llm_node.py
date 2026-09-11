@@ -8,8 +8,12 @@ class LLMNode:
     """
     Single LLM execution layer for Vayvora AI.
 
-    The LLM is called only after the Agent has gathered the
-    required context from memory, RAG, or MCP.
+    The LLM is called after the agent has gathered the required
+    information from:
+
+        Memory
+        RAG
+        MCP / Tools
 
     Flow:
 
@@ -17,7 +21,7 @@ class LLMNode:
                 ↓
              LLMNode
                 ↓
-        spoken response
+        Final spoken response
     """
 
     def __init__(self, llm: Any):
@@ -26,6 +30,10 @@ class LLMNode:
     async def run(self, state: AgentState) -> AgentState:
         user_input = state.get("user_input", "").strip()
 
+        # ---------------------------------------------------------
+        # Empty input
+        # ---------------------------------------------------------
+
         if not user_input:
             return {
                 **state,
@@ -33,10 +41,20 @@ class LLMNode:
                 "is_complete": True,
             }
 
+        # ---------------------------------------------------------
+        # Existing conversation messages
+        # ---------------------------------------------------------
+
         messages = list(state.get("messages", []))
 
-        # Add system instructions only once.
-        if not any(message.get("role") == "system" for message in messages):
+        # ---------------------------------------------------------
+        # System prompt
+        # ---------------------------------------------------------
+
+        if not any(
+            message.get("role") == "system"
+            for message in messages
+        ):
             messages.insert(
                 0,
                 {
@@ -45,7 +63,86 @@ class LLMNode:
                 },
             )
 
-        # Add the current user message if it isn't already present.
+        # ---------------------------------------------------------
+        # Memory context
+        # ---------------------------------------------------------
+
+        memory_context = state.get("memory_context", [])
+
+        if memory_context:
+            memory_text = "\n".join(
+                str(item)
+                for item in memory_context
+            )
+
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "Relevant conversation memory:\n\n"
+                        f"{memory_text}\n\n"
+                        "Use this memory when it is relevant to "
+                        "the user's current request."
+                    ),
+                }
+            )
+
+        # ---------------------------------------------------------
+        # RAG context
+        # ---------------------------------------------------------
+
+        rag_context = state.get("rag_context", "")
+
+        if rag_context:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "GROUNDING INSTRUCTION:\n"
+                        "The following information was retrieved "
+                        "from the Vayvora knowledge base.\n\n"
+                        "Use this information as the source of truth "
+                        "for company, service, pricing, policy, "
+                        "process, support, portfolio, and other "
+                        "knowledge-base questions.\n\n"
+                        "Do not invent, assume, or fabricate facts "
+                        "that are not supported by the retrieved "
+                        "knowledge.\n\n"
+                        "If the retrieved knowledge does not contain "
+                        "the requested information, clearly state "
+                        "that the information is not available in "
+                        "the current knowledge base.\n\n"
+                        "RETRIEVED KNOWLEDGE:\n"
+                        f"{rag_context}"
+                    ),
+                }
+            )
+
+        # ---------------------------------------------------------
+        # MCP / Tool result
+        # ---------------------------------------------------------
+
+        tool_result = state.get("tool_result")
+
+        if tool_result is not None:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "Result from the requested external "
+                        "action or live data source:\n\n"
+                        f"{tool_result}\n\n"
+                        "Use this result when answering the user's "
+                        "request. Do not claim an external action "
+                        "succeeded unless the tool result supports it."
+                    ),
+                }
+            )
+
+        # ---------------------------------------------------------
+        # Current user message
+        # ---------------------------------------------------------
+
         if not any(
             message.get("role") == "user"
             and message.get("content") == user_input
@@ -58,48 +155,9 @@ class LLMNode:
                 }
             )
 
-        # Add relevant Redis memory.
-        memory_context = state.get("memory_context", [])
-
-        if memory_context:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": (
-                        "Relevant conversation memory:\n"
-                        + "\n".join(str(item) for item in memory_context)
-                    ),
-                }
-            )
-
-        # Add RAG context only when available.
-        rag_context = state.get("rag_context", [])
-
-        if rag_context:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": (
-                        "Relevant knowledge retrieved from the "
-                        "knowledge base:\n"
-                        + "\n".join(str(item) for item in rag_context)
-                    ),
-                }
-            )
-
-        # Add MCP/tool result only when available.
-        tool_result = state.get("tool_result")
-
-        if tool_result is not None:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": (
-                        "Result from the requested external action:\n"
-                        f"{tool_result}"
-                    ),
-                }
-            )
+        # ---------------------------------------------------------
+        # LLM execution
+        # ---------------------------------------------------------
 
         try:
             response = await self.llm.ainvoke(messages)
@@ -110,6 +168,15 @@ class LLMNode:
                 content = str(response)
 
             content = content.strip()
+
+            if not content:
+                content = (
+                    "I'm sorry, I wasn't able to generate a response."
+                )
+
+            # -----------------------------------------------------
+            # Conversation history
+            # -----------------------------------------------------
 
             updated_messages = messages + [
                 {
@@ -129,10 +196,10 @@ class LLMNode:
         except Exception as exc:
             return {
                 **state,
-                "error": str(exc),
                 "response": (
                     "I'm sorry, I'm having trouble processing "
                     "that right now."
                 ),
                 "is_complete": True,
+                "error": str(exc),
             }
