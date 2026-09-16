@@ -1,22 +1,27 @@
+import re
+
 from src.agents.state import AgentState
 
 
 class RouterNode:
     """
-    Fast local router for Vayvora AI.
+    Fast deterministic router.
 
-    This node performs deterministic routing without calling an LLM.
+    This router handles only HIGH-CONFIDENCE intents.
+
+    Ambiguous requests are sent to LLMRouterNode.
 
     Routes:
-        direct -> fixed/common responses
-        llm    -> normal conversation
-        rag    -> knowledge retrieval + LLM
-        mcp    -> live data/action + LLM
+        direct
+        rag
+        mcp
+        llm
+        llm_router
     """
 
-    # ---------------------------------------------------------
-    # Direct / fixed responses
-    # ---------------------------------------------------------
+    # ─────────────────────────────────────────────
+    # DIRECT
+    # ─────────────────────────────────────────────
 
     DIRECT_PHRASES = (
         "hello",
@@ -31,82 +36,87 @@ class RouterNode:
         "goodbye",
     )
 
-    # ---------------------------------------------------------
-    # MCP / live actions
-    # ---------------------------------------------------------
+    # ─────────────────────────────────────────────
+    # STRONG MCP ACTION PATTERNS
+    # ─────────────────────────────────────────────
 
-    MCP_KEYWORDS = (
-        "book",
-        "booking",
-        "schedule",
-        "cancel",
-        "reschedule",
-        "send",
-        "create",
-        "update",
-        "delete",
-        "check my",
-        "my appointment",
-        "my calendar",
-        "my email",
+    MCP_PATTERNS = (
+        r"\bsend\s+(?:a\s+)?whatsapp\b",
+        r"\bsend\s+(?:a\s+)?message\s+to\b",
+        r"\bsend\s+(?:an\s+)?email\s+to\b",
+        r"\bcreate\s+(?:a\s+)?calendar\s+(?:event|appointment)\b",
+        r"\badd\s+(?:a\s+)?(?:calendar\s+)?(?:event|appointment)\b",
+        r"\bschedule\s+(?:a\s+)?(?:meeting|appointment|event)\b",
+        r"\bbook\s+(?:a\s+)?(?:meeting|appointment)\b",
+        r"\bcancel\s+(?:my\s+)?(?:meeting|appointment|event)\b",
+        r"\breschedule\s+(?:my\s+)?(?:meeting|appointment|event)\b",
+        r"\bupdate\s+(?:my\s+)?(?:calendar|event|appointment)\b",
+        r"\bcheck\s+my\s+(?:calendar|email|appointments?)\b",
+        r"\bshow\s+my\s+(?:calendar|events|appointments?)\b",
+        r"\bcheck\s+(?:my\s+)?email\b",
     )
 
-    # ---------------------------------------------------------
-    # Knowledge-base / RAG requests
-    # ---------------------------------------------------------
+    # ─────────────────────────────────────────────
+    # STRONG COMPANY / RAG PATTERNS
+    # ─────────────────────────────────────────────
 
-    RAG_KEYWORDS = (
-        "policy",
-        "policies",
-        "pricing",
-        "price",
-        "prices",
-        "refund",
-        "documentation",
-        "document",
-        "docs",
+    COMPANY_TERMS = (
+        "vayvora",
+        "our company",
+        "company",
+        "company's",
+        "company projects",
+        "company policy",
+        "company policies",
+        "company services",
+        "ai calling project",
+        "ai calling",
+        "edusaas",
+        "ai summit",
+        "employee",
+        "employees",
+        "team",
+        "department",
+        "departments",
+        "portfolio",
+        "refund policy",
+        "expense policy",
+        "office parking",
+        "it support",
+    )
+
+    KNOWLEDGE_INTENT_TERMS = (
+        "what",
+        "who",
+        "which",
+        "where",
+        "when",
+        "how",
+        "why",
+        "tell me",
+        "explain",
         "information",
         "details",
-        "explain",
-        "what is",
-        "what are",
-        "what does",
-        "what do",
-        "how does",
-        "how do",
-        "why",
-        "eligibility",
-        "eligible",
-        "terms",
-        "conditions",
-        "services",
-        "service",
-        "company",
-        "about vayvora",
-        "about the company",
-        "portfolio",
-        "support",
-        "contact",
-        "career",
-        "careers",
+        "about",
     )
 
-    # ---------------------------------------------------------
-    # Router
-    # ---------------------------------------------------------
-
     async def run(self, state: AgentState) -> AgentState:
-        user_input = state.get("user_input", "").strip()
+        user_input = state.get(
+            "user_input",
+            "",
+        ).strip()
 
-        # -----------------------------------------------------
-        # Empty input
-        # -----------------------------------------------------
+        # ─────────────────────────────────────────
+        # EMPTY INPUT
+        # ─────────────────────────────────────────
 
         if not user_input:
             return {
                 **state,
                 "route": "direct",
                 "route_confidence": 1.0,
+                "route_source": "system",
+                "llm_router_required": False,
                 "llm_required": False,
                 "rag_required": False,
                 "tool_required": False,
@@ -114,101 +124,156 @@ class RouterNode:
                 "is_complete": True,
             }
 
-        text = user_input.lower()
+        text = self._normalize(user_input)
 
-        # -----------------------------------------------------
-        # 1. Direct / fixed responses
-        # -----------------------------------------------------
+        # ─────────────────────────────────────────
+        # 1. SIMPLE DIRECT RESPONSE
+        # ─────────────────────────────────────────
 
         if self._is_direct(text):
             return {
                 **state,
                 "route": "direct",
-                "route_confidence": 0.98,
+                "route_confidence": 0.99,
+                "route_source": "fast_router",
+                "llm_router_required": False,
                 "llm_required": False,
                 "rag_required": False,
                 "tool_required": False,
-                "is_complete": False,
+                "response": self._direct_response(text),
+                "is_complete": True,
             }
 
-        # -----------------------------------------------------
-        # 2. MCP / live actions
-        # -----------------------------------------------------
+        # ─────────────────────────────────────────
+        # 2. HIGH-CONFIDENCE MCP
+        # ─────────────────────────────────────────
 
-        if self._contains_keyword(text, self.MCP_KEYWORDS):
+        if self._is_strong_mcp(text):
             return {
                 **state,
                 "route": "mcp",
-                "route_confidence": 0.90,
+                "route_confidence": 0.96,
+                "route_source": "fast_router",
+                "llm_router_required": False,
                 "llm_required": True,
                 "rag_required": False,
                 "tool_required": True,
                 "is_complete": False,
             }
 
-        # -----------------------------------------------------
-        # 3. Knowledge-base / RAG
-        # -----------------------------------------------------
+        # ─────────────────────────────────────────
+        # 3. HIGH-CONFIDENCE COMPANY RAG
+        # ─────────────────────────────────────────
 
-        if self._contains_keyword(text, self.RAG_KEYWORDS):
+        if self._is_strong_rag(text):
             return {
                 **state,
                 "route": "rag",
-                "route_confidence": 0.88,
+                "route_confidence": 0.96,
+                "route_source": "fast_router",
+                "llm_router_required": False,
                 "llm_required": True,
                 "rag_required": True,
                 "tool_required": False,
                 "is_complete": False,
             }
 
-        # -----------------------------------------------------
-        # 4. Normal conversation
-        # -----------------------------------------------------
+        # ─────────────────────────────────────────
+        # 4. AMBIGUOUS → LLM ROUTER
+        # ─────────────────────────────────────────
 
         return {
             **state,
-            "route": "llm",
-            "route_confidence": 0.80,
+            "route": "llm_router",
+            "route_confidence": 0.50,
+            "route_source": "fast_router",
+            "llm_router_required": True,
             "llm_required": True,
             "rag_required": False,
             "tool_required": False,
             "is_complete": False,
         }
 
-    # ---------------------------------------------------------
-    # Direct phrase detection
-    # ---------------------------------------------------------
+    # ─────────────────────────────────────────────
+    # NORMALIZATION
+    # ─────────────────────────────────────────────
 
     @staticmethod
-    def _is_direct(text: str) -> bool:
-        """
-        Detect simple fixed/common conversational phrases.
-        """
-
-        normalized = text.strip().lower()
-
-        return any(
-            normalized == phrase
-            or normalized.startswith(f"{phrase} ")
-            or normalized.endswith(f" {phrase}")
-            for phrase in RouterNode.DIRECT_PHRASES
+    def _normalize(text: str) -> str:
+        return re.sub(
+            r"\s+",
+            " ",
+            text.lower().strip(),
         )
 
-    # ---------------------------------------------------------
-    # Keyword detection
-    # ---------------------------------------------------------
+    # ─────────────────────────────────────────────
+    # DIRECT
+    # ─────────────────────────────────────────────
+
+    @classmethod
+    def _is_direct(cls, text: str) -> bool:
+        return any(
+            text == phrase
+            or text.startswith(f"{phrase} ")
+            or text.endswith(f" {phrase}")
+            for phrase in cls.DIRECT_PHRASES
+        )
 
     @staticmethod
-    def _contains_keyword(
-        text: str,
-        keywords: tuple[str, ...],
-    ) -> bool:
-        """
-        Detect whether any configured keyword/phrase
-        occurs in the user input.
-        """
+    def _direct_response(text: str) -> str:
 
+        if text in {
+            "hello",
+            "hi",
+            "hey",
+            "good morning",
+            "good afternoon",
+            "good evening",
+        }:
+            return (
+                "Hello! I'm Vayvora AI, the AI assistant "
+                "for Vayvora Technologies. How can I help "
+                "you today?"
+            )
+
+        if text in {
+            "bye",
+            "goodbye",
+        }:
+            return "Goodbye! Have a great day."
+
+        return "You're welcome. How can I help you?"
+
+    # ─────────────────────────────────────────────
+    # MCP
+    # ─────────────────────────────────────────────
+
+    @classmethod
+    def _is_strong_mcp(cls, text: str) -> bool:
         return any(
-            keyword in text
-            for keyword in keywords
+            re.search(
+                pattern,
+                text,
+                re.IGNORECASE,
+            )
+            for pattern in cls.MCP_PATTERNS
         )
+
+    # ─────────────────────────────────────────────
+    # RAG
+    # ─────────────────────────────────────────────
+
+    @classmethod
+    def _is_strong_rag(cls, text: str) -> bool:
+
+        has_company_term = any(
+            term in text
+            for term in cls.COMPANY_TERMS
+        )
+
+        if not has_company_term:
+            return False
+
+        # Company statement/question is enough to use
+        # the company knowledge base.
+        return True

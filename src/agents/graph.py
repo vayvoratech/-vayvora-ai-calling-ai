@@ -3,17 +3,21 @@ from typing import Any
 from langgraph.graph import END, START, StateGraph
 
 from src.agents.edges.routing import (
+    route_after_llm_router,
     route_after_memory,
     route_after_rag,
     route_after_router,
     route_after_tool,
 )
+
 from src.agents.nodes.llm_node import LLMNode
+from src.agents.nodes.llm_router_node import LLMRouterNode
 from src.agents.nodes.memory_node import MemoryNode
 from src.agents.nodes.rag_node import RAGNode
 from src.agents.nodes.response_node import ResponseNode
 from src.agents.nodes.router_node import RouterNode
 from src.agents.nodes.tool_node import ToolNode
+
 from src.agents.state import AgentState
 
 
@@ -21,23 +25,28 @@ class AgentGraph:
     """
     Main Vayvora AI Agent orchestration graph.
 
-    Flow:
+    Architecture:
 
-        Input
-          ↓
-        Fast Local Router
-          ↓
-        Memory
-          ↓
-        ┌──────────┬──────────┬──────────┐
-        │          │          │          │
-      Direct      LLM        RAG        MCP
-        │          │          │          │
-        │          │          └──→ LLM   │
-        │          │                     │
-        │          └─────────────────────┘
-        │
-        └────────────→ Response
+        User Input
+            ↓
+        Fast Router
+            │
+            ├── Direct ───────────────→ Response
+            │
+            ├── Clear RAG ──→ Memory ─→ RAG ─→ LLM
+            │
+            ├── Clear MCP ──→ Memory ─→ Tool ─→ LLM
+            │
+            └── Ambiguous
+                    ↓
+                LLM Router
+                    │
+                    ├── Direct ─→ Response
+                    ├── RAG ─→ Memory ─→ RAG ─→ LLM
+                    ├── MCP ─→ Memory ─→ Tool ─→ LLM
+                    └── LLM ─→ Memory ─→ LLM
+                                             ↓
+                                          Response
     """
 
     def __init__(
@@ -47,22 +56,27 @@ class AgentGraph:
         memory_store: Any = None,
         retriever: Any = None,
     ) -> None:
+
         self.router_node = RouterNode()
 
+        self.llm_router_node = LLMRouterNode(
+            llm=llm,
+        )
+
         self.memory_node = MemoryNode(
-            memory_store=memory_store
+            memory_store=memory_store,
         )
 
         self.rag_node = RAGNode(
-            retriever=retriever
+            retriever=retriever,
         )
 
         self.tool_node = ToolNode(
-            tool_registry=tool_registry
+            tool_registry=tool_registry,
         )
 
         self.llm_node = LLMNode(
-            llm=llm
+            llm=llm,
         )
 
         self.response_node = ResponseNode()
@@ -70,12 +84,21 @@ class AgentGraph:
         self.graph = self._build_graph()
 
     def _build_graph(self):
+
         workflow = StateGraph(AgentState)
 
-        # Nodes
+        # ─────────────────────────────────────────
+        # NODES
+        # ─────────────────────────────────────────
+
         workflow.add_node(
             "router",
             self.router_node.run,
+        )
+
+        workflow.add_node(
+            "llm_router",
+            self.llm_router_node.run,
         )
 
         workflow.add_node(
@@ -103,25 +126,46 @@ class AgentGraph:
             self.response_node.run,
         )
 
-        # Start
+        # ─────────────────────────────────────────
+        # START
+        # ─────────────────────────────────────────
+
         workflow.add_edge(
             START,
             "router",
         )
 
-        # Router
+        # ─────────────────────────────────────────
+        # FAST ROUTER
+        # ─────────────────────────────────────────
+
         workflow.add_conditional_edges(
             "router",
             route_after_router,
             {
                 "response": "response",
-                "llm": "memory",
-                "rag": "memory",
-                "tool": "memory",
+                "llm_router": "llm_router",
+                "memory": "memory",
             },
         )
 
-        # Memory
+        # ─────────────────────────────────────────
+        # LLM FALLBACK ROUTER
+        # ─────────────────────────────────────────
+
+        workflow.add_conditional_edges(
+            "llm_router",
+            route_after_llm_router,
+            {
+                "response": "response",
+                "memory": "memory",
+            },
+        )
+
+        # ─────────────────────────────────────────
+        # MEMORY
+        # ─────────────────────────────────────────
+
         workflow.add_conditional_edges(
             "memory",
             route_after_memory,
@@ -132,7 +176,10 @@ class AgentGraph:
             },
         )
 
+        # ─────────────────────────────────────────
         # RAG → LLM
+        # ─────────────────────────────────────────
+
         workflow.add_conditional_edges(
             "rag",
             route_after_rag,
@@ -141,7 +188,10 @@ class AgentGraph:
             },
         )
 
+        # ─────────────────────────────────────────
         # MCP → LLM
+        # ─────────────────────────────────────────
+
         workflow.add_conditional_edges(
             "tool",
             route_after_tool,
@@ -150,13 +200,19 @@ class AgentGraph:
             },
         )
 
-        # LLM → Response
+        # ─────────────────────────────────────────
+        # LLM → RESPONSE
+        # ─────────────────────────────────────────
+
         workflow.add_edge(
             "llm",
             "response",
         )
 
-        # Response → End
+        # ─────────────────────────────────────────
+        # RESPONSE → END
+        # ─────────────────────────────────────────
+
         workflow.add_edge(
             "response",
             END,

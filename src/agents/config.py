@@ -6,8 +6,8 @@ class AgentConfig:
     """
     Central configuration for the Vayvora AI Agent.
 
-    Keep latency-sensitive settings here so they can be
-    tuned without changing the Agent implementation.
+    Keeps latency-sensitive routing and execution settings
+    in one place.
     """
 
     # ─────────────────────────────────────────────
@@ -26,6 +26,13 @@ class AgentConfig:
     enable_llm: bool = True
     enable_rag: bool = True
     enable_mcp: bool = True
+
+    # Minimum confidence required for the fast router
+    # to make a routing decision without the LLM router.
+    fast_router_confidence_threshold: float = 0.90
+
+    # Enable LLM fallback router for ambiguous requests.
+    enable_llm_router: bool = True
 
     # ─────────────────────────────────────────────
     # MEMORY

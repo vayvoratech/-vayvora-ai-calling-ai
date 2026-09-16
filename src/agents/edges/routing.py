@@ -3,49 +3,74 @@ from src.agents.state import AgentState
 
 def route_after_router(state: AgentState) -> str:
     """
-    Decide the next Agent node after the fast local router.
+    Route after the fast deterministic router.
     """
 
-    route = state.get("route", "llm")
+    route = state.get(
+        "route",
+        "llm_router",
+    )
+
+    if route == "direct":
+        return "response"
+
+    if route == "llm_router":
+        return "llm_router"
+
+    if route == "rag":
+        return "memory"
+
+    if route == "mcp":
+        return "memory"
+
+    return "memory"
+
+
+def route_after_llm_router(state: AgentState) -> str:
+    """
+    Route after the LLM fallback router.
+    """
+
+    route = state.get(
+        "route",
+        "llm",
+    )
 
     if route == "direct":
         return "response"
 
     if route == "rag":
-        return "rag"
+        return "memory"
 
     if route == "mcp":
-        return "tool"
+        return "memory"
 
-    return "llm"
+    return "memory"
 
 
 def route_after_memory(state: AgentState) -> str:
     """
-    Decide whether RAG is actually necessary after checking memory.
-
-    If the requested information is already available in memory,
-    skip RAG and go directly to the LLM.
-
-    MCP is still handled separately because it may represent a
-    live external action or live external data request.
+    Decide what happens after conversation memory retrieval.
     """
 
-    route = state.get("route", "llm")
+    route = state.get(
+        "route",
+        "llm",
+    )
 
-    # Normal conversation.
+    # Normal LLM conversation.
     if route == "llm":
         return "llm"
 
-    # Memory already contains relevant information.
+    # Memory can satisfy an information request.
     if state.get("memory_hit"):
         return "llm"
 
-    # RAG was requested and memory did not satisfy the request.
+    # Company knowledge request.
     if route == "rag":
         return "rag"
 
-    # MCP request.
+    # External action/live data.
     if route == "mcp":
         return "tool"
 
@@ -54,7 +79,7 @@ def route_after_memory(state: AgentState) -> str:
 
 def route_after_rag(state: AgentState) -> str:
     """
-    RAG always feeds the retrieved context into the single LLM.
+    RAG context always goes to the LLM.
     """
 
     return "llm"
@@ -62,7 +87,7 @@ def route_after_rag(state: AgentState) -> str:
 
 def route_after_tool(state: AgentState) -> str:
     """
-    MCP/tool results are passed into the single LLM.
+    MCP result always goes to the LLM.
     """
 
     return "llm"
