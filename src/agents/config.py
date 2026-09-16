@@ -14,7 +14,7 @@ class AgentConfig:
     # LLM
     # ─────────────────────────────────────────────
 
-    model_name: str = "default"
+    model_name: str = "gemini-3.5-flash-lite"
     temperature: float = 0.2
     max_tokens: int = 500
 

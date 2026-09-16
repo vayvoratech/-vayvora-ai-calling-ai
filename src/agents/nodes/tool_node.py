@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+import uuid
 from typing import Any
 
 from src.agents.state import AgentState
@@ -65,25 +68,29 @@ class ToolNode:
             }
 
         try:
-            result = await tool.ainvoke(tool_input)
+            # Handle both async and sync tools
+            if hasattr(tool, "ainvoke"):
+                result = await tool.ainvoke(tool_input)
+            elif callable(getattr(tool, "invoke", None)):
+                result = tool.invoke(tool_input)
+            elif callable(tool):
+                result = tool(**tool_input) if isinstance(tool_input, dict) else tool(tool_input)
+            else:
+                result = str(tool)
 
-            messages = list(state.get("messages", []))
+            # Generate synthetic call ID to prevent serialization failures
+            call_id = state.get("tool_call_id") or f"call_{uuid.uuid4().hex[:8]}"
 
-            messages.append(
-                {
-                    "role": "tool",
-                    "name": tool_name,
-                    "content": str(result),
-                }
-            )
-
+            # Keep messages clean for LLMNode; store the output in state["tool_result"]
             return {
                 **state,
-                "messages": messages,
+                "tool_call_id": call_id,
                 "tool_name": tool_name,
                 "tool_input": tool_input,
                 "tool_result": result,
                 "tool_required": False,
+                "llm_required": True,
+                "is_complete": False,
                 "error": None,
             }
 

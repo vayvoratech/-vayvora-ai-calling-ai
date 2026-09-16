@@ -27,6 +27,32 @@ class LLMNode:
     def __init__(self, llm: Any):
         self.llm = llm
 
+    @staticmethod
+    def _extract_text(content: Any) -> str:
+        """Safely extract plain text from str, list of chunks/dicts, or custom objects."""
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict) and "text" in item:
+                    parts.append(str(item["text"]))
+                elif hasattr(item, "text"):
+                    parts.append(str(item.text))
+                else:
+                    parts.append(str(item))
+            return "".join(parts).strip()
+        if isinstance(content, dict):
+            for key in ("text", "content", "message"):
+                if key in content and isinstance(content[key], str):
+                    return content[key].strip()
+            return str(content).strip()
+        return str(content).strip()
+
     async def run(self, state: AgentState) -> AgentState:
         user_input = state.get("user_input", "").strip()
 
@@ -162,12 +188,8 @@ class LLMNode:
         try:
             response = await self.llm.ainvoke(messages)
 
-            if hasattr(response, "content"):
-                content = response.content
-            else:
-                content = str(response)
-
-            content = content.strip()
+            raw_content = getattr(response, "content", response)
+            content = self._extract_text(raw_content)
 
             if not content:
                 content = (

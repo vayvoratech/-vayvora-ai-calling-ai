@@ -1,279 +1,319 @@
+import json
 import re
+from typing import Any
 
+from src.agents.prompts.router import LLM_ROUTER_PROMPT
 from src.agents.state import AgentState
 
 
-class RouterNode:
+class LLMRouterNode:
     """
-    Fast deterministic router.
+    LLM-based routing controller.
 
-    This router handles only HIGH-CONFIDENCE intents.
+    This node is the FIRST decision-making stage.
 
-    Ambiguous requests are sent to LLMRouterNode.
+    It does NOT generate the final user response.
 
-    Routes:
-        direct
-        rag
-        mcp
-        llm
-        llm_router
+    Final routes:
+        llm -> normal LLM response
+        rag -> retrieve knowledge, then LLM
+        mcp -> execute tool, then LLM
     """
 
-    # ─────────────────────────────────────────────
-    # DIRECT
-    # ─────────────────────────────────────────────
+    VALID_ROUTES = {
+        "llm",
+        "rag",
+        "mcp",
+    }
 
-    DIRECT_PHRASES = (
-        "hello",
-        "hi",
-        "hey",
-        "good morning",
-        "good afternoon",
-        "good evening",
-        "thanks",
-        "thank you",
-        "bye",
-        "goodbye",
-    )
+    MAX_HISTORY_MESSAGES = 8
 
-    # ─────────────────────────────────────────────
-    # STRONG MCP ACTION PATTERNS
-    # ─────────────────────────────────────────────
-
-    MCP_PATTERNS = (
-        r"\bsend\s+(?:a\s+)?whatsapp\b",
-        r"\bsend\s+(?:a\s+)?message\s+to\b",
-        r"\bsend\s+(?:an\s+)?email\s+to\b",
-        r"\bcreate\s+(?:a\s+)?calendar\s+(?:event|appointment)\b",
-        r"\badd\s+(?:a\s+)?(?:calendar\s+)?(?:event|appointment)\b",
-        r"\bschedule\s+(?:a\s+)?(?:meeting|appointment|event)\b",
-        r"\bbook\s+(?:a\s+)?(?:meeting|appointment)\b",
-        r"\bcancel\s+(?:my\s+)?(?:meeting|appointment|event)\b",
-        r"\breschedule\s+(?:my\s+)?(?:meeting|appointment|event)\b",
-        r"\bupdate\s+(?:my\s+)?(?:calendar|event|appointment)\b",
-        r"\bcheck\s+my\s+(?:calendar|email|appointments?)\b",
-        r"\bshow\s+my\s+(?:calendar|events|appointments?)\b",
-        r"\bcheck\s+(?:my\s+)?email\b",
-    )
-
-    # ─────────────────────────────────────────────
-    # STRONG COMPANY / RAG PATTERNS
-    # ─────────────────────────────────────────────
-
-    COMPANY_TERMS = (
-        "vayvora",
-        "our company",
-        "company",
-        "company's",
-        "company projects",
-        "company policy",
-        "company policies",
-        "company services",
-        "ai calling project",
-        "ai calling",
-        "edusaas",
-        "ai summit",
-        "employee",
-        "employees",
-        "team",
-        "department",
-        "departments",
-        "portfolio",
-        "refund policy",
-        "expense policy",
-        "office parking",
-        "it support",
-    )
-
-    KNOWLEDGE_INTENT_TERMS = (
-        "what",
-        "who",
-        "which",
-        "where",
-        "when",
-        "how",
-        "why",
-        "tell me",
-        "explain",
-        "information",
-        "details",
-        "about",
-    )
+    def _init_(self, llm: Any) -> None:
+        self.llm = llm
 
     async def run(self, state: AgentState) -> AgentState:
-        user_input = state.get(
-            "user_input",
-            "",
-        ).strip()
-
-        # ─────────────────────────────────────────
-        # EMPTY INPUT
-        # ─────────────────────────────────────────
+        user_input = state.get("user_input", "").strip()
 
         if not user_input:
             return {
                 **state,
-                "route": "direct",
+                "route": "llm",
                 "route_confidence": 1.0,
-                "route_source": "system",
+                "route_source": "llm_router",
                 "llm_router_required": False,
-                "llm_required": False,
                 "rag_required": False,
                 "tool_required": False,
-                "response": "I'm sorry, I didn't hear anything.",
-                "is_complete": True,
-            }
-
-        text = self._normalize(user_input)
-
-        # ─────────────────────────────────────────
-        # 1. SIMPLE DIRECT RESPONSE
-        # ─────────────────────────────────────────
-
-        if self._is_direct(text):
-            return {
-                **state,
-                "route": "direct",
-                "route_confidence": 0.99,
-                "route_source": "fast_router",
-                "llm_router_required": False,
-                "llm_required": False,
-                "rag_required": False,
-                "tool_required": False,
-                "response": self._direct_response(text),
-                "is_complete": True,
-            }
-
-        # ─────────────────────────────────────────
-        # 2. HIGH-CONFIDENCE MCP
-        # ─────────────────────────────────────────
-
-        if self._is_strong_mcp(text):
-            return {
-                **state,
-                "route": "mcp",
-                "route_confidence": 0.96,
-                "route_source": "fast_router",
-                "llm_router_required": False,
                 "llm_required": True,
-                "rag_required": False,
-                "tool_required": True,
-                "is_complete": False,
             }
 
-        # ─────────────────────────────────────────
-        # 3. HIGH-CONFIDENCE COMPANY RAG
-        # ─────────────────────────────────────────
+        messages = self._build_messages(state)
 
-        if self._is_strong_rag(text):
+        try:
+            result = await self.llm.ainvoke(messages)
+
+            raw_content = self._extract_content(result)
+
+            decision = self._parse_decision(raw_content)
+
+            route = decision["route"]
+            confidence = decision["confidence"]
+
+            return self._apply_route(
+                state=state,
+                route=route,
+                confidence=confidence,
+            )
+
+        except Exception as exc:
+            # Safe fallback:
+            # if the routing model fails, use the normal LLM.
             return {
                 **state,
-                "route": "rag",
-                "route_confidence": 0.96,
-                "route_source": "fast_router",
+                "route": "llm",
+                "route_confidence": 0.0,
+                "route_source": "llm_router_fallback",
                 "llm_router_required": False,
-                "llm_required": True,
-                "rag_required": True,
+                "rag_required": False,
                 "tool_required": False,
-                "is_complete": False,
+                "llm_required": True,
+                "error": f"LLM router error: {exc}",
             }
 
-        # ─────────────────────────────────────────
-        # 4. AMBIGUOUS → LLM ROUTER
-        # ─────────────────────────────────────────
+    # ---------------------------------------------------------
+    # Build router messages
+    # ---------------------------------------------------------
+
+    def _build_messages(
+        self,
+        state: AgentState,
+    ) -> list[dict[str, str]]:
+        messages: list[dict[str, str]] = [
+            {
+                "role": "system",
+                "content": LLM_ROUTER_PROMPT,
+            }
+        ]
+
+        conversation = state.get("messages", [])
+
+        if conversation:
+            recent_messages = conversation[
+                -self.MAX_HISTORY_MESSAGES:
+            ]
+
+            for message in recent_messages:
+                role = message.get("role")
+
+                if role not in {
+                    "user",
+                    "assistant",
+                }:
+                    continue
+
+                content = message.get("content", "")
+
+                if not content:
+                    continue
+
+                messages.append(
+                    {
+                        "role": role,
+                        "content": str(content),
+                    }
+                )
+
+        messages.append(
+            {
+                "role": "user",
+                "content": state.get("user_input", ""),
+            }
+        )
+
+        return messages
+
+    # ---------------------------------------------------------
+    # Extract model content
+    # ---------------------------------------------------------
+
+    @staticmethod
+    def _extract_content(result: Any) -> str:
+        content = getattr(result, "content", result)
+
+        if isinstance(content, list):
+            parts = []
+
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text")
+
+                    if text:
+                        parts.append(str(text))
+
+                elif hasattr(item, "text"):
+                    parts.append(str(item.text))
+
+                else:
+                    parts.append(str(item))
+
+            return "\n".join(parts).strip()
+
+        return str(content).strip()
+
+    # ---------------------------------------------------------
+    # Parse JSON decision
+    # ---------------------------------------------------------
+
+    def _parse_decision(
+        self,
+        content: str,
+    ) -> dict[str, Any]:
+        content = content.strip()
+
+        # ---------------------------------------------
+        # 1. Direct JSON
+        # ---------------------------------------------
+
+        try:
+            data = json.loads(content)
+
+            return self._validate_decision(data)
+
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+
+        # ---------------------------------------------
+        # 2. Markdown JSON block
+        # ---------------------------------------------
+
+        fenced_match = re.search(
+            r"(?:json)?\s*(\{.*?\})\s*",
+            content,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+
+        if fenced_match:
+            try:
+                data = json.loads(
+                    fenced_match.group(1)
+                )
+
+                return self._validate_decision(data)
+
+            except (
+                json.JSONDecodeError,
+                ValueError,
+                TypeError,
+            ):
+                pass
+
+        # ---------------------------------------------
+        # 3. Extract JSON object
+        # ---------------------------------------------
+
+        json_match = re.search(
+            r"\{.*\}",
+            content,
+            flags=re.DOTALL,
+        )
+
+        if json_match:
+            try:
+                data = json.loads(
+                    json_match.group(0)
+                )
+
+                return self._validate_decision(data)
+
+            except (
+                json.JSONDecodeError,
+                ValueError,
+                TypeError,
+            ):
+                pass
+
+        # ---------------------------------------------
+        # 4. Route extraction fallback
+        # ---------------------------------------------
+
+        route_match = re.search(
+            r"\b(llm|rag|mcp)\b",
+            content.lower(),
+        )
+
+        if route_match:
+            return {
+                "route": route_match.group(1),
+                "confidence": 0.5,
+            }
+
+        raise ValueError(
+            "LLM router returned an invalid routing decision."
+        )
+
+    # ---------------------------------------------------------
+    # Validate decision
+    # ---------------------------------------------------------
+
+    def _validate_decision(
+        self,
+        data: Any,
+    ) -> dict[str, Any]:
+        if not isinstance(data, dict):
+            raise ValueError(
+                "Router response must be a JSON object."
+            )
+
+        route = str(
+            data.get("route", "")
+        ).strip().lower()
+
+        if route not in self.VALID_ROUTES:
+            raise ValueError(
+                f"Invalid route: {route}"
+            )
+
+        try:
+            confidence = float(
+                data.get("confidence", 0.0)
+            )
+        except (
+            TypeError,
+            ValueError,
+        ):
+            confidence = 0.0
+
+        confidence = max(
+            0.0,
+            min(1.0, confidence),
+        )
 
         return {
-            **state,
-            "route": "llm_router",
-            "route_confidence": 0.50,
-            "route_source": "fast_router",
-            "llm_router_required": True,
-            "llm_required": True,
-            "rag_required": False,
-            "tool_required": False,
-            "is_complete": False,
+            "route": route,
+            "confidence": confidence,
         }
 
-    # ─────────────────────────────────────────────
-    # NORMALIZATION
-    # ─────────────────────────────────────────────
+    # ---------------------------------------------------------
+    # Apply route to state
+    # ---------------------------------------------------------
 
     @staticmethod
-    def _normalize(text: str) -> str:
-        return re.sub(
-            r"\s+",
-            " ",
-            text.lower().strip(),
-        )
+    def _apply_route(
+        state: AgentState,
+        route: str,
+        confidence: float,
+    ) -> AgentState:
+        return {
+            **state,
 
-    # ─────────────────────────────────────────────
-    # DIRECT
-    # ─────────────────────────────────────────────
+            "route": route,
+            "route_confidence": confidence,
+            "route_source": "llm_router",
 
-    @classmethod
-    def _is_direct(cls, text: str) -> bool:
-        return any(
-            text == phrase
-            or text.startswith(f"{phrase} ")
-            or text.endswith(f" {phrase}")
-            for phrase in cls.DIRECT_PHRASES
-        )
+            "llm_router_required": False,
 
-    @staticmethod
-    def _direct_response(text: str) -> str:
+            "llm_required": route == "llm",
 
-        if text in {
-            "hello",
-            "hi",
-            "hey",
-            "good morning",
-            "good afternoon",
-            "good evening",
-        }:
-            return (
-                "Hello! I'm Vayvora AI, the AI assistant "
-                "for Vayvora Technologies. How can I help "
-                "you today?"
-            )
+            "rag_required": route == "rag",
 
-        if text in {
-            "bye",
-            "goodbye",
-        }:
-            return "Goodbye! Have a great day."
-
-        return "You're welcome. How can I help you?"
-
-    # ─────────────────────────────────────────────
-    # MCP
-    # ─────────────────────────────────────────────
-
-    @classmethod
-    def _is_strong_mcp(cls, text: str) -> bool:
-        return any(
-            re.search(
-                pattern,
-                text,
-                re.IGNORECASE,
-            )
-            for pattern in cls.MCP_PATTERNS
-        )
-
-    # ─────────────────────────────────────────────
-    # RAG
-    # ─────────────────────────────────────────────
-
-    @classmethod
-    def _is_strong_rag(cls, text: str) -> bool:
-
-        has_company_term = any(
-            term in text
-            for term in cls.COMPANY_TERMS
-        )
-
-        if not has_company_term:
-            return False
-
-        # Company statement/question is enough to use
-        # the company knowledge base.
-        return True
+            "tool_required": route == "mcp",
+        }
