@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 
-from src.rag.services.retriever import get_rag_retriever
+from src.rag.services.retriever import RAGRetriever
 
 
 TEST_CASES = [
@@ -38,7 +38,7 @@ TEST_CASES = [
 
 
 async def main() -> None:
-    retriever = get_rag_retriever()
+    retriever = RAGRetriever()
 
     print("=" * 80)
     print("VAYVORA RAG - RETRIEVAL QUALITY EVALUATION")

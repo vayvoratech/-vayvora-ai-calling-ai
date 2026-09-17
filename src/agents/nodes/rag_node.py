@@ -1,26 +1,21 @@
 from typing import Any
-
 from src.agents.state import AgentState
 
 
 class RAGNode:
     """
-    Retrieves grounded knowledge for the agent.
+    Retrieves grounded company knowledge for the agent.
 
-    RAG runs when:
-    - the router requests knowledge retrieval
-    - memory did not already satisfy the request
-    - the user has provided a valid query
-
-    The node stores both the structured RAG response and the
-    final context that should be supplied to the LLM.
+    Runs when:
+      - The semantic router selected 'rag' based on high vector proximity to company knowledge
+      - Memory did not already satisfy the request
+      - The query contains valid semantic intent
     """
 
     def __init__(self, retriever: Any = None):
         self.retriever = retriever
 
     async def run(self, state: AgentState) -> AgentState:
-        # Memory already has relevant information.
         if state.get("memory_hit"):
             return {
                 **state,
@@ -29,7 +24,6 @@ class RAGNode:
                 "rag_response": None,
             }
 
-        # RAG is not configured.
         if self.retriever is None:
             return {
                 **state,
@@ -42,6 +36,15 @@ class RAGNode:
         user_input = state.get("user_input", "").strip()
 
         if not user_input:
+            return {
+                **state,
+                "rag_required": False,
+                "rag_context": "",
+                "rag_response": None,
+            }
+
+        from src.agents.nodes.router_node import RouterNode
+        if RouterNode.is_general_query(user_input):
             return {
                 **state,
                 "rag_required": False,

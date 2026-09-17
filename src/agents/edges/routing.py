@@ -1,51 +1,55 @@
+"""
+LangGraph Conditional Routing Edges for Vayvora AI.
+
+Routes workflow execution dynamically based on the continuous semantic
+classification and conversation memory states.
+"""
+
 from src.agents.state import AgentState
 
 
 def route_after_router(state: AgentState) -> str:
     """
-    Decide the next Agent node after the fast local router.
+    Decide the next Agent node after semantic vector classification.
     """
-
     route = state.get("route", "llm")
 
+    # Fast-path for conversational greetings and short courtesies
     if route == "direct":
         return "response"
 
-    if route == "rag":
-        return "rag"
+    # All non-direct queries pass through memory inspection first
+    if route in ("rag", "mcp", "llm"):
+        return "memory"
 
-    if route == "mcp":
-        return "tool"
-
-    return "llm"
+    return "memory"
 
 
 def route_after_memory(state: AgentState) -> str:
     """
-    Decide whether RAG is actually necessary after checking memory.
+    Decide whether RAG or MCP execution is necessary after checking conversation memory.
 
-    If the requested information is already available in memory,
-    skip RAG and go directly to the LLM.
+    If the requested company knowledge is already satisfied in the multi-turn
+    conversation memory, bypass expensive RAG retrieval and route straight to the LLM.
 
-    MCP is still handled separately because it may represent a
-    live external action or live external data request.
+    MCP external actions are passed through to the tool node because they represent
+    live external data queries or state mutations (e.g. sending messages, booking calls).
     """
-
     route = state.get("route", "llm")
 
-    # Normal conversation.
+    # General conversation
     if route == "llm":
         return "llm"
 
-    # Memory already contains relevant information.
-    if state.get("memory_hit"):
+    # Memory already contains the needed organizational facts
+    if route == "rag" and state.get("memory_hit"):
         return "llm"
 
-    # RAG was requested and memory did not satisfy the request.
+    # Company knowledge requested and not present in memory
     if route == "rag":
         return "rag"
 
-    # MCP request.
+    # MCP external tool action
     if route == "mcp":
         return "tool"
 
@@ -54,15 +58,13 @@ def route_after_memory(state: AgentState) -> str:
 
 def route_after_rag(state: AgentState) -> str:
     """
-    RAG always feeds the retrieved context into the single LLM.
+    Retrieved knowledge base context feeds into the speech LLM for grounded synthesis.
     """
-
     return "llm"
 
 
 def route_after_tool(state: AgentState) -> str:
     """
-    MCP/tool results are passed into the single LLM.
+    External tool execution results feed into the speech LLM for conversational confirmation.
     """
-
     return "llm"

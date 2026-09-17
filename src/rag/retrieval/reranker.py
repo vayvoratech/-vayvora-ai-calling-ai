@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from functools import lru_cache
-
 from sentence_transformers import CrossEncoder
 
 from src.rag.schemas import RetrievalResult
@@ -9,10 +8,8 @@ from src.rag.schemas import RetrievalResult
 
 class Reranker:
     """
-    Cross-encoder reranker for RAG retrieval candidates.
-
-    The cross-encoder score is used only for ranking.
-    It must NOT be treated as a cosine-similarity score.
+    Cross-encoder transformer reranker for RAG retrieval candidates.
+    Ensures optimal semantic alignment between voice query and candidate chunks.
     """
 
     def __init__(
@@ -28,29 +25,18 @@ class Reranker:
         results: list[RetrievalResult],
         top_k: int = 5,
     ) -> list[RetrievalResult]:
-        if not query or not query.strip():
-            return []
-
-        if not results:
+        if not query or not query.strip() or not results:
             return []
 
         top_k = max(1, top_k)
+        pairs = [(query.strip(), result.text) for result in results]
 
-        pairs = [
-            (query.strip(), result.text)
-            for result in results
-        ]
-
-        scores = self.model.predict(
-            pairs,
-            show_progress_bar=False,
-        )
+        scores = self.model.predict(pairs, show_progress_bar=False)
 
         reranked: list[RetrievalResult] = []
 
         for result, score in zip(results, scores):
             metadata = dict(result.metadata)
-
             metadata.update(
                 {
                     "retrieval_method": "hybrid_reranked",
@@ -70,20 +56,10 @@ class Reranker:
                 )
             )
 
-        reranked.sort(
-            key=lambda result: result.score,
-            reverse=True,
-        )
-
+        reranked.sort(key=lambda r: r.score, reverse=True)
         return reranked[:top_k]
 
 
 @lru_cache(maxsize=1)
 def get_reranker() -> Reranker:
-    """
-    Return a singleton reranker instance.
-
-    Loading the cross-encoder is expensive, so the model
-    should be loaded only once per process.
-    """
     return Reranker()

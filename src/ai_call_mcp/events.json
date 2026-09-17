@@ -1,10 +1,26 @@
 [
     {
         "id": 1,
-        "title": "MCP Architecture Sync",
-        "date": "2026-09-02",
-        "time": "15:30",
-        "description": "Verify local native tools configuration.",
-        "created_at": "2026-09-02 12:16:13"
+        "title": "Discovery Call - Tomorrow",
+        "date": "2026-09-18",
+        "time": "15:00",
+        "description": "Scheduled for Tomorrow. Email: bpawanganesh@gmail.com. Mobile: 9949350699. WhatsApp Confirmation: Yes.",
+        "created_at": "2026-09-17T16:36:08.993346"
+    },
+    {
+        "id": 2,
+        "title": "Discovery Call - Bokka Pawan Ganesh",
+        "date": "2026-09-18",
+        "time": "15:00",
+        "description": "Scheduled for Bokka Pawan Ganesh. Email: pawanganesh1413@gmail.com. Mobile: 9949350699. WhatsApp Confirmation: No.",
+        "created_at": "2026-09-17T17:19:47.974910"
+    },
+    {
+        "id": 3,
+        "title": "Discovery Call - Kiran Kumar",
+        "date": "2026-09-18",
+        "time": "15:00",
+        "description": "Scheduled for Kiran Kumar. Email: kirankanteti143@gmail.com. Mobile: 9550027219. WhatsApp Confirmation: No.",
+        "created_at": "2026-09-17T17:26:49.804444"
     }
 ]

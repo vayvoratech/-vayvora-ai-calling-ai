@@ -1,20 +1,11 @@
 import os
+import redis
 
-from dotenv import load_dotenv
-from redis import Redis
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379")
 
-
-# Load environment variables from the project root .env
-load_dotenv()
-
-
-REDIS_URL = os.getenv(
-    "REDIS_URL",
-    "redis://localhost:6379",
-)
-
-
-redis_client = Redis.from_url(
+# Standalone Redis client with connection pooling
+redis_client = redis.Redis.from_url(
     REDIS_URL,
-    decode_responses=True,
+    decode_responses=False,
+    socket_timeout=5,
 )

@@ -14,7 +14,7 @@ from src.voice.tts.deepgram_tts_service import DeepgramFluxTTS
 router = APIRouter()
 
 PUBLIC_WS_URL = (
-    "wss://piece-penalty-reveal-shelter"
+    "wss://yorkshire-webpage-belfast-graphical"
     ".trycloudflare.com/media-stream"
 )
 

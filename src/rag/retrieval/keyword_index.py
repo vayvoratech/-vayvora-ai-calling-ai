@@ -13,21 +13,14 @@ class KnowledgeBaseKeywordIndex:
     def __init__(self, tenant_id: str = "default"):
         self.tenant_id = tenant_id
 
-        chunks = IngestionPipeline().run(
-            tenant_id=tenant_id
-        )
+        try:
+            chunks = IngestionPipeline().run(tenant_id=tenant_id)
+        except Exception:
+            chunks = []
 
         documents: list[KeywordDocument] = []
 
         for chunk in chunks:
-            # Give the BM25 index useful structural information.
-            #
-            # This helps exact queries such as:
-            # "What is Vayvora?"
-            # "Tell me about Vayvora"
-            # "What company is Vayvora?"
-            #
-            # The original chunk text remains unchanged.
             searchable_text = " ".join(
                 [
                     chunk.document_id.replace("_", " "),
@@ -54,9 +47,7 @@ class KnowledgeBaseKeywordIndex:
                 )
             )
 
-        self.retriever = BM25Retriever(
-            documents
-        )
+        self.retriever = BM25Retriever(documents)
 
     def search(
         self,
@@ -68,13 +59,8 @@ class KnowledgeBaseKeywordIndex:
             top_k=top_k,
         )
 
-        # Restore the original chunk text.
-        # The expanded searchable text above is only for BM25.
         for result in results:
-            original_text = result.metadata.get(
-                "original_text"
-            )
-
+            original_text = result.metadata.get("original_text")
             if original_text:
                 result.text = original_text
 
@@ -85,6 +71,4 @@ class KnowledgeBaseKeywordIndex:
 def get_keyword_index(
     tenant_id: str = "default",
 ) -> KnowledgeBaseKeywordIndex:
-    return KnowledgeBaseKeywordIndex(
-        tenant_id=tenant_id
-    )
+    return KnowledgeBaseKeywordIndex(tenant_id=tenant_id)

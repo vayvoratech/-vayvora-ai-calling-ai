@@ -1,38 +1,39 @@
 from typing import Any
-
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from src.agents.prompts.system import SYSTEM_PROMPT
 from src.agents.state import AgentState
 
 
 class LLMNode:
     """
-    Single LLM execution layer for Vayvora AI.
-
-    The LLM is called after the agent has gathered the required
-    information from:
-
-        Memory
-        RAG
-        MCP / Tools
-
-    Flow:
-
-        Memory / RAG / MCP
-                ↓
-             LLMNode
-                ↓
-        Final spoken response
+    Single Speech LLM execution layer for Vayvora AI.
+    Converts grounded facts and tool outcomes into voice-optimized speech.
     """
 
     def __init__(self, llm: Any):
         self.llm = llm
 
+    @staticmethod
+    def _extract_text(content: Any) -> str:
+        """Safely extract string content whether Gemini returns str or list of parts."""
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            parts = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict) and "text" in item:
+                    parts.append(item["text"])
+                elif hasattr(item, "text"):
+                    parts.append(item.text)
+                else:
+                    parts.append(str(item))
+            return "".join(parts).strip()
+        return str(content).strip()
+
     async def run(self, state: AgentState) -> AgentState:
         user_input = state.get("user_input", "").strip()
-
-        # ---------------------------------------------------------
-        # Empty input
-        # ---------------------------------------------------------
 
         if not user_input:
             return {
@@ -41,148 +42,81 @@ class LLMNode:
                 "is_complete": True,
             }
 
-        # ---------------------------------------------------------
-        # Existing conversation messages
-        # ---------------------------------------------------------
-
-        messages = list(state.get("messages", []))
-
-        # ---------------------------------------------------------
-        # System prompt
-        # ---------------------------------------------------------
-
-        if not any(
-            message.get("role") == "system"
-            for message in messages
-        ):
-            messages.insert(
-                0,
-                {
-                    "role": "system",
-                    "content": SYSTEM_PROMPT,
-                },
+        # Check if the query is a general out-of-scope conceptual or trivia question
+        from src.agents.nodes.router_node import RouterNode
+        if RouterNode.is_general_query(user_input):
+            out_of_scope_reply = (
+                "I'm sorry, I can't process that query. I can only assist with "
+                "questions regarding Vayvora Technology's engineering services, "
+                "company information, or calendar appointments."
             )
+            updated_messages = list(state.get("messages", [])) + [
+                {"role": "user", "content": user_input},
+                {"role": "assistant", "content": out_of_scope_reply},
+            ]
+            return {
+                **state,
+                "messages": updated_messages,
+                "response": out_of_scope_reply,
+                "is_complete": True,
+                "error": None,
+            }
 
-        # ---------------------------------------------------------
-        # Memory context
-        # ---------------------------------------------------------
+        # Build Single Combined System Instruction
+        system_blocks = [SYSTEM_PROMPT]
 
         memory_context = state.get("memory_context", [])
-
         if memory_context:
-            memory_text = "\n".join(
-                str(item)
-                for item in memory_context
+            memory_text = "\n".join(str(item) for item in memory_context)
+            system_blocks.append(
+                f"\n\nRelevant conversation memory:\n{memory_text}"
             )
-
-            messages.append(
-                {
-                    "role": "system",
-                    "content": (
-                        "Relevant conversation memory:\n\n"
-                        f"{memory_text}\n\n"
-                        "Use this memory when it is relevant to "
-                        "the user's current request."
-                    ),
-                }
-            )
-
-        # ---------------------------------------------------------
-        # RAG context
-        # ---------------------------------------------------------
 
         rag_context = state.get("rag_context", "")
-
         if rag_context:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": (
-                        "GROUNDING INSTRUCTION:\n"
-                        "The following information was retrieved "
-                        "from the Vayvora knowledge base.\n\n"
-                        "Use this information as the source of truth "
-                        "for company, service, pricing, policy, "
-                        "process, support, portfolio, and other "
-                        "knowledge-base questions.\n\n"
-                        "Do not invent, assume, or fabricate facts "
-                        "that are not supported by the retrieved "
-                        "knowledge.\n\n"
-                        "If the retrieved knowledge does not contain "
-                        "the requested information, clearly state "
-                        "that the information is not available in "
-                        "the current knowledge base.\n\n"
-                        "RETRIEVED KNOWLEDGE:\n"
-                        f"{rag_context}"
-                    ),
-                }
+            system_blocks.append(
+                f"\n\nGROUNDING INSTRUCTION:\n"
+                f"Source of truth knowledge base:\n{rag_context}\n"
+                f"Adhere strictly to these factual details. Never invent or hallucinate information."
             )
-
-        # ---------------------------------------------------------
-        # MCP / Tool result
-        # ---------------------------------------------------------
 
         tool_result = state.get("tool_result")
-
         if tool_result is not None:
-            messages.append(
-                {
-                    "role": "system",
-                    "content": (
-                        "Result from the requested external "
-                        "action or live data source:\n\n"
-                        f"{tool_result}\n\n"
-                        "Use this result when answering the user's "
-                        "request. Do not claim an external action "
-                        "succeeded unless the tool result supports it."
-                    ),
-                }
+            system_blocks.append(
+                f"\n\nResult from external action/tool:\n{tool_result}\n"
+                f"Summarize this outcome in a friendly, conversational spoken sentence. "
+                f"Never read technical parameter keys, JSON structures, or database IDs."
             )
 
-        # ---------------------------------------------------------
-        # Current user message
-        # ---------------------------------------------------------
+        combined_system_prompt = "\n".join(system_blocks)
 
-        if not any(
-            message.get("role") == "user"
-            and message.get("content") == user_input
-            for message in messages
-        ):
-            messages.append(
-                {
-                    "role": "user",
-                    "content": user_input,
-                }
-            )
+        formatted_messages = [SystemMessage(content=combined_system_prompt)]
 
-        # ---------------------------------------------------------
-        # LLM execution
-        # ---------------------------------------------------------
+        for msg in state.get("messages", []):
+            role = msg.get("role")
+            content = msg.get("content", "")
+
+            if role == "tool":
+                continue
+            elif role == "user":
+                formatted_messages.append(HumanMessage(content=str(content)))
+            elif role == "assistant":
+                formatted_messages.append(AIMessage(content=str(content)))
+
+        if not formatted_messages or formatted_messages[-1].content != user_input:
+            formatted_messages.append(HumanMessage(content=user_input))
 
         try:
-            response = await self.llm.ainvoke(messages)
-
-            if hasattr(response, "content"):
-                content = response.content
-            else:
-                content = str(response)
-
-            content = content.strip()
+            response = await self.llm.ainvoke(formatted_messages)
+            raw_content = getattr(response, "content", response)
+            content = self._extract_text(raw_content)
 
             if not content:
-                content = (
-                    "I'm sorry, I wasn't able to generate a response."
-                )
+                content = "I'm sorry, I wasn't able to generate a response."
 
-            # -----------------------------------------------------
-            # Conversation history
-            # -----------------------------------------------------
-
-            updated_messages = messages + [
-                {
-                    "role": "assistant",
-                    "content": content,
-                }
+            updated_messages = list(state.get("messages", [])) + [
+                {"role": "user", "content": user_input},
+                {"role": "assistant", "content": content},
             ]
 
             return {
@@ -196,10 +130,7 @@ class LLMNode:
         except Exception as exc:
             return {
                 **state,
-                "response": (
-                    "I'm sorry, I'm having trouble processing "
-                    "that right now."
-                ),
+                "response": "I'm sorry, I'm having trouble processing that right now.",
                 "is_complete": True,
                 "error": str(exc),
             }

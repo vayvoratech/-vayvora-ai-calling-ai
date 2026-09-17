@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vayvora AI Voice Agent Tester</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --border: #334155;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --primary: #3b82f6;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      height: 100vh;
+      overflow: hidden;
+    }
+    #sidebar {
+      width: 320px;
+      background: var(--panel);
+      border-right: 1px solid var(--border);
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.25rem;
+      overflow-y: auto;
+    }
+    #chat-container {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    #header {
+      padding: 1rem 1.5rem;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+    }
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+    .message {
+      max-width: 80%;
+      padding: 0.85rem 1rem;
+      border-radius: 8px;
+      line-height: 1.5;
+      font-size: 0.95rem;
+    }
+    .message.user {
+      align-self: flex-end;
+      background: var(--primary);
+      color: white;
+    }
+    .message.assistant {
+      align-self: flex-start;
+      background: var(--panel);
+      border: 1px solid var(--border);
+    }
+    #input-area {
+      padding: 1rem 1.5rem;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 0.75rem;
+      background: var(--panel);
+    }
+    input[type="text"] {
+      flex: 1;
+      background: #0f172a;
+      border: 1px solid var(--border);
+      color: white;
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      font-size: 0.95rem;
+      outline: none;
+    }
+    button.send-btn {
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .prompt-btn {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: #0f172a;
+      color: var(--text);
+      border: 1px solid var(--border);
+      padding: 0.5rem 0.75rem;
+      border-radius: 4px;
+      margin-bottom: 0.5rem;
+      cursor: pointer;
+      font-size: 0.8rem;
+    }
+    .prompt-btn:hover { border-color: var(--primary); }
+    .telemetry {
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 0.5rem;
+      padding-top: 0.5rem;
+      border-top: 1px solid var(--border);
+    }
+    .badge {
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-weight: bold;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+    }
+    .badge-rag { background: #1e40af; color: #bfdbfe; }
+    .badge-mcp { background: #92400e; color: #fde68a; }
+    .badge-direct { background: #166534; color: #bbf7d0; }
+    .badge-llm { background: #6b21a8; color: #e9d5ff; }
+    details {
+      margin-top: 0.5rem;
+      font-size: 0.8rem;
+    }
+    pre {
+      background: #0f172a;
+      padding: 0.5rem;
+      border-radius: 4px;
+      overflow-x: auto;
+      margin-top: 0.25rem;
+    }
+  </style>
+</head>
+<body>
+
+  <aside id="sidebar">
+    <h3>🧭 Router Config</h3>
+    <div id="config-panel" style="font-size: 0.85rem; color: var(--muted);">Loading...</div>
+    <hr style="border: 0; border-top: 1px solid var(--border);">
+    <h3>💡 Quick Prompts</h3>
+    <div id="prompts-list">
+      <button class="prompt-btn" onclick="sendPrompt(this.innerText)">What generative AI and cloud services does Vayvora offer?</button>
+      <button class="prompt-btn" onclick="sendPrompt(this.innerText)">What is Vayvora's pricing structure and hourly rates?</button>
+      <button class="prompt-btn" onclick="sendPrompt(this.innerText)">Schedule a discovery call for tomorrow at 3 PM</button>
+      <button class="prompt-btn" onclick="sendPrompt(this.innerText)">Check my calendar to see my upcoming appointments</button>
+      <button class="prompt-btn" onclick="sendPrompt(this.innerText)">Hello, good morning! Can you hear me?</button>
+    </div>
+    <button class="prompt-btn" style="margin-top: auto; background: #dc2626; color: white;" onclick="clearHistory()">🗑️ Clear History</button>
+  </aside>
+
+  <main id="chat-container">
+    <div id="header">
+      <h2>🎙️ Vayvora AI Voice Agent Tester</h2>
+      <p style="font-size: 0.85rem; color: var(--muted);">Direct HTML/JS interface connected to AgentRuntime</p>
+    </div>
+
+    <div id="messages"></div>
+
+    <form id="input-area" onsubmit="handleSend(event)">
+      <input type="text" id="query-input" placeholder="Type a message..." autocomplete="off">
+      <button type="submit" class="send-btn">Send</button>
+    </form>
+  </main>
+
+  <script>
+    let messageHistory = [];
+
+    async function loadConfig() {
+      try {
+        const res = await fetch('/config');
+        const data = await res.json();
+        document.getElementById('config-panel').innerHTML = `
+          <div><strong>Model:</strong> ${data.model_name}</div>
+          <div><strong>Threshold:</strong> ${data.router_confidence_threshold}</div>
+          <div><strong>Temperature:</strong> ${data.router_temperature}</div>
+          <div><strong>KB Weight:</strong> ${data.kb_resonance_weight}</div>
+          <div><strong>MCP Threshold:</strong> ${data.tool_similarity_threshold}</div>
+        `;
+      } catch (err) {
+        document.getElementById('config-panel').innerText = 'Failed to load config';
+      }
+    }
+
+    function renderMessage(role, content, telemetry = null) {
+      const msgBox = document.getElementById('messages');
+      const div = document.createElement('div');
+      div.className = `message ${role}`;
+      div.innerHTML = `<div>${content}</div>`;
+
+      if (telemetry) {
+        const badgeClass = `badge-${telemetry.route.toLowerCase()}`;
+        let detailsHtml = '';
+
+        if (telemetry.rationale) {
+          detailsHtml += `<div><strong>Rationale:</strong> ${telemetry.rationale}</div>`;
+        }
+        if (telemetry.tool_name) {
+          detailsHtml += `<div><strong>Tool:</strong> ${telemetry.tool_name}</div>`;
+        }
+        if (telemetry.rag_context) {
+          detailsHtml += `<details><summary>📚 RAG Context</summary><pre>${telemetry.rag_context}</pre></details>`;
+        }
+
+        div.innerHTML += `
+          <div class="telemetry">
+            <span>⏱️ ${telemetry.latency.toFixed(1)}ms</span> | 
+            <span class="badge ${badgeClass}">${telemetry.route}</span> | 
+            <span>🎯 ${(telemetry.confidence * 100).toFixed(1)}%</span>
+            ${detailsHtml ? `<details><summary>🔍 Telemetry Breakdown</summary>${detailsHtml}</details>` : ''}
+          </div>
+        `;
+      }
+
+      msgBox.appendChild(div);
+      msgBox.scrollTop = msgBox.scrollHeight;
+    }
+
+    async function sendPrompt(text) {
+      document.getElementById('query-input').value = text;
+      handleSend(new Event('submit'));
+    }
+
+    async function handleSend(e) {
+      e.preventDefault();
+      const input = document.getElementById('query-input');
+      const text = input.value.trim();
+      if (!text) return;
+
+      input.value = '';
+      renderMessage('user', text);
+
+      const requestPayload = {
+        user_input: text,
+        messages: messageHistory
+      };
+
+      try {
+        const res = await fetch('/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(requestPayload)
+        });
+        const data = await res.json();
+
+        messageHistory.push({ role: 'user', content: text });
+        messageHistory.push({ role: 'assistant', content: data.response });
+
+        renderMessage('assistant', data.response, data);
+      } catch (err) {
+        renderMessage('assistant', 'Error: Could not reach agent backend.');
+      }
+    }
+
+    function clearHistory() {
+      messageHistory = [];
+      document.getElementById('messages').innerHTML = '';
+    }
+
+    window.onload = loadConfig;
+  </script>
+</body>
+</html>

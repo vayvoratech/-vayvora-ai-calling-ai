@@ -179,3 +179,5 @@ Only official Vayvora pricing should be presented as Vayvora's price.
 This document records the current availability and handling rules for Vayvora Technology AI service pricing.
 
 It does not contain any invented prices or unofficial quotations.
+
+The price of AI Engineering course is 5000 Rupees.

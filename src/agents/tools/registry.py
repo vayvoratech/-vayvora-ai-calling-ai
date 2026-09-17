@@ -4,14 +4,6 @@ from typing import Any
 class ToolRegistry:
     """
     Registry for tools available to the Vayvora AI Agent.
-
-    Tools may be:
-    - Local application tools
-    - MCP adapter tools
-    - Future external integrations
-
-    The registry only manages tool discovery.
-    Business logic remains inside the individual tool/MCP services.
     """
 
     def __init__(self) -> None:

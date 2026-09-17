@@ -1,6 +1,18 @@
+"""
+Production RAG Retrieval Service with Semantic Knowledge-Base Integration.
+
+Executes multi-stage hybrid retrieval for Vayvora AI Voice Calling:
+1. Dense vector search via Redis VSet with SentenceTransformer embeddings
+2. Lexical keyword retrieval via BM25
+3. Hybrid rank fusion via Reciprocal Rank Fusion (RRF)
+4. Semantic cross-encoder reranking
+5. Relevance score threshold gating to eliminate hallucinations
+"""
+
 from __future__ import annotations
 
 from functools import lru_cache
+from typing import List
 
 from src.rag.config import rag_config
 from src.rag.embeddings.provider import get_embedding_provider
@@ -12,6 +24,14 @@ from src.rag.schemas import RAGResponse, RetrievalResult
 
 
 class RAGRetriever:
+    """
+    Two-stage Hybrid RAG Pipeline with Semantic Query Enrichment:
+    1. First stage: Dense Redis vector search (VSIM) + Lexical BM25 search
+    2. Fusion: Reciprocal Rank Fusion (RRF)
+    3. Second stage: Cross-Encoder Transformer Reranker
+    4. Relevance Gate: Score thresholding to eliminate hallucinations
+    """
+
     def __init__(
         self,
         vector_store: RAGVectorStore | None = None,
@@ -22,20 +42,30 @@ class RAGRetriever:
         self.embedding_provider = get_embedding_provider()
         self.reranker = reranker or get_reranker()
         self.fusion = fusion or ReciprocalRankFusion()
-
-        # Current system uses one local knowledge base.
-        # Multi-tenant keyword indexes can be added later.
         self.keyword_retriever = get_keyword_index("default")
 
     @staticmethod
     def _expand_query(query: str) -> str:
-        # Normalize common punctuation so that:
-        # "Tell me about Vayvora"
-        # "Tell me about Vayvora."
-        # "Tell me about Vayvora?"
-        # all produce the same retrieval expansion.
+        """
+        Semantically enrich concise or conversational voice queries
+        with knowledge base domain context before vector generation.
+        """
+        from src.agents.nodes.router_node import RouterNode
+        if RouterNode.is_general_query(query):
+            return query
+
         normalized = query.lower().strip().rstrip("?!.,;:")
 
+        domain_cues = (
+            "services", "capabilities", "pricing", "price", "cost", "rates", "rate",
+            "fee", "fees", "course", "courses", "training", "bootcamp",
+            "refund", "sla", "uptime", "contact", "headquarters",
+            "office", "cloud", "aws", "mobile", "ai", "genai",
+        )
+        if any(cue in normalized for cue in domain_cues) and "vayvora" not in normalized:
+            return f"{query} Vayvora Technology enterprise software AI consultancy"
+
+        # Specific company identity queries
         company_queries = {
             "what is vayvora",
             "tell me about vayvora",
@@ -45,45 +75,30 @@ class RAGRetriever:
             "about vayvora",
             "about vayvora technology",
         }
-
         if normalized in company_queries:
-            return (
-                f"{query} Vayvora Technology company overview "
-                "about company company name company approach"
-            )
+            return f"{query} Vayvora Technology company overview about company vision services"
 
         return query
 
     @staticmethod
-    def _belongs_to_tenant(
-        result: RetrievalResult,
-        tenant_id: str,
-    ) -> bool:
+    def _belongs_to_tenant(result: RetrievalResult, tenant_id: str) -> bool:
         result_tenant = result.metadata.get("tenant_id")
-
         if result_tenant is None:
             return True
-
         return result_tenant == tenant_id
 
     @staticmethod
-    def _build_context(
-        results: list[RetrievalResult],
-    ) -> str:
+    def _build_context(results: List[RetrievalResult]) -> str:
         if not results:
             return ""
 
-        context_parts = []
-
-        for index, result in enumerate(results, start=1):
-            context_parts.append(
-                f"[Source {index}]\n"
-                f"File: {result.source}\n"
-                f"Section: {result.section or 'N/A'}\n"
-                f"Content:\n{result.text}"
+        context_blocks = []
+        for idx, item in enumerate(results, start=1):
+            context_blocks.append(
+                f"[Document Source {idx} - {item.source} | Section: {item.section or 'General'}]\n"
+                f"{item.text.strip()}"
             )
-
-        return "\n\n".join(context_parts)
+        return "\n\n".join(context_blocks)
 
     async def search(
         self,
@@ -91,142 +106,83 @@ class RAGRetriever:
         tenant_id: str = "default",
         top_k: int | None = None,
     ) -> RAGResponse:
-
         if not query or not query.strip():
             raise ValueError("Query cannot be empty.")
 
         if not tenant_id or not tenant_id.strip():
             raise ValueError("tenant_id is required.")
 
-        retrieval_k = top_k or rag_config.top_k
+        k = top_k or rag_config.top_k
+        enriched_query = self._expand_query(query)
 
-        if retrieval_k < 1:
-            raise ValueError("top_k must be greater than zero.")
+        # 1. Dense vector embedding
+        query_vector = self.embedding_provider.embed_text(enriched_query)
 
-        retrieval_query = self._expand_query(query)
-
-        # ---------------------------------------------------------
-        # 1. Generate query embedding
-        # ---------------------------------------------------------
-
-        query_vector = self.embedding_provider.embed_text(
-            retrieval_query
-        )
-
-        # ---------------------------------------------------------
-        # 2. Vector search
-        # ---------------------------------------------------------
-
+        # 2. Redis vector search
         vector_results = self.vector_store.search(
             query_vector=query_vector,
-            top_k=retrieval_k,
+            top_k=k,
             tenant_id=tenant_id,
         )
-
         vector_results = [
-            result
-            for result in vector_results
-            if self._belongs_to_tenant(
-                result,
-                tenant_id,
-            )
+            res for res in vector_results
+            if self._belongs_to_tenant(res, tenant_id)
         ]
 
-        # ---------------------------------------------------------
-        # 3. Keyword / BM25 search
-        # ---------------------------------------------------------
-
+        # 3. BM25 keyword search
         keyword_results = self.keyword_retriever.search(
-            query=retrieval_query,
-            top_k=retrieval_k,
+            query=enriched_query,
+            top_k=k,
         )
-
         keyword_results = [
-            result
-            for result in keyword_results
-            if self._belongs_to_tenant(
-                result,
-                tenant_id,
-            )
+            res for res in keyword_results
+            if self._belongs_to_tenant(res, tenant_id)
         ]
 
-        # ---------------------------------------------------------
-        # 4. Hybrid fusion
-        # ---------------------------------------------------------
-
+        # 4. Hybrid Reciprocal Rank Fusion
         if vector_results and keyword_results:
             candidates = self.fusion.fuse(
                 vector_results=vector_results,
                 keyword_results=keyword_results,
-                top_k=retrieval_k,
+                top_k=k,
             )
-
         elif vector_results:
             candidates = vector_results
-
         else:
             candidates = keyword_results
 
-        # ---------------------------------------------------------
-        # 5. Cross-encoder reranking
-        #
-        # Use the expanded retrieval query here as well.
-        # This keeps retrieval and reranking aligned.
-        # ---------------------------------------------------------
-
+        # 5. Cross-encoder transformer reranking
         if self.reranker and candidates:
-            final_results = self.reranker.rerank(
-                query=retrieval_query,
+            final_candidates = self.reranker.rerank(
+                query=enriched_query,
                 results=candidates,
                 top_k=rag_config.final_top_k,
             )
-
         else:
-            final_results = candidates[:rag_config.final_top_k]
+            final_candidates = candidates[:rag_config.final_top_k]
 
-        # ---------------------------------------------------------
-        # 6. Relevance gate
-        #
-        # Cross-encoder scores are logits, not probabilities.
-        # The current calibrated baseline is 4.0.
-        # ---------------------------------------------------------
-
+        # 6. Semantic Relevance Gate
         relevance_threshold = rag_config.relevance_threshold
-
         relevant_results = [
-            result
-            for result in final_results
-            if result.score >= relevance_threshold
+            res for res in final_candidates
+            if res.score >= relevance_threshold
         ]
 
-        # ---------------------------------------------------------
-        # 7. Build grounded context
-        # ---------------------------------------------------------
-
-        context = self._build_context(
-            relevant_results
-        )
-
-        # ---------------------------------------------------------
-        # 8. Return structured RAG response
-        # ---------------------------------------------------------
+        context = self._build_context(relevant_results)
 
         return RAGResponse(
             query=query,
             results=relevant_results,
             context=context,
-            has_relevant_context=bool(
-                relevant_results
-            ),
+            has_relevant_context=bool(relevant_results),
             metadata={
                 "tenant_id": tenant_id,
-                "retrieval_query": retrieval_query,
+                "enriched_query": enriched_query,
                 "vector_results": len(vector_results),
                 "keyword_results": len(keyword_results),
-                "candidate_results": len(candidates),
-                "final_results": len(final_results),
-                "relevant_results": len(relevant_results),
-                "top_k": retrieval_k,
+                "total_candidates": len(candidates),
+                "relevant_chunks": len(relevant_results),
+                "top_k": k,
                 "final_top_k": rag_config.final_top_k,
                 "relevance_threshold": relevance_threshold,
                 "reranked": bool(self.reranker),
