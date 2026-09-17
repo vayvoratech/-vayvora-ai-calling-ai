@@ -8,30 +8,27 @@ from src.agents.state import AgentState
 
 class LLMRouterNode:
     """
-    LLM fallback router.
+    LLM-based routing controller.
 
-    This node is called ONLY when the fast deterministic router
-    cannot confidently determine the user's intent.
+    This node is the FIRST decision-making stage.
 
-    It does not answer the user.
-    It only selects:
+    It does NOT generate the final user response.
 
-        direct
-        rag
-        mcp
-        llm
+    Final routes:
+        llm -> normal LLM response
+        rag -> retrieve knowledge, then LLM
+        mcp -> execute tool, then LLM
     """
 
-    ALLOWED_ROUTES = {
-        "direct",
+    VALID_ROUTES = {
+        "llm",
         "rag",
         "mcp",
-        "llm",
     }
 
-    DEFAULT_ROUTE = "llm"
+    MAX_HISTORY_MESSAGES = 8
 
-    def __init__(self, llm: Any):
+    def __init__(self, llm: Any) -> None:
         self.llm = llm
 
     async def run(self, state: AgentState) -> AgentState:
@@ -40,72 +37,56 @@ class LLMRouterNode:
         if not user_input:
             return {
                 **state,
-                "route": "direct",
+                "route": "llm",
                 "route_confidence": 1.0,
-                "route_source": "system",
+                "route_source": "llm_router",
                 "llm_router_required": False,
-                "llm_required": False,
                 "rag_required": False,
                 "tool_required": False,
-                "response": "I'm sorry, I didn't hear anything.",
-                "is_complete": True,
+                "llm_required": True,
             }
 
-        messages = self._build_messages(state, user_input)
+        messages = self._build_messages(state)
 
         try:
-            response = await self.llm.ainvoke(messages)
+            result = await self.llm.ainvoke(messages)
 
-            content = self._extract_content(response)
+            raw_content = self._extract_content(result)
 
-            decision = self._parse_decision(content)
+            decision = self._parse_decision(raw_content)
 
             route = decision["route"]
             confidence = decision["confidence"]
 
-            return {
-                **state,
-                "route": route,
-                "route_confidence": confidence,
-                "route_source": "llm_router",
-                "llm_router_required": False,
-
-                "llm_required": route in {
-                    "llm",
-                    "rag",
-                    "mcp",
-                },
-
-                "rag_required": route == "rag",
-                "tool_required": route == "mcp",
-
-                "is_complete": False,
-                "error": None,
-            }
+            return self._apply_route(
+                state=state,
+                route=route,
+                confidence=confidence,
+            )
 
         except Exception as exc:
             # Safe fallback:
-            # if the routing LLM fails, normal LLM conversation
-            # is safer than guessing RAG or MCP.
+            # if the routing model fails, use the normal LLM.
             return {
                 **state,
-                "route": self.DEFAULT_ROUTE,
+                "route": "llm",
                 "route_confidence": 0.0,
                 "route_source": "llm_router_fallback",
                 "llm_router_required": False,
-                "llm_required": True,
                 "rag_required": False,
                 "tool_required": False,
-                "is_complete": False,
-                "error": f"LLM router failed: {exc}",
+                "llm_required": True,
+                "error": f"LLM router error: {exc}",
             }
+
+    # ---------------------------------------------------------
+    # Build router messages
+    # ---------------------------------------------------------
 
     def _build_messages(
         self,
         state: AgentState,
-        user_input: str,
     ) -> list[dict[str, str]]:
-
         messages: list[dict[str, str]] = [
             {
                 "role": "system",
@@ -115,136 +96,190 @@ class LLMRouterNode:
 
         conversation = state.get("messages", [])
 
-        # Give the router recent conversation context.
-        recent_messages = conversation[-8:]
+        if conversation:
+            recent_messages = conversation[
+                -self.MAX_HISTORY_MESSAGES:
+            ]
 
-        for message in recent_messages:
-            role = message.get("role")
+            for message in recent_messages:
+                role = message.get("role")
 
-            if role not in {"user", "assistant"}:
-                continue
+                if role not in {
+                    "user",
+                    "assistant",
+                }:
+                    continue
 
-            content = str(message.get("content", "")).strip()
+                content = message.get("content", "")
 
-            if not content:
-                continue
+                if not content:
+                    continue
 
-            messages.append(
-                {
-                    "role": role,
-                    "content": content,
-                }
-            )
+                messages.append(
+                    {
+                        "role": role,
+                        "content": str(content),
+                    }
+                )
 
-        # Ensure current user input is present.
-        if not any(
-            message.get("role") == "user"
-            and message.get("content") == user_input
-            for message in messages
-        ):
-            messages.append(
-                {
-                    "role": "user",
-                    "content": user_input,
-                }
-            )
+        messages.append(
+            {
+                "role": "user",
+                "content": state.get("user_input", ""),
+            }
+        )
 
         return messages
 
+    # ---------------------------------------------------------
+    # Extract model content
+    # ---------------------------------------------------------
+
     @staticmethod
-    def _extract_content(response: Any) -> str:
-        if hasattr(response, "content"):
-            content = response.content
-        else:
-            content = str(response)
+    def _extract_content(result: Any) -> str:
+        content = getattr(result, "content", result)
 
         if isinstance(content, list):
-            content = "".join(
-                str(item)
-                for item in content
-            )
+            parts = []
+
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text")
+
+                    if text:
+                        parts.append(str(text))
+
+                elif hasattr(item, "text"):
+                    parts.append(str(item.text))
+
+                else:
+                    parts.append(str(item))
+
+            return "\n".join(parts).strip()
 
         return str(content).strip()
+
+    # ---------------------------------------------------------
+    # Parse JSON decision
+    # ---------------------------------------------------------
 
     def _parse_decision(
         self,
         content: str,
     ) -> dict[str, Any]:
+        content = content.strip()
 
-        # First try direct JSON.
+        # ---------------------------------------------
+        # 1. Direct JSON
+        # ---------------------------------------------
+
         try:
             data = json.loads(content)
 
             return self._validate_decision(data)
 
-        except (json.JSONDecodeError, TypeError, ValueError):
+        except (json.JSONDecodeError, ValueError, TypeError):
             pass
 
-        # Handle accidental markdown fences.
-        cleaned = re.sub(
-            r"```(?:json)?",
-            "",
+        # ---------------------------------------------
+        # 2. Markdown JSON block
+        # ---------------------------------------------
+
+        fenced_match = re.search(
+            r"```(?:json)?\s*(\{.*?\})\s*```",
             content,
-            flags=re.IGNORECASE,
-        ).replace("```", "").strip()
-
-        try:
-            data = json.loads(cleaned)
-
-            return self._validate_decision(data)
-
-        except (json.JSONDecodeError, TypeError, ValueError):
-            pass
-
-        # Last-resort route extraction.
-        route_match = re.search(
-            r'"route"\s*:\s*"(direct|rag|mcp|llm)"',
-            content,
-            re.IGNORECASE,
+            flags=re.DOTALL | re.IGNORECASE,
         )
 
-        confidence_match = re.search(
-            r'"confidence"\s*:\s*([01](?:\.\d+)?)',
+        if fenced_match:
+            try:
+                data = json.loads(
+                    fenced_match.group(1)
+                )
+
+                return self._validate_decision(data)
+
+            except (
+                json.JSONDecodeError,
+                ValueError,
+                TypeError,
+            ):
+                pass
+
+        # ---------------------------------------------
+        # 3. Extract JSON object
+        # ---------------------------------------------
+
+        json_match = re.search(
+            r"\{.*\}",
             content,
-            re.IGNORECASE,
+            flags=re.DOTALL,
+        )
+
+        if json_match:
+            try:
+                data = json.loads(
+                    json_match.group(0)
+                )
+
+                return self._validate_decision(data)
+
+            except (
+                json.JSONDecodeError,
+                ValueError,
+                TypeError,
+            ):
+                pass
+
+        # ---------------------------------------------
+        # 4. Route extraction fallback
+        # ---------------------------------------------
+
+        route_match = re.search(
+            r"\b(llm|rag|mcp)\b",
+            content.lower(),
         )
 
         if route_match:
-            route = route_match.group(1).lower()
-
-            confidence = (
-                float(confidence_match.group(1))
-                if confidence_match
-                else 0.50
-            )
-
             return {
-                "route": route,
-                "confidence": confidence,
+                "route": route_match.group(1),
+                "confidence": 0.5,
             }
 
-        return {
-            "route": self.DEFAULT_ROUTE,
-            "confidence": 0.0,
-        }
+        raise ValueError(
+            "LLM router returned an invalid routing decision."
+        )
+
+    # ---------------------------------------------------------
+    # Validate decision
+    # ---------------------------------------------------------
 
     def _validate_decision(
         self,
-        data: dict[str, Any],
+        data: Any,
     ) -> dict[str, Any]:
+        if not isinstance(data, dict):
+            raise ValueError(
+                "Router response must be a JSON object."
+            )
 
         route = str(
-            data.get("route", self.DEFAULT_ROUTE)
-        ).lower()
+            data.get("route", "")
+        ).strip().lower()
 
-        if route not in self.ALLOWED_ROUTES:
-            route = self.DEFAULT_ROUTE
+        if route not in self.VALID_ROUTES:
+            raise ValueError(
+                f"Invalid route: {route}"
+            )
 
         try:
             confidence = float(
                 data.get("confidence", 0.0)
             )
-        except (TypeError, ValueError):
+        except (
+            TypeError,
+            ValueError,
+        ):
             confidence = 0.0
 
         confidence = max(
@@ -255,4 +290,30 @@ class LLMRouterNode:
         return {
             "route": route,
             "confidence": confidence,
+        }
+
+    # ---------------------------------------------------------
+    # Apply route to state
+    # ---------------------------------------------------------
+
+    @staticmethod
+    def _apply_route(
+        state: AgentState,
+        route: str,
+        confidence: float,
+    ) -> AgentState:
+        return {
+            **state,
+
+            "route": route,
+            "route_confidence": confidence,
+            "route_source": "llm_router",
+
+            "llm_router_required": False,
+
+            "llm_required": route == "llm",
+
+            "rag_required": route == "rag",
+
+            "tool_required": route == "mcp",
         }
