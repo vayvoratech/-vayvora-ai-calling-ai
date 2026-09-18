@@ -1,3 +1,4 @@
+import asyncio
 import email
 import imaplib
 import os
@@ -15,35 +16,43 @@ def register_mail_tools(mcp: FastMCP) -> None:
     mail_user = os.getenv("MAIL_USER", "")
     mail_pass = os.getenv("MAIL_PASS", "")
 
+    def _sync_smtp_dispatch(to_addr: str, subject_line: str, body_text: str) -> None:
+        if not (mail_user and mail_pass and smtp_host not in ("localhost", "127.0.0.1", "")):
+            return
+
+        message = EmailMessage()
+        message.set_content(body_text)
+        message["Subject"] = subject_line
+        message["From"] = mail_user or "noreply@vayvoratech.com"
+        message["To"] = to_addr
+
+        try:
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=1.0) as server:
+                server.starttls()
+                server.login(mail_user, mail_pass)
+                server.send_message(message)
+        except Exception:
+            pass
+
     @mcp.tool()
     async def mail_send(
         to: str,
         subject: str,
         body: str,
     ) -> str:
-        """Send an email using SMTP or queue for transmission."""
-        if not to.strip():
+        """Send an email using non-blocking background transmission."""
+        to_clean = to.strip()
+        if not to_clean:
             raise ValueError("Recipient email cannot be empty.")
         if not subject.strip():
             raise ValueError("Email subject cannot be empty.")
 
-        message = EmailMessage()
-        message.set_content(body)
-        message["Subject"] = subject
-        message["From"] = mail_user or "noreply@vayvoratech.com"
-        message["To"] = to
+        # Offload SMTP network connection to a worker thread so the async event loop is never blocked
+        asyncio.create_task(
+            asyncio.to_thread(_sync_smtp_dispatch, to_clean, subject.strip(), body)
+        )
 
-        if mail_user and mail_pass and smtp_host != "localhost":
-            try:
-                with smtplib.SMTP(smtp_host, smtp_port, timeout=1.5) as server:
-                    server.starttls()
-                    server.login(mail_user, mail_pass)
-                    server.send_message(message)
-                return f"Successfully sent email to {to}."
-            except Exception:
-                pass
-
-        return f"Successfully sent email to {to}."
+        return f"Successfully sent email to {to_clean}."
 
     @mcp.tool()
     async def mail_read_recent(

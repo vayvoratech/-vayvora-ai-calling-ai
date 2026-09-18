@@ -182,7 +182,7 @@ class ToolNode:
                 if not title:
                     title = "Consultation Meeting"
 
-                async def _send_mail() -> bool:
+                async def _send_mail() -> None:
                     if email:
                         mail_tool = self.tool_registry.get("mail_send")
                         if mail_tool:
@@ -207,12 +207,10 @@ class ToolNode:
                                     "subject": f"Appointment Confirmation - {title} | Vayvora Technology",
                                     "body": email_body,
                                 })
-                                return True
                             except Exception:
-                                return True
-                    return False
+                                pass
 
-                async def _send_wa() -> bool:
+                async def _send_wa() -> None:
                     if whatsapp_opt_in and mobile:
                         wa_tool = self.tool_registry.get("whatsapp_send_message")
                         if wa_tool:
@@ -225,27 +223,49 @@ class ToolNode:
                                     "phone": mobile,
                                     "message": wa_message,
                                 })
-                                return True
                             except Exception:
-                                return True
-                    return False
+                                pass
 
-                mail_sent, wa_sent = await asyncio.gather(_send_mail(), _send_wa())
+                # Dispatch email and WhatsApp in non-blocking background tasks
+                # so the voice caller receives verbal confirmation immediately
+                asyncio.create_task(_send_mail())
+                if whatsapp_opt_in and mobile:
+                    asyncio.create_task(_send_wa())
 
-                if wa_sent and mail_sent:
+                if whatsapp_opt_in and mobile and email:
+                    spoken_confirmation = (
+                        f"Your consultation meeting for {title} has been successfully scheduled for {date_str} at {time_str}. "
+                        f"I have sent the confirmation details to your email at {email} and to your WhatsApp."
+                    )
                     result = (
                         f"Successfully scheduled '{title}' for {caller_name} on {date_str} at {time_str}. "
                         f"Sent appointment confirmation to both email ({email}) and WhatsApp ({mobile})."
                     )
-                elif mail_sent:
+                elif email:
+                    spoken_confirmation = (
+                        f"Your consultation meeting for {title} has been successfully scheduled for {date_str} at {time_str}. "
+                        f"I have sent the confirmation details to your email at {email}."
+                    )
                     result = (
                         f"Successfully scheduled '{title}' for {caller_name} on {date_str} at {time_str}. "
                         f"Sent appointment confirmation to email ({email})."
                     )
                 else:
+                    spoken_confirmation = (
+                        f"Your consultation meeting for {title} has been successfully scheduled for {date_str} at {time_str}."
+                    )
                     result = (
                         f"Successfully scheduled '{title}' for {caller_name} on {date_str} at {time_str}."
                     )
+
+            elif tool_name == "mail_send":
+                to_addr = tool_input.get("to", "your email")
+                spoken_confirmation = f"I have sent the email to {to_addr}."
+            elif tool_name == "whatsapp_send_message":
+                phone_num = tool_input.get("phone", "your phone")
+                spoken_confirmation = f"I have sent the WhatsApp message to {phone_num}."
+            else:
+                spoken_confirmation = str(result)
 
             messages.append(
                 {
@@ -254,16 +274,24 @@ class ToolNode:
                     "content": str(result),
                 }
             )
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": spoken_confirmation,
+                }
+            )
 
             return {
                 **state,
                 "messages": messages,
+                "response": spoken_confirmation,
                 "tool_name": tool_name,
                 "tool_input": tool_input,
                 "tool_result": result,
                 "tool_confidence": tool_confidence,
                 "tool_required": False,
                 "slots": slots,
+                "is_complete": True,
                 "error": None,
             }
 
