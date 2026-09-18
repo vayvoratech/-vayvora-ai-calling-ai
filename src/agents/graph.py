@@ -96,7 +96,14 @@ class AgentGraph:
         )
 
         workflow.add_conditional_edges("rag", route_after_rag, {"llm": "llm"})
-        workflow.add_conditional_edges("tool", route_after_tool, {"llm": "llm"})
+        workflow.add_conditional_edges(
+            "tool",
+            route_after_tool,
+            {
+                "llm": "llm",
+                "response": "response",
+            },
+        )
         workflow.add_edge("llm", "response")
         workflow.add_edge("response", END)
 

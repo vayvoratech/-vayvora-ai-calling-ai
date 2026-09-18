@@ -1,5 +1,4 @@
-numpy
-pandas
+
 scikit-learn
 requests
 python-dotenv
@@ -7,3 +6,9 @@ mcp<2
 python-dotenv
 httpx
 fastmcp
+fastapi
+langgraph
+langchain_google_genai
+torchvision
+sentence_transformers
+redis

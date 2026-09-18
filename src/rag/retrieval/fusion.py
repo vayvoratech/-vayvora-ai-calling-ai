@@ -23,14 +23,22 @@ class ReciprocalRankFusion:
         for rank, result in enumerate(vector_results, start=1):
             fused.setdefault(
                 result.chunk_id,
-                {"result": result, "score": 0.0},
+                {
+                    "result": result,
+                    "score": 0.0,
+                    "cosine_score": result.metadata.get("cosine_score", result.score),
+                },
             )
             fused[result.chunk_id]["score"] += 1.0 / (self.k + rank)
 
         for rank, result in enumerate(keyword_results, start=1):
             fused.setdefault(
                 result.chunk_id,
-                {"result": result, "score": 0.0},
+                {
+                    "result": result,
+                    "score": 0.0,
+                    "cosine_score": result.metadata.get("cosine_score"),
+                },
             )
             fused[result.chunk_id]["score"] += 1.0 / (self.k + rank)
 
@@ -43,6 +51,11 @@ class ReciprocalRankFusion:
         results = []
         for item in ranked[:top_k]:
             result = item["result"]
+            meta = dict(result.metadata)
+            meta["retrieval_method"] = "hybrid_rrf"
+            if item.get("cosine_score") is not None:
+                meta["cosine_score"] = item["cosine_score"]
+
             results.append(
                 RetrievalResult(
                     chunk_id=result.chunk_id,
@@ -51,10 +64,7 @@ class ReciprocalRankFusion:
                     source=result.source,
                     category=result.category,
                     section=result.section,
-                    metadata={
-                        **result.metadata,
-                        "retrieval_method": "hybrid_rrf",
-                    },
+                    metadata=meta,
                 )
             )
 

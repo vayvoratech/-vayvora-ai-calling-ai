@@ -80,8 +80,44 @@ class LLMNode:
                 f"Adhere strictly to these factual details. Never invent or hallucinate information."
             )
 
+        # Inject structured conversation slots (known caller information)
+        slots = state.get("slots", {})
+        if slots:
+            known_details = []
+            if slots.get("caller_name"):
+                known_details.append(f"- Caller Name: {slots['caller_name']}")
+            if slots.get("date_str"):
+                known_details.append(f"- Appointment Date: {slots['date_str']}")
+            if slots.get("time_str"):
+                known_details.append(f"- Appointment Time: {slots['time_str']}")
+            if slots.get("email"):
+                known_details.append(f"- Email: {slots['email']}")
+            if slots.get("mobile"):
+                known_details.append(f"- Mobile: {slots['mobile']}")
+            if slots.get("whatsapp_opt_in") is not None:
+                known_details.append(f"- WhatsApp Confirmation Opt-in: {'Yes' if slots['whatsapp_opt_in'] else 'No'}")
+            if known_details:
+                system_blocks.append(
+                    f"\n\nCURRENT CONVERSATION SLOTS (PREVIOUSLY PROVIDED CALLER INFORMATION):\n"
+                    + "\n".join(known_details)
+                    + "\nDo NOT ask for any of these details again since the caller has already provided them."
+                )
+
         tool_result = state.get("tool_result")
-        if tool_result is not None:
+        tool_input = state.get("tool_input", {})
+        missing_fields = tool_input.get("missing_fields", [])
+
+        if missing_fields and tool_result is not None:
+            system_blocks.append(
+                f"\n\nCRITICAL DIRECTIVE - REQUIRED APPOINTMENT DETAILS MISSING:\n"
+                f"{tool_result}\n\n"
+                f"STRICT BEHAVIOR MANDATE:\n"
+                f"1. The appointment is NOT booked or scheduled yet because required contact details are missing.\n"
+                f"2. DO NOT say or imply that the appointment has been scheduled, booked, or confirmed.\n"
+                f"3. Acknowledge what the caller provided (like their name and time) and DIRECTLY ASK the caller for the missing information specified in the directive.\n"
+                f"4. Keep your response to one or two friendly, spoken conversational sentences."
+            )
+        elif tool_result is not None:
             system_blocks.append(
                 f"\n\nResult from external action/tool:\n{tool_result}\n"
                 f"Summarize this outcome in a friendly, conversational spoken sentence. "

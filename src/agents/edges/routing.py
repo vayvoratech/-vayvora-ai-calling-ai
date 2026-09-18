@@ -65,6 +65,9 @@ def route_after_rag(state: AgentState) -> str:
 
 def route_after_tool(state: AgentState) -> str:
     """
-    External tool execution results feed into the speech LLM for conversational confirmation.
+    External tool execution results feed into the speech LLM for conversational confirmation,
+    or fast-path directly to response if already synthesized or prompting for missing parameters.
     """
+    if state.get("is_complete") and state.get("response"):
+        return "response"
     return "llm"

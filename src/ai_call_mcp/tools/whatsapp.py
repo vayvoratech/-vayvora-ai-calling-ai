@@ -31,7 +31,7 @@ def register_whatsapp_tools(mcp: FastMCP) -> None:
 
         if openwa_api_key or os.getenv("OPENWA_ENABLED") == "true":
             try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
+                async with httpx.AsyncClient(timeout=1.5) as client:
                     response = await client.post(url, json=payload, headers=headers)
                 if response.status_code == 200:
                     return f"Successfully sent WhatsApp message to {phone}."

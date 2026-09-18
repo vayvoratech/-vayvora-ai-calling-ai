@@ -61,6 +61,9 @@ class RAGRetriever:
             "fee", "fees", "course", "courses", "training", "bootcamp",
             "refund", "sla", "uptime", "contact", "headquarters",
             "office", "cloud", "aws", "mobile", "ai", "genai",
+            "apply", "applying", "career", "careers", "job", "jobs", "role", "roles",
+            "hiring", "hire", "internship", "intern", "resume", "cv", "vacancy", "vacancies",
+            "assessment", "assessments", "interview", "interviews", "exam", "exams", "examination",
         )
         if any(cue in normalized for cue in domain_cues) and "vayvora" not in normalized:
             return f"{query} Vayvora Technology enterprise software AI consultancy"

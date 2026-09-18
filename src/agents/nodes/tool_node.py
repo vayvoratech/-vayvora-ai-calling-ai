@@ -1,3 +1,5 @@
+import asyncio
+import re
 from typing import Any
 from src.agents.state import AgentState
 from src.agents.tools.tool_selector import ToolSelector
@@ -51,62 +53,93 @@ class ToolNode:
             tool_input = selection.tool_input
             tool_confidence = selection.confidence
 
+        # Accumulate conversation slots into persistent state memory
+        slots = dict(state.get("slots") or {})
+        for k in ("caller_name", "title", "date_str", "time_str", "email", "mobile", "whatsapp_opt_in"):
+            val = tool_input.get(k)
+            if val is not None and val != "":
+                slots[k] = val
+
         # If required parameters are missing, request them politely rather than executing with dummy data
         missing_fields = tool_input.get("missing_fields", [])
         missing_stage = tool_input.get("missing_stage", "")
         if missing_fields:
             if tool_name == "calendar_add_event":
+                name = tool_input.get("caller_name") or slots.get("caller_name") or ""
+                if name.lower().strip() in ("hlo", "hlw", "helo", "hi", "hey", "ok", "okay", "client", "valued client"):
+                    name = ""
+                date_str = tool_input.get("date_str", "")
+                time_str = tool_input.get("time_str", "")
+
+                name_reference = f" {name}" if name else ""
+
                 if missing_stage == "name_and_datetime":
-                    missing_instruction = (
-                        "The caller wants to schedule an appointment or meeting. "
-                        "Politely ask the caller for their full name along with their preferred date and time "
-                        "in a single friendly conversational sentence."
+                    spoken_prompt = (
+                        "I would be glad to help schedule an appointment with our team. "
+                        "Could you please share your full name along with your preferred date and time?"
                     )
                 elif missing_stage == "name":
-                    date_str = tool_input.get("date_str", "")
-                    time_str = tool_input.get("time_str", "")
-                    missing_instruction = (
-                        f"The caller provided a preferred appointment schedule ({date_str} at {time_str}), "
-                        f"but has not provided their full name. "
-                        f"Politely ask for their full name in a single friendly conversational sentence."
+                    spoken_prompt = (
+                        f"I have noted your appointment for {date_str} at {time_str}. "
+                        "May I please have your full name to proceed with the booking?"
                     )
                 elif missing_stage == "datetime":
-                    name = tool_input.get("caller_name", "")
-                    missing_instruction = (
-                        f"The caller provided their name ({name}), but has not provided their preferred date and time. "
-                        f"Politely ask for their preferred date and time in a single friendly conversational sentence."
+                    spoken_prompt = (
+                        f"Hello{name_reference}, what date and time would work best for your appointment?"
+                    )
+                elif missing_stage == "date":
+                    spoken_prompt = (
+                        f"I have noted your preferred time of {time_str}. Which date would you like to schedule the meeting for?"
+                    )
+                elif missing_stage == "time":
+                    spoken_prompt = (
+                        f"I have noted your preferred date of {date_str}. What time would you prefer for the meeting?"
                     )
                 elif missing_stage == "contact_and_whatsapp":
-                    name = tool_input.get("caller_name", "")
-                    date_str = tool_input.get("date_str", "")
-                    time_str = tool_input.get("time_str", "")
-                    missing_instruction = (
-                        f"The caller ({name}) has provided their appointment schedule for {date_str} at {time_str}. "
-                        f"Now politely ask for their email address and mobile number so we can schedule the meeting, "
-                        f"and ask if we can send the appointment message through WhatsApp as well (mentioning that some people do not prefer WhatsApp). "
-                        f"Keep it to one or two friendly, natural conversational sentences."
+                    spoken_prompt = (
+                        f"Perfect{name_reference}, I have noted {date_str} at {time_str}. "
+                        "Could you please provide your email address and mobile number so we can confirm the booking? "
+                        "Also, would you like to receive the confirmation on WhatsApp as well?"
+                    )
+                elif missing_stage == "email":
+                    spoken_prompt = (
+                        "Thank you. Could you also please share your email address so we can send the meeting invitation?"
+                    )
+                elif missing_stage == "mobile":
+                    spoken_prompt = (
+                        "Thank you. Could you also please share your mobile number so we can finalize the booking?"
+                    )
+                elif missing_stage == "whatsapp":
+                    spoken_prompt = (
+                        "Thank you for sharing your details. Would you also like to receive your appointment confirmation on WhatsApp?"
                     )
                 else:
                     missing_str = " and ".join(missing_fields)
-                    missing_instruction = (
-                        f"The user wants to schedule an appointment, but is missing: {missing_str}. "
-                        f"Politely ask the caller for these missing details in a single friendly conversational sentence."
+                    spoken_prompt = (
+                        f"To schedule your appointment, could you please provide your {missing_str}?"
                     )
             else:
                 missing_str = " and ".join(missing_fields)
                 intent_label = tool_input.get("title") or tool_name.replace("_", " ")
-                missing_instruction = (
-                    f"The user wants to perform '{tool_name}' for '{intent_label}', "
-                    f"but is missing: {missing_str}. "
-                    f"Politely ask the caller for these missing details in a single friendly conversational sentence."
+                spoken_prompt = (
+                    f"To proceed with {intent_label}, could you please provide your {missing_str}?"
                 )
+
+            messages = [
+                *state.get("messages", []),
+                {"role": "assistant", "content": spoken_prompt},
+            ]
             return {
                 **state,
+                "messages": messages,
+                "response": spoken_prompt,
                 "tool_name": tool_name,
                 "tool_input": tool_input,
-                "tool_result": missing_instruction,
+                "tool_result": spoken_prompt,
                 "tool_confidence": tool_confidence,
                 "tool_required": False,
+                "slots": slots,
+                "is_complete": True,
                 "error": None,
             }
 
@@ -136,56 +169,68 @@ class ToolNode:
                 email = tool_input.get("email")
                 mobile = tool_input.get("mobile")
                 whatsapp_opt_in = tool_input.get("whatsapp_opt_in", False)
-                caller_name = tool_input.get("caller_name", "Client")
+                raw_name = (tool_input.get("caller_name") or slots.get("caller_name") or "").strip()
+                if not raw_name or raw_name.lower() in ("hlo", "hlw", "helo", "hi", "hey", "ok", "okay", "client", "valued client", "unknown"):
+                    caller_name = "Valued Client"
+                else:
+                    caller_name = raw_name
+
                 date_str = tool_input.get("date_str", "")
                 time_str = tool_input.get("time_str", "")
                 title = tool_input.get("title", "Consultation Meeting")
+                title = re.sub(r"\s*-\s*(hlo|hlw|helo|hi|hey|ok|okay)\b", "", title, flags=re.IGNORECASE).strip()
+                if not title:
+                    title = "Consultation Meeting"
 
-                mail_sent = False
-                if email:
-                    mail_tool = self.tool_registry.get("mail_send")
-                    if mail_tool:
-                        try:
-                            email_body = (
-                                f"Dear {caller_name},\n\n"
-                                f"Thank you for contacting Vayvora Technology. Your appointment has been successfully scheduled.\n\n"
-                                f"Appointment Details:\n"
-                                f"• Discussion Topic: {title}\n"
-                                f"• Date: {date_str}\n"
-                                f"• Time: {time_str}\n"
-                                f"• Registered Mobile: {mobile if mobile else 'Not provided'}\n"
-                                f"• Format: Consultation Call\n\n"
-                                f"If you need to reschedule or have any questions beforehand, please reply directly to this email or reach us at info@vayvoratech.com.\n\n"
-                                f"Best regards,\n"
-                                f"Vayvora Technology Team\n"
-                                f"https://www.vayvoratech.com\n"
-                                f"info@vayvoratech.com"
-                            )
-                            await mail_tool.ainvoke({
-                                "to": email,
-                                "subject": f"Appointment Confirmation - {title} | Vayvora Technology",
-                                "body": email_body,
-                            })
-                            mail_sent = True
-                        except Exception:
-                            mail_sent = True
+                async def _send_mail() -> bool:
+                    if email:
+                        mail_tool = self.tool_registry.get("mail_send")
+                        if mail_tool:
+                            try:
+                                email_body = (
+                                    f"Dear {caller_name},\n\n"
+                                    f"Thank you for contacting Vayvora Technology. Your appointment has been successfully scheduled.\n\n"
+                                    f"Appointment Details:\n"
+                                    f"• Discussion Topic: {title}\n"
+                                    f"• Date: {date_str}\n"
+                                    f"• Time: {time_str}\n"
+                                    f"• Registered Mobile: {mobile if mobile else 'Not provided'}\n"
+                                    f"• Format: Consultation Call\n\n"
+                                    f"If you need to reschedule or have any questions beforehand, please reply directly to this email or reach us at info@vayvoratech.com.\n\n"
+                                    f"Best regards,\n"
+                                    f"Vayvora Technology Team\n"
+                                    f"https://www.vayvoratech.com\n"
+                                    f"info@vayvoratech.com"
+                                )
+                                await mail_tool.ainvoke({
+                                    "to": email,
+                                    "subject": f"Appointment Confirmation - {title} | Vayvora Technology",
+                                    "body": email_body,
+                                })
+                                return True
+                            except Exception:
+                                return True
+                    return False
 
-                wa_sent = False
-                if whatsapp_opt_in and mobile:
-                    wa_tool = self.tool_registry.get("whatsapp_send_message")
-                    if wa_tool:
-                        try:
-                            wa_message = (
-                                f"Hello {caller_name}, your consultation meeting with Vayvora Technology "
-                                f"is confirmed for {date_str} at {time_str}. We look forward to speaking with you!"
-                            )
-                            await wa_tool.ainvoke({
-                                "phone": mobile,
-                                "message": wa_message,
-                            })
-                            wa_sent = True
-                        except Exception:
-                            wa_sent = True
+                async def _send_wa() -> bool:
+                    if whatsapp_opt_in and mobile:
+                        wa_tool = self.tool_registry.get("whatsapp_send_message")
+                        if wa_tool:
+                            try:
+                                wa_message = (
+                                    f"Hello {caller_name}, your consultation meeting with Vayvora Technology "
+                                    f"is confirmed for {date_str} at {time_str}. We look forward to speaking with you!"
+                                )
+                                await wa_tool.ainvoke({
+                                    "phone": mobile,
+                                    "message": wa_message,
+                                })
+                                return True
+                            except Exception:
+                                return True
+                    return False
+
+                mail_sent, wa_sent = await asyncio.gather(_send_mail(), _send_wa())
 
                 if wa_sent and mail_sent:
                     result = (
@@ -218,6 +263,7 @@ class ToolNode:
                 "tool_result": result,
                 "tool_confidence": tool_confidence,
                 "tool_required": False,
+                "slots": slots,
                 "error": None,
             }
 

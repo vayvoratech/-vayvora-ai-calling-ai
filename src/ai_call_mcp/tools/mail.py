@@ -3,9 +3,9 @@ import imaplib
 import os
 import smtplib
 from email.message import EmailMessage
-from dotenv import load_dotenv
+
 from mcp.server.fastmcp import FastMCP
-load_dotenv()
+
 
 def register_mail_tools(mcp: FastMCP) -> None:
     smtp_host = os.getenv("MAIL_HOST_SMTP", "localhost")
@@ -35,7 +35,7 @@ def register_mail_tools(mcp: FastMCP) -> None:
 
         if mail_user and mail_pass and smtp_host != "localhost":
             try:
-                with smtplib.SMTP(smtp_host, smtp_port, timeout=5) as server:
+                with smtplib.SMTP(smtp_host, smtp_port, timeout=1.5) as server:
                     server.starttls()
                     server.login(mail_user, mail_pass)
                     server.send_message(message)

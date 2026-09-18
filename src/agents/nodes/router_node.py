@@ -53,6 +53,11 @@ class RouterNode:
             "What is the fee and structure for the AI engineering course?",
             "How much does the engineering course cost?",
             "What training programs and courses does Vayvora provide?",
+            "I want to apply for a role in your company.",
+            "How can I apply for a job or career at Vayvora Technology?",
+            "Are there any job openings, vacancies, or internships at Vayvora?",
+            "I would like to apply for an engineering role at your company.",
+            "How do I submit my resume or CV for a job at Vayvora?",
         ],
         "mcp": [
             "Can you schedule a discovery call for tomorrow at three in the afternoon?",
@@ -130,6 +135,14 @@ class RouterNode:
         "policies_pricing": [
             "Enterprise Service Level Agreement SLA, ninety-nine point nine five percent uptime commitment, round-the-clock priority incident response",
             "Corporate refund policy, master service agreements, milestone safeguards, transparent pricing models, dedicated squads, hourly rates, AI Engineering course fee five thousand rupees",
+        ],
+        "company_careers": [
+            "Vayvora Technology careers, job openings, vacancies, hiring process, applying for a role, software engineer jobs, AI engineer roles",
+            "Submit resume to careers at vayvora tech dot com or info at vayvora tech dot com, engineering internships, technical recruitment, work at Vayvora",
+        ],
+        "company_assessments": [
+            "Vayvora Technology technical assessment, practical coding examination, hiring interview stages, screening test",
+            "Assessment duration sixty to ninety minutes, data structures algorithms GenAI evaluations, assessment scheduling and link",
         ],
     }
 
@@ -229,7 +242,7 @@ class RouterNode:
 
         company_domain_terms = (
             "course", "courses", "training", "bootcamp", "curriculum",
-            "enroll", "enrolling", "enrollment", "admission", "internship",
+            "enroll", "enrolling", "enrollment", "admission", "internship", "internships", "intern", "interns",
             "price", "pricing", "cost", "fee", "fees", "rate", "rates",
             "charge", "charges", "how much", "quote", "quotation", "retainer",
             "refund", "sla", "service level agreement", "policy", "policies",
@@ -240,6 +253,12 @@ class RouterNode:
             "services do you", "services you", "what services", "our services",
             "portfolio", "case studies", "case study",
             "ai engineering course", "engineering course",
+            "apply", "applying", "application", "job", "jobs", "career", "careers",
+            "role", "roles", "position", "positions", "vacancy", "vacancies",
+            "opening", "openings", "recruit", "recruitment", "resume", "cv",
+            "work for", "work at", "work with", "join your team", "join vayvora",
+            "assessment", "assessments", "interview", "interviews", "exam", "exams", "examination",
+            "coding test", "technical screening", "hiring process",
         )
         if any(term in t for term in company_domain_terms):
             return True
@@ -280,6 +299,8 @@ class RouterNode:
         action_words = {
             "schedule", "book", "appointment", "calendar", "meeting",
             "email", "mail", "whatsapp", "message", "reschedule", "cancel", "send",
+            "apply", "job", "career", "hiring", "role", "internship", "resume", "cv",
+            "assessment", "interview", "exam", "test",
         }
         if word_set & action_words:
             return False
@@ -431,30 +452,166 @@ class RouterNode:
         user_history = [m.get("content", "").strip() for m in messages if m.get("role") == "user"]
         assistant_history = [m.get("content", "").strip() for m in messages if m.get("role") == "assistant"]
 
+        # Extraction of common scheduling and contact entities from user input
+        has_time = bool(re.search(r"\b(\d{1,2}(:\d{2})?\s*(am|pm|a\.m\.|p\.m\.)|\d{1,2}\s*o'?clock|morning|afternoon|evening|\d{1,2}:\d{2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b", normalized_text))
+        has_date = bool(re.search(r"\b(today|tomorrow|tommorow|tomorow|tommorrow|tmrw|next\s+day|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}[-/]\d{1,2}[-/]\d{4}|\d{4}-\d{2}-\d{2}|january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b", normalized_text))
+        
+        # Check if previous assistant message specifically asked for the caller's name
+        _last_asst = assistant_history[-1].lower() if assistant_history else ""
+        _name_was_prompted = any(term in _last_asst for term in ("full name", "your name", "caller name", "who is calling"))
+
+        _name_tokens = normalized_text.split()
+        _non_name_tokens = {
+            "ok", "okay", "yes", "no", "not", "nope", "never", "prefer", "the", "a", "an",
+            "whatsapp", "email", "mobile", "number", "phone", "address", "vayvora", "here",
+            "ready", "interested", "calling", "consultation", "meeting", "call", "schedule",
+            "appointment", "tomorrow", "tommorow", "today", "morning", "afternoon", "evening", "please",
+            "thanks", "thank", "hello", "hi", "hey", "hlo", "hlw", "helo", "heyy", "hiya", "yo", "sup",
+            "hola", "namaste", "vanakkam", "greetings", "good", "want", "like", "trying", "looking",
+            "can", "could", "would", "am", "is", "are", "sure", "yep", "yeah", "fine", "cool", "great",
+            "proceed", "done", "now", "later", "soon", "confirm", "confirmed", "booking",
+            "book", "date", "time", "details", "info", "invite", "link",
+            "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+            "january", "february", "march", "april", "may", "june", "july", "august",
+            "september", "october", "november", "december", "pm", "am",
+            "role", "roles", "position", "positions", "job", "jobs", "career", "careers", "intern", "internship",
+            "internships", "developer", "engineer", "engineering", "assessment", "assessments", "interview",
+            "interviews", "exam", "exams", "test", "tests", "screening", "hire", "hiring", "apply", "applying",
+            "candidate", "candidates", "student", "students", "resume", "cv", "portfolio", "github", "hr",
+            "talent", "team", "company", "product", "products", "project", "projects", "enterprise", "client",
+            "clients", "delegate", "delegates", "work", "tech", "technology", "software", "ai", "genai", "cloud",
+            "aws", "gcp", "devops",
+        }
+        _is_pure_name = (
+            all(re.match(r"^[A-Za-z]+$", w) for w in _name_tokens)
+            and not any(w in _non_name_tokens for w in _name_tokens)
+            and (
+                (2 <= len(_name_tokens) <= 4)
+                or (len(_name_tokens) == 1 and _name_was_prompted and len(_name_tokens[0]) >= 2)
+            )
+        )
+        has_name = (
+            bool(re.search(r"\b(my name is|name is|i am|this is)\b", normalized_text))
+            or _is_pure_name
+            or (" and " in normalized_text and not any(w in _non_name_tokens for w in _name_tokens[:1]))
+        )
+        has_email = "@" in normalized_text or "dot com" in normalized_text or "at gmail" in normalized_text
+        has_phone = bool(re.search(r"\b\d{10}\b|(?:\+91[\s-]?)?[6-9]\d{9}\b|\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b", normalized_text))
+        has_whatsapp = "whatsapp" in normalized_text
+
+        # Detect candidate/student context across conversation history
+        career_candidate_keywords = (
+            "apply for role", "apply for a role", "apply for", "apply to", "job", "jobs", "career", "careers",
+            "internship", "internships", "intern", "interns", "opening", "openings", "vacancy", "vacancies",
+            "hiring", "applicant", "applicants", "candidate", "candidates", "student", "students",
+            "assessment", "assessments", "coding test", "interview", "interviews", "resume", "cv",
+        )
+        is_candidate_context = any(
+            any(kw in u.lower() for kw in career_candidate_keywords)
+            for u in user_history + [normalized_text]
+        )
+
+        is_affirmative = bool(re.search(r"\b(yes|sure|yeah|yep|please|please do|confirm|go ahead|okay|ok|fine|sounds good|that works|certainly|absolutely|why not|proceed|i am okay|i would like that)\b", normalized_text))
+        is_negative = bool(re.search(r"\b(no|nope|never|not really|don't|dont|no thanks|no thank you|skip|avoid|only email|not needed|not prefer|i do not prefer|dont prefer|don't prefer|nah)\b", normalized_text))
+
         if assistant_history:
             last_assistant = assistant_history[-1].lower()
-            
-            # Check if assistant previously prompted for appointment parameters (time, name, date, email, mobile, whatsapp)
-            is_scheduling_prompt = any(
-                phrase in last_assistant
-                for phrase in (
-                    "preferred time", "full name", "what time", "which date",
-                    "what date", "schedule that", "schedule an appointment",
-                    "assessment", "calendar", "preferred date", "email address",
-                    "mobile number", "whatsapp as well", "through whatsapp", "send on whatsapp",
-                    "email and mobile", "send the appointment"
-                )
+
+            # Case A: Assistant specifically asked about WhatsApp confirmation
+            if "whatsapp" in last_assistant:
+                if is_affirmative or is_negative or has_whatsapp or has_email or has_phone:
+                    latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+                    return {
+                        **state,
+                        "route": "mcp",
+                        "route_confidence": 0.98,
+                        "similarity_scores": {"mcp": 0.98, "llm": 0.01, "rag": 0.01, "direct": 0.0},
+                        "route_margin": 0.97,
+                        "route_rationale": "Multi-turn context: Caller responding to WhatsApp confirmation preference.",
+                        "kb_resonance": 0.0,
+                        "llm_required": True,
+                        "rag_required": False,
+                        "tool_required": True,
+                        "is_complete": False,
+                        "routing_latency_ms": latency_ms,
+                    }
+
+            # Case B: Assistant offered to schedule/book a meeting or call (e.g., "Can I schedule a meeting with our head?")
+            meeting_offer_patterns = (
+                "schedule a meeting", "schedule a call", "schedule an appointment",
+                "schedule a consultation", "schedule a discovery", "schedule a demo",
+                "can i schedule", "shall i schedule", "would you like me to schedule",
+                "would you like to schedule", "can i book", "shall i book",
+                "would you like to book", "would you like me to book", "book a meeting",
+                "book a call", "book an appointment", "book a consultation",
+                "set up a meeting", "set up a call", "set up an appointment",
+                "connect you with our head", "connect you with our team", "connect you with",
+                "arrange a meeting", "arrange a call", "with our head",
             )
+            is_meeting_offer = any(phrase in last_assistant for phrase in meeting_offer_patterns)
 
-            has_time = bool(re.search(r"\b(\d{1,2}(:\d{2})?\s*(am|pm)|\d{1,2}\s*o'?clock|morning|afternoon|evening|\d{1,2}:\d{2})\b", normalized_text))
-            has_date = bool(re.search(r"\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}[-/]\d{1,2}[-/]\d{4}|\d{4}-\d{2}-\d{2})\b", normalized_text))
-            has_name = bool(re.search(r"\b(my name is|name is|i am|this is)\b", normalized_text)) or bool(re.match(r"^\s*[A-Za-z]+(?:\s+[A-Za-z]+){1,3}\s*$", normalized_text))
-            has_email = "@" in normalized_text
-            has_phone = bool(re.search(r"\b\d{10}\b|(?:\+91[\s-]?)?[6-9]\d{9}\b", normalized_text))
-            has_whatsapp = "whatsapp" in normalized_text
-            is_confirmation = normalized_text in ("yes", "sure", "yeah", "yep", "please do", "confirm", "go ahead", "okay", "ok", "no", "no whatsapp", "only email")
+            if is_meeting_offer:
+                if is_candidate_context:
+                    latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+                    return {
+                        **state,
+                        "route": "llm",
+                        "route_confidence": 0.96,
+                        "similarity_scores": {"llm": 0.96, "rag": 0.02, "mcp": 0.01, "direct": 0.01},
+                        "route_margin": 0.94,
+                        "route_rationale": "Candidate/student inquiry context: meetings are not scheduled for applicants. Routing to LLM.",
+                        "kb_resonance": 0.0,
+                        "llm_required": True,
+                        "rag_required": False,
+                        "tool_required": False,
+                        "is_complete": False,
+                        "routing_latency_ms": latency_ms,
+                    }
+                elif is_affirmative and not is_negative:
+                    latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+                    return {
+                        **state,
+                        "route": "mcp",
+                        "route_confidence": 0.98,
+                        "similarity_scores": {"mcp": 0.98, "llm": 0.01, "rag": 0.01, "direct": 0.0},
+                        "route_margin": 0.97,
+                        "route_rationale": "Multi-turn context: Caller accepted offer to schedule meeting with head/team.",
+                        "kb_resonance": 0.0,
+                        "llm_required": True,
+                        "rag_required": False,
+                        "tool_required": True,
+                        "is_complete": False,
+                        "routing_latency_ms": latency_ms,
+                    }
+                elif is_negative and not is_affirmative:
+                    latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+                    return {
+                        **state,
+                        "route": "llm",
+                        "route_confidence": 0.96,
+                        "similarity_scores": {"llm": 0.96, "rag": 0.02, "mcp": 0.01, "direct": 0.01},
+                        "route_margin": 0.94,
+                        "route_rationale": "Multi-turn context: Caller declined offer to schedule meeting. Routing to conversational LLM.",
+                        "kb_resonance": 0.0,
+                        "llm_required": True,
+                        "rag_required": False,
+                        "tool_required": False,
+                        "is_complete": False,
+                        "routing_latency_ms": latency_ms,
+                    }
 
-            if is_scheduling_prompt and (has_time or has_date or has_name or has_email or has_phone or has_whatsapp or is_confirmation):
+            # Case C: Assistant was prompting for appointment parameters (time, name, date, email, mobile, whatsapp)
+            scheduling_param_keywords = (
+                "preferred time", "full name", "what time", "which date", "what date",
+                "which time", "when would you", "schedule that", "schedule an appointment",
+                "calendar", "preferred date", "email address", "mobile number",
+                "phone number", "contact number", "whatsapp as well", "through whatsapp",
+                "send on whatsapp", "email and mobile", "send the appointment",
+                "discovery call", "appointment", "confirmation",
+            )
+            is_scheduling_prompt = any(phrase in last_assistant for phrase in scheduling_param_keywords)
+
+            if is_scheduling_prompt and not is_candidate_context and (has_time or has_date or has_name or has_email or has_phone or has_whatsapp or is_affirmative or is_negative):
                 latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
                 return {
                     **state,
@@ -472,9 +629,28 @@ class RouterNode:
                 }
 
         # Sub-millisecond exact match shortcut for standard conversational greetings
+        mid_call_checkins = (
+            "hello", "hi", "hey", "can you hear me", "can you hear me clearly",
+            "are you there", "are you still there", "you there", "hello are you there"
+        )
+        if len(messages) > 0 and normalized_text in mid_call_checkins:
+            latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            return {
+                **state,
+                "route": "direct",
+                "route_confidence": 0.99,
+                "similarity_scores": {"direct": 0.99, "rag": 0.0, "mcp": 0.0, "llm": 0.01},
+                "route_margin": 0.98,
+                "route_rationale": "Mid-call check-in detected during active conversation.",
+                "kb_resonance": 0.0,
+                "response": "Yes, I am here. Please go ahead.",
+                "is_complete": True,
+                "routing_latency_ms": latency_ms,
+            }
+
         if normalized_text in self.DIRECT_RESPONSES:
             # If conversation is already active, only direct-route closings ("thanks", "bye"), not greeting resets
-            if len(messages) > 0 and normalized_text in ("hello", "hi", "hey", "good morning", "good afternoon", "good evening"):
+            if len(messages) > 0 and normalized_text in ("good morning", "good afternoon", "good evening"):
                 # Pass to LLM so caller's greeting is handled in conversational context without wiping history
                 pass
             else:
@@ -491,6 +667,29 @@ class RouterNode:
                     "is_complete": True,
                     "routing_latency_ms": latency_ms,
                 }
+
+        # Anti-RAG Safeguard: Simple conversational affirmative or negative responses must NEVER route to RAG
+        simple_yes_no = normalized_text in (
+            "yes", "no", "sure", "yeah", "yep", "nope", "ok", "okay",
+            "no thanks", "no thank you", "sounds good", "please do", "never mind",
+            "dont", "don't", "nah", "fine", "certainly", "absolutely"
+        )
+        if simple_yes_no:
+            latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            return {
+                **state,
+                "route": "llm",
+                "route_confidence": 0.95,
+                "similarity_scores": {"llm": 0.95, "rag": 0.02, "mcp": 0.02, "direct": 0.01},
+                "route_margin": 0.93,
+                "route_rationale": "Conversational confirmation or negation. Routing to LLM with RAG disabled.",
+                "kb_resonance": 0.0,
+                "llm_required": True,
+                "rag_required": False,
+                "tool_required": False,
+                "is_complete": False,
+                "routing_latency_ms": latency_ms,
+            }
 
         # Out-of-scope general knowledge and conceptual queries route directly to LLM with RAG disabled
         if self.is_general_query(user_input):
@@ -512,7 +711,7 @@ class RouterNode:
 
         # Dense Vector Semantic Intent Classification with Context Enrichment
         query_for_classification = user_input
-        if user_history and len(user_input.split()) < 12:
+        if user_history and len(user_input.split()) < 12 and not simple_yes_no and "@" not in normalized_text and not has_phone:
             query_for_classification = f"{user_history[-1]}. {user_input}"
 
         selected_route, confidence, scores, margin, rationale, kb_resonance = self.classify_intent(query_for_classification)
@@ -531,10 +730,16 @@ class RouterNode:
             re.search(r"\b(email|mail|whatsapp)\b", normalized_text) and ("@" in normalized_text or re.search(r"\b\d{10}\b", normalized_text))
         )
         if has_action_intent:
-            selected_route = "mcp"
-            confidence = max(confidence, 0.98)
-            margin = max(margin, 0.95)
-            rationale = "Direct tool action request detected (calendar scheduling, email, or WhatsApp). Routing to MCP."
+            if is_candidate_context and any(term in normalized_text for term in ("schedule", "book", "appointment", "meeting", "call", "interview")):
+                selected_route = "llm"
+                confidence = max(confidence, 0.95)
+                margin = max(margin, 0.90)
+                rationale = "Candidate or student requested scheduling a call/meeting. Routing to LLM to enforce no-candidate-call policy."
+            else:
+                selected_route = "mcp"
+                confidence = max(confidence, 0.98)
+                margin = max(margin, 0.95)
+                rationale = "Direct tool action request detected (calendar scheduling, email, or WhatsApp). Routing to MCP."
 
         # Ensure company, pricing, course, and service inquiries route to RAG (unless an action tool is requested)
         elif self.is_company_or_service_query(user_input):
@@ -585,20 +790,24 @@ class RouterNode:
             }
 
         if selected_route == "rag":
-            return {
-                **state,
-                "route": "rag",
-                "route_confidence": confidence,
-                "similarity_scores": scores,
-                "route_margin": margin,
-                "route_rationale": rationale,
-                "kb_resonance": kb_resonance,
-                "llm_required": True,
-                "rag_required": True,
-                "tool_required": False,
-                "is_complete": False,
-                "routing_latency_ms": latency_ms,
-            }
+            if simple_yes_no or normalized_text in ("yes", "no", "sure", "ok", "okay", "nope", "fine"):
+                selected_route = "llm"
+                rationale = "Conversational affirmation/negation redirected from RAG to LLM."
+            else:
+                return {
+                    **state,
+                    "route": "rag",
+                    "route_confidence": confidence,
+                    "similarity_scores": scores,
+                    "route_margin": margin,
+                    "route_rationale": rationale,
+                    "kb_resonance": kb_resonance,
+                    "llm_required": True,
+                    "rag_required": True,
+                    "tool_required": False,
+                    "is_complete": False,
+                    "routing_latency_ms": latency_ms,
+                }
 
         # Fallback to general conversational LLM
         return {

@@ -23,11 +23,14 @@ class RAGConfig:
     redis_key_prefix: str = os.getenv("RAG_REDIS_PREFIX", "vayvora:rag:chunk:")
 
     # Retrieval hyperparameters
-    top_k: int = int(os.getenv("RAG_TOP_K", "10"))
-    final_top_k: int = int(os.getenv("RAG_FINAL_TOP_K", "5"))
+    top_k: int = int(os.getenv("RAG_TOP_K", "6"))
+    final_top_k: int = int(os.getenv("RAG_FINAL_TOP_K", "3"))
 
-    # Semantic relevance threshold for Cross-Encoder / cosine scores
-    relevance_threshold: float = float(os.getenv("RAG_RELEVANCE_THRESHOLD", "0.35"))
+    # Semantic relevance threshold for hybrid / cosine scores
+    relevance_threshold: float = float(os.getenv("RAG_RELEVANCE_THRESHOLD", "0.30"))
+
+    # Low-latency voice reranking toggle
+    enable_cross_encoder: bool = os.getenv("RAG_ENABLE_CROSS_ENCODER", "false").lower() == "true"
 
     # Chunking
     chunk_size: int = int(os.getenv("RAG_CHUNK_SIZE", "800"))

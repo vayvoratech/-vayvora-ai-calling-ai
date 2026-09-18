@@ -67,6 +67,11 @@ class AgentState(TypedDict, total=False):
     llm_required: bool
 
     # ─────────────────────────────────────────────
+    # CONVERSATIONAL SLOT MEMORY
+    # ─────────────────────────────────────────────
+    slots: Dict[str, Any]
+
+    # ─────────────────────────────────────────────
     # FINAL VOICE-READY OUTPUT
     # ─────────────────────────────────────────────
     response: str
