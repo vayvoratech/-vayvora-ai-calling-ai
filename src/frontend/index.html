@@ -3,383 +3,494 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vayvora AI Voice Agent</title>
-
+    <title>Vayvora AI - Conversational Voice Agent</title>
     <style>
-        * { box-sizing: border-box; }
+        :root {
+            --bg-color: #0b0f19;
+            --surface-color: #111827;
+            --surface-border: #1f2937;
+            --primary: #38bdf8;
+            --primary-glow: rgba(56, 189, 248, 0.35);
+            --text-main: #f9fafb;
+            --text-muted: #9ca3af;
+            --green: #10b981;
+            --red: #ef4444;
+            --amber: #f59e0b;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
         body {
-            margin: 0;
-            font-family: Arial, Helvetica, sans-serif;
-            background: #f5f7fb;
-            color: #1f2937;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
         }
-        .container { max-width: 900px; margin: 40px auto; padding: 20px; }
-        .card {
-            background: white;
+
+        .container {
+            width: 100%;
+            max-width: 800px;
+            background: var(--surface-color);
+            border: 1px solid var(--surface-border);
             border-radius: 16px;
-            padding: 30px;
-            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.08);
+            padding: 32px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
         }
-        h1 { margin-top: 0; text-align: center; }
-        .subtitle { text-align: center; color: #6b7280; margin-bottom: 30px; }
-        .controls { display: flex; justify-content: center; gap: 15px; margin-bottom: 25px; }
-        button {
-            border: none;
-            padding: 12px 24px;
-            border-radius: 10px;
-            font-size: 16px;
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--surface-border);
+            padding-bottom: 16px;
+        }
+
+        .header h1 {
+            font-size: 20px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            color: var(--primary);
+        }
+
+        .status-badge {
+            font-size: 12px;
+            font-weight: 600;
+            padding: 4px 12px;
+            border-radius: 9999px;
+            background: #1f2937;
+            color: var(--text-muted);
+            border: 1px solid #374151;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-badge.connected {
+            color: var(--green);
+            border-color: rgba(16, 185, 129, 0.3);
+            background: rgba(16, 185, 129, 0.1);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        .visualizer-area {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 30px 0;
+            gap: 20px;
+        }
+
+        .mic-orb {
+            width: 90px;
+            height: 90px;
+            border-radius: 50%;
+            background: #1f2937;
+            border: 2px solid var(--surface-border);
+            display: flex;
+            align-items: center;
+            justify-content: center;
             cursor: pointer;
+            transition: all 0.25s ease;
         }
-        #startBtn { background: #2563eb; color: white; }
-        #stopBtn { background: #dc2626; color: white; }
-        button:disabled { opacity: 0.5; cursor: not-allowed; }
-        .status {
-            text-align: center;
-            padding: 12px;
-            border-radius: 10px;
-            background: #eef2ff;
-            margin-bottom: 20px;
-            font-weight: bold;
+
+        .mic-orb.active {
+            border-color: var(--primary);
+            box-shadow: 0 0 25px var(--primary-glow);
+            animation: pulse 2s infinite ease-in-out;
         }
-        .section { margin-top: 25px; }
-        .section h2 { font-size: 18px; margin-bottom: 10px; }
-        #transcript {
-            min-height: 100px;
-            max-height: 250px;
-            overflow-y: auto;
-            padding: 15px;
-            background: #f9fafb;
-            border-radius: 10px;
-            border: 1px solid #e5e7eb;
+
+        .mic-orb.speaking {
+            border-color: var(--green);
+            box-shadow: 0 0 25px rgba(16, 185, 129, 0.4);
         }
-        .message {
-            padding: 10px 12px;
-            margin-bottom: 10px;
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .call-btn {
+            padding: 12px 28px;
+            font-size: 15px;
+            font-weight: 700;
             border-radius: 8px;
-            line-height: 1.5;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: var(--primary);
+            color: #0b0f19;
         }
-        .user { background: #dbeafe; }
-        .assistant { background: #dcfce7; }
-        .system { background: #f3f4f6; color: #6b7280; font-size: 14px; }
-        #logs {
-            height: 180px;
-            overflow-y: auto;
-            background: #111827;
-            color: #d1d5db;
-            padding: 12px;
-            border-radius: 10px;
-            font-family: Consolas, monospace;
+
+        .call-btn.hangup {
+            background: var(--red);
+            color: #fff;
+        }
+
+        .telemetry-bar {
+            background: #090d16;
+            border: 1px solid var(--surface-border);
+            border-radius: 8px;
+            padding: 12px 16px;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
             font-size: 13px;
-            white-space: pre-wrap;
         }
-        .info { margin-top: 15px; font-size: 13px; color: #6b7280; text-align: center; }
+
+        .telemetry-item span {
+            color: var(--text-muted);
+            display: block;
+            margin-bottom: 2px;
+        }
+
+        .telemetry-item strong {
+            color: var(--primary);
+        }
+
+        .log-container {
+            height: 240px;
+            overflow-y: auto;
+            border: 1px solid var(--surface-border);
+            border-radius: 8px;
+            padding: 16px;
+            background: #090d16;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            font-size: 14px;
+        }
+
+        .log-entry {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .log-entry.user { align-items: flex-end; }
+        .log-entry.agent { align-items: flex-start; }
+
+        .log-bubble {
+            max-width: 80%;
+            padding: 10px 14px;
+            border-radius: 12px;
+            line-height: 1.4;
+        }
+
+        .user .log-bubble {
+            background: #1e3a8a;
+            color: #dbeafe;
+            border-bottom-right-radius: 2px;
+        }
+
+        .agent .log-bubble {
+            background: #1f2937;
+            color: #f3f4f6;
+            border-bottom-left-radius: 2px;
+        }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <div class="card">
-        <h1>Vayvora AI</h1>
-        <div class="subtitle">Real-Time AI Voice Assistant</div>
-        <div class="controls">
-            <button id="startBtn">Start Conversation</button>
-            <button id="stopBtn" disabled>Stop</button>
-        </div>
-        <div id="status" class="status">Disconnected</div>
-
-        <div class="section">
-            <h2>Conversation</h2>
-            <div id="transcript">
-                <div class="message system">Click "Start Conversation" to begin.</div>
-            </div>
-        </div>
-
-        <div class="section">
-            <h2>System Logs</h2>
-            <div id="logs"></div>
-        </div>
-
-        <div class="info">
-            Browser Microphone → WebSocket → FastAPI → VAD → Parakeet STT → Gemini → Deepgram TTS → Browser
+    <div class="header">
+        <h1>VAYVORA VOICE AGENT</h1>
+        <div id="statusBadge" class="status-badge">
+            <div class="status-dot"></div>
+            <span id="statusText">Disconnected</span>
         </div>
     </div>
+
+    <div class="visualizer-area">
+        <div id="micOrb" class="mic-orb">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"></path>
+                <path d="M19 10v2a7 7 0 0 1-14 0v-2"></path>
+                <line x1="12" y1="19" x2="12" y2="22"></line>
+            </svg>
+        </div>
+        <button id="callBtn" class="call-btn">Start Conversation</button>
+    </div>
+
+    <div class="telemetry-bar">
+        <div class="telemetry-item">
+            <span>Query Route</span>
+            <strong id="metaRoute">-</strong>
+        </div>
+        <div class="telemetry-item">
+            <span>Route Confidence</span>
+            <strong id="metaConfidence">-</strong>
+        </div>
+        <div class="telemetry-item">
+            <span>Active Tool</span>
+            <strong id="metaTool">None</strong>
+        </div>
+    </div>
+
+    <div id="logContainer" class="log-container"></div>
 </div>
 
 <script>
-const WS_URL = `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}/media-stream`;
+    let ws = null;
+    let audioCtx = null;
+    let micStream = null;
+    let micNode = null;
+    let scriptProcessor = null;
+    let silentGain = null;
 
-const startBtn = document.getElementById("startBtn");
-const stopBtn = document.getElementById("stopBtn");
-const statusElement = document.getElementById("status");
-const transcriptElement = document.getElementById("transcript");
-const logsElement = document.getElementById("logs");
+    // Continuous scheduled playback state
+    let nextPlayTime = 0;
+    let activeAudioNodes = [];
 
-let websocket = null;
-let mediaStream = null;
-let audioContext = null;
-let source = null;
-let processor = null;
-let pcmPlayer = null;
-let isRunning = false;
-let currentAssistantMessage = null;
+    const callBtn = document.getElementById("callBtn");
+    const micOrb = document.getElementById("micOrb");
+    const statusBadge = document.getElementById("statusBadge");
+    const statusText = document.getElementById("statusText");
+    const logContainer = document.getElementById("logContainer");
 
-function log(message) {
-    const time = new Date().toLocaleTimeString();
-    logsElement.textContent += `[${time}] ${message}\n`;
-    logsElement.scrollTop = logsElement.scrollHeight;
-    console.log(message);
-}
+    const metaRoute = document.getElementById("metaRoute");
+    const metaConfidence = document.getElementById("metaConfidence");
+    const metaTool = document.getElementById("metaTool");
 
-function setStatus(message) {
-    statusElement.textContent = message;
-}
+    let currentAgentBubble = null;
 
-function escapeHtml(text) {
-    const div = document.createElement("div");
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-function addTranscript(role, text) {
-    if (!text || !text.trim()) return;
-    const message = document.createElement("div");
-    message.classList.add("message");
-    if (role === "user") {
-        message.classList.add("user");
-        message.innerHTML = `<strong>You:</strong> ${escapeHtml(text)}`;
-    } else if (role === "assistant") {
-        message.classList.add("assistant");
-        message.innerHTML = `<strong>Vayvora:</strong> ${escapeHtml(text)}`;
-    } else {
-        message.classList.add("system");
-        message.innerHTML = escapeHtml(text);
-    }
-    transcriptElement.appendChild(message);
-    transcriptElement.scrollTop = transcriptElement.scrollHeight;
-}
-
-async function createPCMPlayer() {
-    if (!audioContext) throw new Error("AudioContext is not initialized");
-    await audioContext.audioWorklet.addModule("/pcm-player.js");
-    pcmPlayer = new AudioWorkletNode(audioContext, "pcm-player");
-    pcmPlayer.connect(audioContext.destination);
-}
-
-function clearAudioBuffer() {
-    if (!pcmPlayer) return;
-    pcmPlayer.port.postMessage({ type: "clear" });
-}
-
-function playPCM16(arrayBuffer) {
-    if (!pcmPlayer) return;
-    const copy = arrayBuffer.slice(0);
-    pcmPlayer.port.postMessage({ type: "audio", buffer: copy }, [copy]);
-}
-
-async function startMicrophone() {
-    mediaStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-            channelCount: 1,
-            echoCancellation: true,
-            noiseSuppression: true,
-            autoGainControl: true
+    callBtn.addEventListener("click", () => {
+        if (!ws || ws.readyState !== WebSocket.OPEN) {
+            startCall();
+        } else {
+            endCall();
         }
     });
-}
 
-async function startAudioProcessing() {
-    audioContext = new AudioContext();
-    if (audioContext.state === "suspended") {
-        await audioContext.resume();
-    }
-    await createPCMPlayer();
-
-    source = audioContext.createMediaStreamSource(mediaStream);
-    processor = audioContext.createScriptProcessor(4096, 1, 1);
-
-    processor.onaudioprocess = function(event) {
-        if (!websocket || websocket.readyState !== WebSocket.OPEN) return;
-
-        const inputData = event.inputBuffer.getChannelData(0);
-        const pcm16 = new Int16Array(inputData.length);
-
-        for (let i = 0; i < inputData.length; i++) {
-            let sample = Math.max(-1, Math.min(1, inputData[i]));
-            pcm16[i] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+    async function startCall() {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+        if (audioCtx.state === "suspended") {
+            await audioCtx.resume();
         }
 
-        websocket.send(pcm16.buffer);
-    };
+        nextPlayTime = audioCtx.currentTime;
 
-    source.connect(processor);
-    processor.connect(audioContext.destination);
-}
+        const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const wsUrl = `${wsProtocol}//${window.location.host}/media-stream`;
 
-function connectWebSocket() {
-    return new Promise((resolve, reject) => {
-        websocket = new WebSocket(WS_URL);
-        websocket.binaryType = "arraybuffer";
+        ws = new WebSocket(wsUrl);
+        ws.binaryType = "arraybuffer";
 
-        websocket.onopen = async function() {
-            setStatus("Connected - Speak now");
-            try {
-                await startMicrophone();
-                await startAudioProcessing();
-                isRunning = true;
-                startBtn.disabled = true;
-                stopBtn.disabled = false;
-                addTranscript("system", "Connected. You can start speaking.");
-                resolve();
-            } catch (error) {
-                log("Microphone error: " + error.message);
-                reject(error);
-            }
+        ws.onopen = async () => {
+            statusBadge.className = "status-badge connected";
+            statusText.textContent = "Live Connected";
+            callBtn.textContent = "End Call";
+            callBtn.classList.add("hangup");
+            micOrb.classList.add("active");
+
+            await setupMicrophone();
         };
 
-        websocket.onmessage = function(event) {
+        ws.onmessage = (event) => {
             if (event.data instanceof ArrayBuffer) {
-                playPCM16(event.data);
+                scheduleIncomingAudio(event.data);
                 return;
             }
-            if (event.data instanceof Blob) {
-                event.data.arrayBuffer().then(playPCM16);
-                return;
+
+            try {
+                const msg = JSON.parse(event.data);
+                handleServerEvent(msg);
+            } catch (err) {
+                console.error("JSON parse error:", err);
             }
-            if (typeof event.data === "string") {
-                try {
-                    const data = JSON.parse(event.data);
-                    handleServerMessage(data);
-                } catch (error) {
-                    log("Non-JSON: " + event.data);
+        };
+
+        ws.onclose = () => endCall();
+        ws.onerror = () => endCall();
+    }
+
+    async function setupMicrophone() {
+        try {
+            micStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    channelCount: 1,
+                    sampleRate: 48000,
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
                 }
+            });
+
+            micNode = audioCtx.createMediaStreamSource(micStream);
+            scriptProcessor = audioCtx.createScriptProcessor(4096, 1, 1);
+
+            scriptProcessor.onaudioprocess = (e) => {
+                if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+                const inputData = e.inputBuffer.getChannelData(0);
+                const pcm16 = new Int16Array(inputData.length);
+                for (let i = 0; i < inputData.length; i++) {
+                    const s = Math.max(-1, Math.min(1, inputData[i]));
+                    pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                }
+
+                ws.send(pcm16.buffer);
+            };
+
+            silentGain = audioCtx.createGain();
+            silentGain.gain.value = 0;
+
+            micNode.connect(scriptProcessor);
+            scriptProcessor.connect(silentGain);
+            silentGain.connect(audioCtx.destination);
+        } catch (err) {
+            console.error("Microphone access failed:", err);
+            appendLog("System", "Could not access microphone: " + err.message);
+            endCall();
+        }
+    }
+
+    function handleServerEvent(msg) {
+        switch (msg.type) {
+            case "speech_started":
+            case "interrupt":
+            case "tts_interrupted":
+                purgeAudioQueue();
+                micOrb.classList.add("speaking");
+                break;
+
+            case "transcript":
+                appendLog("User", msg.text);
+                micOrb.classList.remove("speaking");
+                break;
+
+            case "agent_started":
+                currentAgentBubble = appendLog("Agent", "Thinking...");
+                break;
+
+            case "agent_telemetry":
+                metaRoute.textContent = (msg.route || "general").toUpperCase();
+                metaConfidence.textContent = `${(Number(msg.confidence || 0) * 100).toFixed(0)}%`;
+                metaTool.textContent = msg.tool_name || "None";
+                break;
+
+            case "llm_chunk":
+                if (currentAgentBubble) {
+                    if (currentAgentBubble.textContent === "Thinking...") {
+                        currentAgentBubble.textContent = "";
+                    }
+                    currentAgentBubble.textContent += msg.text;
+                    logContainer.scrollTop = logContainer.scrollHeight;
+                }
+                break;
+
+            case "llm_complete":
+                currentAgentBubble = null;
+                break;
+        }
+    }
+
+    // Precise continuous scheduling eliminates gaps and distortion
+    function scheduleIncomingAudio(arrayBuffer) {
+        if (!audioCtx) return;
+
+        const int16Array = new Int16Array(arrayBuffer);
+        const float32Array = new Float32Array(int16Array.length);
+
+        for (let i = 0; i < int16Array.length; i++) {
+            float32Array[i] = int16Array[i] / 32768.0;
+        }
+
+        const audioBuffer = audioCtx.createBuffer(1, float32Array.length, 48000);
+        audioBuffer.getChannelData(0).set(float32Array);
+
+        const source = audioCtx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(audioCtx.destination);
+
+        const now = audioCtx.currentTime;
+        // If the playback pipeline starved, catch up to current time with 25ms jitter buffer
+        if (nextPlayTime < now) {
+            nextPlayTime = now + 0.025;
+        }
+
+        source.start(nextPlayTime);
+        nextPlayTime += audioBuffer.duration;
+
+        activeAudioNodes.push(source);
+        source.onended = () => {
+            const index = activeAudioNodes.indexOf(source);
+            if (index !== -1) {
+                activeAudioNodes.splice(index, 1);
             }
         };
-
-        websocket.onerror = function() {
-            setStatus("WebSocket Error");
-        };
-
-        websocket.onclose = function() {
-            setStatus("Disconnected");
-            cleanup();
-        };
-    });
-}
-
-function handleServerMessage(data) {
-    if (data.type === "transcript") {
-        addTranscript("user", data.text || "");
-        currentAssistantMessage = null;
-        return;
     }
 
-    // REAL-TIME WORD DISPLAY
-    if (data.type === "llm_chunk") {
-        if (!currentAssistantMessage) {
-            currentAssistantMessage = document.createElement("div");
-            currentAssistantMessage.classList.add("message", "assistant");
-            currentAssistantMessage.innerHTML = "<strong>Vayvora:</strong> ";
-            transcriptElement.appendChild(currentAssistantMessage);
+    function purgeAudioQueue() {
+        activeAudioNodes.forEach(node => {
+            try {
+                node.stop();
+                node.disconnect();
+            } catch (_) {}
+        });
+        activeAudioNodes = [];
+        if (audioCtx) {
+            nextPlayTime = audioCtx.currentTime;
         }
-        currentAssistantMessage.innerHTML += escapeHtml(data.text);
-        transcriptElement.scrollTop = transcriptElement.scrollHeight;
-        return;
     }
 
-    if (data.type === "llm_complete") {
-        currentAssistantMessage = null;
-        return;
+    function endCall() {
+        if (ws) {
+            ws.close();
+            ws = null;
+        }
+        if (micStream) {
+            micStream.getTracks().forEach(t => t.stop());
+            micStream = null;
+        }
+        if (scriptProcessor) {
+            scriptProcessor.disconnect();
+            scriptProcessor = null;
+        }
+        if (micNode) {
+            micNode.disconnect();
+            micNode = null;
+        }
+        if (silentGain) {
+            silentGain.disconnect();
+            silentGain = null;
+        }
+        purgeAudioQueue();
+
+        statusBadge.className = "status-badge";
+        statusText.textContent = "Disconnected";
+        callBtn.textContent = "Start Conversation";
+        callBtn.classList.remove("hangup");
+        micOrb.classList.remove("active", "speaking");
     }
 
-    if (data.type === "speech_started") {
-        setStatus("Listening...");
-        return;
-    }
+    function appendLog(speaker, text) {
+        const row = document.createElement("div");
+        row.className = `log-entry ${speaker.toLowerCase()}`;
 
-    if (data.type === "interrupt") {
-        clearAudioBuffer();
-        currentAssistantMessage = null;
-        setStatus("Listening...");
-        return;
-    }
+        const bubble = document.createElement("div");
+        bubble.className = "log-bubble";
+        bubble.textContent = text;
 
-    if (data.type === "tts_started") {
-        setStatus("Vayvora is speaking...");
-        return;
-    }
+        row.appendChild(bubble);
+        logContainer.appendChild(row);
+        logContainer.scrollTop = logContainer.scrollHeight;
 
-    if (data.type === "tts_complete") {
-        setStatus("Connected - Speak now");
-        return;
+        return bubble;
     }
-}
-
-function stopMicrophone() {
-    if (processor) {
-        try { processor.disconnect(); } catch (e) {}
-        processor = null;
-    }
-    if (source) {
-        try { source.disconnect(); } catch (e) {}
-        source = null;
-    }
-    if (mediaStream) {
-        mediaStream.getTracks().forEach(track => track.stop());
-        mediaStream = null;
-    }
-}
-
-async function stopAudio() {
-    stopMicrophone();
-    if (pcmPlayer) {
-        try { pcmPlayer.disconnect(); } catch (e) {}
-        pcmPlayer = null;
-    }
-    if (audioContext) {
-        try { await audioContext.close(); } catch (e) {}
-        audioContext = null;
-    }
-}
-
-async function cleanup() {
-    isRunning = false;
-    clearAudioBuffer();
-    await stopAudio();
-    websocket = null;
-    startBtn.disabled = false;
-    stopBtn.disabled = true;
-    currentAssistantMessage = null;
-}
-
-startBtn.onclick = async function() {
-    if (isRunning) return;
-    try {
-        setStatus("Connecting...");
-        await connectWebSocket();
-    } catch (error) {
-        setStatus("Failed to start");
-        await cleanup();
-    }
-};
-
-stopBtn.onclick = async function() {
-    isRunning = false;
-    stopMicrophone();
-    clearAudioBuffer();
-    if (websocket) {
-        try { websocket.close(); } catch (e) {}
-    }
-    await cleanup();
-    setStatus("Disconnected");
-    addTranscript("system", "Conversation stopped.");
-};
-
-window.addEventListener("beforeunload", function() {
-    stopMicrophone();
-    if (websocket) {
-        try { websocket.close(); } catch (e) {}
-    }
-});
 </script>
+
 </body>
 </html>

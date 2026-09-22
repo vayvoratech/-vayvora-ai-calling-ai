@@ -5,17 +5,11 @@ from src.agents.state import AgentState
 
 
 class LLMNode:
-    """
-    Single Speech LLM execution layer for Vayvora AI.
-    Converts grounded facts and tool outcomes into voice-optimized speech.
-    """
-
     def __init__(self, llm: Any):
         self.llm = llm
 
     @staticmethod
     def _extract_text(content: Any) -> str:
-        """Safely extract string content whether Gemini returns str or list of parts."""
         if isinstance(content, str):
             return content.strip()
         if isinstance(content, list):
@@ -42,9 +36,12 @@ class LLMNode:
                 "is_complete": True,
             }
 
-        # Check if the query is a general out-of-scope conceptual or trivia question
         from src.agents.nodes.router_node import RouterNode
-        if RouterNode.is_general_query(user_input):
+        
+        # Out-of-scope check only if no RAG knowledge or tool result is present
+        has_rag = bool(state.get("rag_context"))
+        has_tool = state.get("tool_result") is not None
+        if not has_rag and not has_tool and RouterNode.is_general_query(user_input):
             out_of_scope_reply = (
                 "I'm sorry, I can't process that query. I can only assist with "
                 "questions regarding Vayvora Technology's engineering services, "
@@ -62,15 +59,12 @@ class LLMNode:
                 "error": None,
             }
 
-        # Build Single Combined System Instruction
         system_blocks = [SYSTEM_PROMPT]
 
         memory_context = state.get("memory_context", [])
         if memory_context:
             memory_text = "\n".join(str(item) for item in memory_context)
-            system_blocks.append(
-                f"\n\nRelevant conversation memory:\n{memory_text}"
-            )
+            system_blocks.append(f"\n\nRelevant conversation memory:\n{memory_text}")
 
         rag_context = state.get("rag_context", "")
         if rag_context:
@@ -80,7 +74,6 @@ class LLMNode:
                 f"Adhere strictly to these factual details. Never invent or hallucinate information."
             )
 
-        # Inject structured conversation slots (known caller information)
         slots = state.get("slots", {})
         if slots:
             known_details = []
@@ -98,7 +91,7 @@ class LLMNode:
                 known_details.append(f"- WhatsApp Confirmation Opt-in: {'Yes' if slots['whatsapp_opt_in'] else 'No'}")
             if known_details:
                 system_blocks.append(
-                    f"\n\nCURRENT CONVERSATION SLOTS (PREVIOUSLY PROVIDED CALLER INFORMATION):\n"
+                    f"\n\nCURRENT CONVERSATION SLOTS:\n"
                     + "\n".join(known_details)
                     + "\nDo NOT ask for any of these details again since the caller has already provided them."
                 )
@@ -109,32 +102,23 @@ class LLMNode:
 
         if missing_fields and tool_result is not None:
             system_blocks.append(
-                f"\n\nCRITICAL DIRECTIVE - REQUIRED APPOINTMENT DETAILS MISSING:\n"
+                f"\n\nCRITICAL DIRECTIVE - REQUIRED DETAILS MISSING:\n"
                 f"{tool_result}\n\n"
-                f"STRICT BEHAVIOR MANDATE:\n"
-                f"1. The appointment is NOT booked or scheduled yet because required contact details are missing.\n"
-                f"2. DO NOT say or imply that the appointment has been scheduled, booked, or confirmed.\n"
-                f"3. Acknowledge what the caller provided (like their name and time) and DIRECTLY ASK the caller for the missing information specified in the directive.\n"
-                f"4. Keep your response to one or two friendly, spoken conversational sentences."
+                f"Directly ask the caller for the missing information in one conversational sentence."
             )
         elif tool_result is not None:
             system_blocks.append(
                 f"\n\nResult from external action/tool:\n{tool_result}\n"
-                f"Summarize this outcome in a friendly, conversational spoken sentence. "
-                f"Never read technical parameter keys, JSON structures, or database IDs."
+                f"Summarize this outcome in a friendly, conversational spoken sentence. Never read raw JSON or IDs."
             )
 
         combined_system_prompt = "\n".join(system_blocks)
-
         formatted_messages = [SystemMessage(content=combined_system_prompt)]
 
         for msg in state.get("messages", []):
             role = msg.get("role")
             content = msg.get("content", "")
-
-            if role == "tool":
-                continue
-            elif role == "user":
+            if role == "user":
                 formatted_messages.append(HumanMessage(content=str(content)))
             elif role == "assistant":
                 formatted_messages.append(AIMessage(content=str(content)))

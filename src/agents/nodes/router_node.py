@@ -9,6 +9,7 @@ semantic resonance, and temperature-calibrated softmax confidence.
 from __future__ import annotations
 
 import math
+import re
 import time
 from typing import Any, Dict, List, Tuple
 import numpy as np
@@ -19,17 +20,6 @@ from src.rag.embeddings.provider import EmbeddingProvider, get_embedding_provide
 
 
 class RouterNode:
-    """
-    Continuous Semantic Intent Router.
-
-    Analyzes the semantic meaning of the voice query rather than lexical keywords.
-    Dynamically routes between:
-      - 'rag': Company knowledge, engineering services, policies, SLAs, tech stacks, contact info
-      - 'mcp': External live actions (calendar booking/checking, email, WhatsApp notifications)
-      - 'direct': Immediate conversational greetings/courtesies with sub-millisecond latency
-      - 'llm': Open conversational inquiry, general reasoning, or clarification questions
-    """
-
     ROUTE_EXEMPLARS: Dict[str, List[str]] = {
         "rag": [
             "What generative AI and machine learning engineering services does Vayvora offer?",
@@ -48,7 +38,6 @@ class RouterNode:
             "Can you give me the company mobile number or official contact telephone?",
             "Can you provide some other information about the company so I can know about it clearly?",
             "What does your company do and what services do you provide to clients?",
-            "What is the price of the AI engineering course?",
             "Can you tell me about the AI engineering course and pricing?",
             "What is the fee and structure for the AI engineering course?",
             "How much does the engineering course cost?",
@@ -114,7 +103,6 @@ class RouterNode:
         "goodbye": "Goodbye! Feel free to reach out anytime if you need further assistance.",
     }
 
-    # Knowledge Base Domain Topic Anchors integrated into the semantic routing phase
     KB_TOPIC_ANCHORS: Dict[str, List[str]] = {
         "services_ai": [
             "Generative AI, machine learning engineering, AI Engineering course and training, custom LLM fine-tuning, voice AI calling, LangGraph multi-agent systems, vector databases",
@@ -160,8 +148,6 @@ class RouterNode:
         self._initialize_vector_spaces()
 
     def _initialize_vector_spaces(self) -> None:
-        """Pre-embed intent exemplar banks and knowledge-base topic centroids."""
-        # 1. Embed Route Exemplars
         for route, texts in self.ROUTE_EXEMPLARS.items():
             raw_vectors = self.embedding_provider.embed_documents(texts)
             arr = np.array(raw_vectors, dtype=np.float32)
@@ -174,7 +160,6 @@ class RouterNode:
             c_norm = np.linalg.norm(centroid)
             self.centroids[route] = centroid / (c_norm if c_norm > 0 else 1.0)
 
-        # 2. Embed Knowledge Base Topic Anchors for Semantic Routing Integration
         for topic_key, texts in self.KB_TOPIC_ANCHORS.items():
             raw_vectors = self.embedding_provider.embed_documents(texts)
             arr = np.array(raw_vectors, dtype=np.float32)
@@ -183,13 +168,6 @@ class RouterNode:
             self.kb_topic_centroids[topic_key] = centroid / (c_norm if c_norm > 0 else 1.0)
 
     def _compute_kb_semantic_resonance(self, query_vec: np.ndarray) -> Tuple[float, str]:
-        """
-        Computes maximum cosine similarity between the query and all
-        knowledge-base domain centroids.
-
-        Returns:
-            Tuple[float, str]: (highest_resonance_score, matched_topic_cluster)
-        """
         best_score = 0.0
         best_topic = "none"
 
@@ -202,10 +180,6 @@ class RouterNode:
         return best_score, best_topic
 
     def _compute_route_score(self, query_vec: np.ndarray, route: str, kb_resonance: float) -> float:
-        """
-        Computes the weighted composite score for a route using top-k exemplars,
-        route centroid proximity, and knowledge-base resonance.
-        """
         exemplars = self.exemplar_vectors[route]
         similarities = np.dot(exemplars, query_vec)
         top3_avg = float(np.mean(np.sort(similarities)[-3:]))
@@ -216,7 +190,6 @@ class RouterNode:
             + self.config.router_centroid_weight * centroid_sim
         )
 
-        # Integrate knowledge-base semantic resonance into RAG route
         if route == "rag":
             w = self.config.kb_resonance_weight
             base_score = float((1.0 - w) * base_score + w * kb_resonance)
@@ -226,7 +199,14 @@ class RouterNode:
     @staticmethod
     def is_company_or_service_query(text: str) -> bool:
         t = text.lower().strip()
-        if "vayvora" in t:
+        
+        # Catch phonetic misrecognitions from local STT
+        vayvora_phonetics = (
+            "vayvora", "vyvora", "vayvara", "wayvora", "vaivora",
+            "where technologies", "what technology", "where technology",
+            "why vora", "vi vora", "where technologies provide"
+        )
+        if any(p in t for p in vayvora_phonetics):
             return True
 
         company_refs = (
@@ -258,30 +238,16 @@ class RouterNode:
             "opening", "openings", "recruit", "recruitment", "resume", "cv",
             "work for", "work at", "work with", "join your team", "join vayvora",
             "assessment", "assessments", "interview", "interviews", "exam", "exams", "examination",
-            "coding test", "technical screening", "hiring process",
+            "coding test", "technical screening", "hiring process", "technologies provide",
+            "services provide", "what are the services", "what services are provided"
         )
         if any(term in t for term in company_domain_terms):
             return True
 
-        service_inquiry_patterns = (
-            "do you offer", "do you provide", "do you build", "do you have",
-            "do you do", "do you support", "can you build", "can you develop",
-            "can you provide", "what services do you", "what do you offer",
-            "what do you build", "what are your services", "what are your capabilities",
-            "tell me about your services", "your services", "your solutions",
-            "your tech stack", "your tech", "your pricing", "your rates",
-            "your cost", "how much do you charge", "your refund policy",
-            "your policy", "your sla", "your uptime", "where is your office",
-            "where are you located", "your headquarters", "company website",
-            "company mobile", "company phone", "company number", "company contact",
-            "company email", "website link", "mobile number", "contact number",
-            "phone number", "headquarter",
-        )
-        return any(pat in t for pat in service_inquiry_patterns)
+        return False
 
     @classmethod
     def is_general_query(cls, text: str) -> bool:
-        import re
         t = text.lower().strip().rstrip("?!.,;:")
         if not t:
             return False
@@ -292,7 +258,6 @@ class RouterNode:
         words = re.findall(r"\b\w+\b", t)
         word_set = set(words)
 
-        # If explicitly asking about 'your' or 'you', it is addressed to the assistant/company
         if "your" in word_set or "you" in word_set:
             return False
 
@@ -312,7 +277,6 @@ class RouterNode:
         if t in courtesies or (word_set & {"hello", "hi", "hey", "thanks", "bye", "goodbye"} and len(words) <= 3):
             return False
 
-        # Inquiries asking for definition or explanation of general concepts
         general_starters = (
             "what is", "what are", "what's", "whats", "define", "explain",
             "tell me what is", "tell me about what is", "meaning of", "definition of",
@@ -340,25 +304,13 @@ class RouterNode:
         self,
         query: str,
     ) -> Tuple[str, float, Dict[str, float], float, str, float]:
-        """
-        Classifies the user query into the best intent route using dense vector space.
-
-        Returns:
-            Tuple of:
-              - selected_route: 'rag' | 'mcp' | 'direct' | 'llm'
-              - top_confidence: float (calibrated softmax probability)
-              - norm_scores: Dict[str, float] (probabilities across all routes)
-              - margin: float (difference between top and second probabilities)
-              - rationale: str (human-readable decision explanation)
-              - kb_resonance: float (semantic alignment with knowledge base)
-        """
         if self.is_general_query(query):
             return (
                 "llm",
                 0.95,
                 {"llm": 0.95, "rag": 0.02, "mcp": 0.02, "direct": 0.01},
                 0.93,
-                "General out-of-scope conceptual query outside Vayvora company knowledge base. Routing to LLM with RAG disabled.",
+                "General conceptual query routed to LLM with RAG disabled.",
                 0.0,
             )
 
@@ -367,29 +319,24 @@ class RouterNode:
         if q_norm > 0:
             query_vec = query_vec / q_norm
 
-        # 1. Compute knowledge-base semantic resonance
         kb_resonance, best_topic = self._compute_kb_semantic_resonance(query_vec)
 
-        # 2. Compute composite raw scores for each route
         raw_scores = {
             route: self._compute_route_score(query_vec, route, kb_resonance)
             for route in self.ROUTE_EXEMPLARS.keys()
         }
 
-        # 3. Softmax temperature normalization for calibrated probabilities
         temp = self.config.router_temperature
         exp_scores = {r: math.exp(s / temp) for r, s in raw_scores.items()}
         sum_exp = sum(exp_scores.values())
         norm_scores = {r: round(v / sum_exp, 4) for r, v in exp_scores.items()}
 
-        # 4. Rank routes by confidence
         sorted_routes = sorted(norm_scores.items(), key=lambda x: x[1], reverse=True)
         top_route, top_score = sorted_routes[0]
         second_route, second_score = sorted_routes[1]
         margin = round(top_score - second_score, 4)
         max_raw = max(raw_scores.values())
 
-        # Disallow false 'direct' route matches if query contains no genuine greeting/courtesy words
         greeting_words = {"hello", "hi", "hey", "good morning", "good afternoon", "good evening", "thanks", "thank you", "bye", "goodbye"}
         has_greeting_token = any(gw in query.lower() for gw in greeting_words)
         if top_route == "direct" and not has_greeting_token:
@@ -397,37 +344,22 @@ class RouterNode:
             top_score = second_score
             margin = 0.05
 
-        # 5. Semantic Gating and Fallback Safety Checks
         if max_raw < 0.18:
             selected_route = "llm"
-            rationale = (
-                f"Low raw semantic affinity ({max_raw:.3f} < 0.18) across all specialized routes. "
-                "Falling back to conversational LLM."
-            )
+            rationale = "Low raw semantic affinity. Falling back to LLM."
         elif margin < self.config.router_min_margin and top_score < 0.55:
             selected_route = "llm"
-            rationale = (
-                f"Semantic ambiguity between '{top_route}' ({top_score:.3f}) and "
-                f"'{second_route}' ({second_score:.3f}) with margin {margin:.3f}. "
-                "Routing to LLM for conversational clarification."
-            )
+            rationale = f"Semantic ambiguity between '{top_route}' and '{second_route}'. Defaulting to LLM."
         elif top_score < self.config.router_confidence_threshold:
             selected_route = "llm"
-            rationale = (
-                f"Top probability {top_score:.3f} below confidence threshold "
-                f"{self.config.router_confidence_threshold:.3f}. Defaulting to LLM."
-            )
+            rationale = "Top probability below threshold. Defaulting to LLM."
         else:
             selected_route = top_route
-            rationale = (
-                f"Semantic match: Intent '{top_route}' scored {top_score:.3f} with +{margin:.3f} margin. "
-                f"(Knowledge base resonance: {kb_resonance:.3f} in topic '{best_topic}')"
-            )
+            rationale = f"Semantic match: '{top_route}' ({top_score:.3f}). Resonance: {kb_resonance:.3f}."
 
         return selected_route, top_score, norm_scores, margin, rationale, kb_resonance
 
     async def run(self, state: AgentState) -> AgentState:
-        import re
         start_time = time.perf_counter()
         user_input = state.get("user_input", "").strip()
         messages = list(state.get("messages", []))
@@ -448,15 +380,12 @@ class RouterNode:
 
         normalized_text = user_input.lower().strip().rstrip("?!.,;:")
 
-        # Multi-turn conversational context detection
         user_history = [m.get("content", "").strip() for m in messages if m.get("role") == "user"]
         assistant_history = [m.get("content", "").strip() for m in messages if m.get("role") == "assistant"]
 
-        # Extraction of common scheduling and contact entities from user input
         has_time = bool(re.search(r"\b(\d{1,2}(:\d{2})?\s*(am|pm|a\.m\.|p\.m\.)|\d{1,2}\s*o'?clock|morning|afternoon|evening|\d{1,2}:\d{2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b", normalized_text))
         has_date = bool(re.search(r"\b(today|tomorrow|tommorow|tomorow|tommorrow|tmrw|next\s+day|monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d{1,2}[-/]\d{1,2}[-/]\d{4}|\d{4}-\d{2}-\d{2}|january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\b", normalized_text))
-        
-        # Check if previous assistant message specifically asked for the caller's name
+
         _last_asst = assistant_history[-1].lower() if assistant_history else ""
         _name_was_prompted = any(term in _last_asst for term in ("full name", "your name", "caller name", "who is calling"))
 
@@ -466,21 +395,8 @@ class RouterNode:
             "whatsapp", "email", "mobile", "number", "phone", "address", "vayvora", "here",
             "ready", "interested", "calling", "consultation", "meeting", "call", "schedule",
             "appointment", "tomorrow", "tommorow", "today", "morning", "afternoon", "evening", "please",
-            "thanks", "thank", "hello", "hi", "hey", "hlo", "hlw", "helo", "heyy", "hiya", "yo", "sup",
-            "hola", "namaste", "vanakkam", "greetings", "good", "want", "like", "trying", "looking",
-            "can", "could", "would", "am", "is", "are", "sure", "yep", "yeah", "fine", "cool", "great",
-            "proceed", "done", "now", "later", "soon", "confirm", "confirmed", "booking",
-            "book", "date", "time", "details", "info", "invite", "link",
-            "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
-            "january", "february", "march", "april", "may", "june", "july", "august",
-            "september", "october", "november", "december", "pm", "am",
-            "role", "roles", "position", "positions", "job", "jobs", "career", "careers", "intern", "internship",
-            "internships", "developer", "engineer", "engineering", "assessment", "assessments", "interview",
-            "interviews", "exam", "exams", "test", "tests", "screening", "hire", "hiring", "apply", "applying",
-            "candidate", "candidates", "student", "students", "resume", "cv", "portfolio", "github", "hr",
-            "talent", "team", "company", "product", "products", "project", "projects", "enterprise", "client",
-            "clients", "delegate", "delegates", "work", "tech", "technology", "software", "ai", "genai", "cloud",
-            "aws", "gcp", "devops",
+            "thanks", "thank", "hello", "hi", "hey", "good", "want", "like", "trying", "looking",
+            "proceed", "confirm", "booking", "book", "date", "time", "details"
         }
         _is_pure_name = (
             all(re.match(r"^[A-Za-z]+$", w) for w in _name_tokens)
@@ -493,285 +409,102 @@ class RouterNode:
         has_name = (
             bool(re.search(r"\b(my name is|name is|i am|this is)\b", normalized_text))
             or _is_pure_name
-            or (" and " in normalized_text and not any(w in _non_name_tokens for w in _name_tokens[:1]))
         )
-        has_email = "@" in normalized_text or "dot com" in normalized_text or "at gmail" in normalized_text
-        has_phone = bool(re.search(r"\b\d{10}\b|(?:\+91[\s-]?)?[6-9]\d{9}\b|\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b", normalized_text))
+        has_email = "@" in normalized_text or "dot com" in normalized_text
+        has_phone = bool(re.search(r"\b\d{10}\b|(?:\+91[\s-]?)?[6-9]\d{9}\b", normalized_text))
         has_whatsapp = "whatsapp" in normalized_text
 
-        # Detect candidate/student context across conversation history
-        career_candidate_keywords = (
-            "apply for role", "apply for a role", "apply for", "apply to", "job", "jobs", "career", "careers",
-            "internship", "internships", "intern", "interns", "opening", "openings", "vacancy", "vacancies",
-            "hiring", "applicant", "applicants", "candidate", "candidates", "student", "students",
-            "assessment", "assessments", "coding test", "interview", "interviews", "resume", "cv",
-        )
-        is_candidate_context = any(
-            any(kw in u.lower() for kw in career_candidate_keywords)
-            for u in user_history + [normalized_text]
-        )
+        is_affirmative = bool(re.search(r"\b(yes|sure|yeah|yep|please|confirm|go ahead|okay|ok|fine|proceed)\b", normalized_text))
+        is_negative = bool(re.search(r"\b(no|nope|never|don't|dont|no thanks|skip|avoid|nah)\b", normalized_text))
 
-        is_affirmative = bool(re.search(r"\b(yes|sure|yeah|yep|please|please do|confirm|go ahead|okay|ok|fine|sounds good|that works|certainly|absolutely|why not|proceed|i am okay|i would like that)\b", normalized_text))
-        is_negative = bool(re.search(r"\b(no|nope|never|not really|don't|dont|no thanks|no thank you|skip|avoid|only email|not needed|not prefer|i do not prefer|dont prefer|don't prefer|nah)\b", normalized_text))
-
+        # Check multi-turn scheduling responses
         if assistant_history:
             last_assistant = assistant_history[-1].lower()
-
-            # Case A: Assistant specifically asked about WhatsApp confirmation
-            if "whatsapp" in last_assistant:
-                if is_affirmative or is_negative or has_whatsapp or has_email or has_phone:
-                    latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-                    return {
-                        **state,
-                        "route": "mcp",
-                        "route_confidence": 0.98,
-                        "similarity_scores": {"mcp": 0.98, "llm": 0.01, "rag": 0.01, "direct": 0.0},
-                        "route_margin": 0.97,
-                        "route_rationale": "Multi-turn context: Caller responding to WhatsApp confirmation preference.",
-                        "kb_resonance": 0.0,
-                        "llm_required": True,
-                        "rag_required": False,
-                        "tool_required": True,
-                        "is_complete": False,
-                        "routing_latency_ms": latency_ms,
-                    }
-
-            # Case B: Assistant offered to schedule/book a meeting or call (e.g., "Can I schedule a meeting with our head?")
-            meeting_offer_patterns = (
-                "schedule a meeting", "schedule a call", "schedule an appointment",
-                "schedule a consultation", "schedule a discovery", "schedule a demo",
-                "can i schedule", "shall i schedule", "would you like me to schedule",
-                "would you like to schedule", "can i book", "shall i book",
-                "would you like to book", "would you like me to book", "book a meeting",
-                "book a call", "book an appointment", "book a consultation",
-                "set up a meeting", "set up a call", "set up an appointment",
-                "connect you with our head", "connect you with our team", "connect you with",
-                "arrange a meeting", "arrange a call", "with our head",
-            )
-            is_meeting_offer = any(phrase in last_assistant for phrase in meeting_offer_patterns)
-
-            if is_meeting_offer:
-                if is_candidate_context:
-                    latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-                    return {
-                        **state,
-                        "route": "llm",
-                        "route_confidence": 0.96,
-                        "similarity_scores": {"llm": 0.96, "rag": 0.02, "mcp": 0.01, "direct": 0.01},
-                        "route_margin": 0.94,
-                        "route_rationale": "Candidate/student inquiry context: meetings are not scheduled for applicants. Routing to LLM.",
-                        "kb_resonance": 0.0,
-                        "llm_required": True,
-                        "rag_required": False,
-                        "tool_required": False,
-                        "is_complete": False,
-                        "routing_latency_ms": latency_ms,
-                    }
-                elif is_affirmative and not is_negative:
-                    latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-                    return {
-                        **state,
-                        "route": "mcp",
-                        "route_confidence": 0.98,
-                        "similarity_scores": {"mcp": 0.98, "llm": 0.01, "rag": 0.01, "direct": 0.0},
-                        "route_margin": 0.97,
-                        "route_rationale": "Multi-turn context: Caller accepted offer to schedule meeting with head/team.",
-                        "kb_resonance": 0.0,
-                        "llm_required": True,
-                        "rag_required": False,
-                        "tool_required": True,
-                        "is_complete": False,
-                        "routing_latency_ms": latency_ms,
-                    }
-                elif is_negative and not is_affirmative:
-                    latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-                    return {
-                        **state,
-                        "route": "llm",
-                        "route_confidence": 0.96,
-                        "similarity_scores": {"llm": 0.96, "rag": 0.02, "mcp": 0.01, "direct": 0.01},
-                        "route_margin": 0.94,
-                        "route_rationale": "Multi-turn context: Caller declined offer to schedule meeting. Routing to conversational LLM.",
-                        "kb_resonance": 0.0,
-                        "llm_required": True,
-                        "rag_required": False,
-                        "tool_required": False,
-                        "is_complete": False,
-                        "routing_latency_ms": latency_ms,
-                    }
-
-            # Case C: Assistant was prompting for appointment parameters (time, name, date, email, mobile, whatsapp)
-            scheduling_param_keywords = (
-                "preferred time", "full name", "what time", "which date", "what date",
-                "which time", "when would you", "schedule that", "schedule an appointment",
-                "calendar", "preferred date", "email address", "mobile number",
-                "phone number", "contact number", "whatsapp as well", "through whatsapp",
-                "send on whatsapp", "email and mobile", "send the appointment",
-                "discovery call", "appointment", "confirmation",
-            )
-            is_scheduling_prompt = any(phrase in last_assistant for phrase in scheduling_param_keywords)
-
-            if is_scheduling_prompt and not is_candidate_context and (has_time or has_date or has_name or has_email or has_phone or has_whatsapp or is_affirmative or is_negative):
-                latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            if "whatsapp" in last_assistant and (is_affirmative or is_negative or has_whatsapp or has_email or has_phone):
                 return {
                     **state,
                     "route": "mcp",
                     "route_confidence": 0.98,
                     "similarity_scores": {"mcp": 0.98, "llm": 0.01, "rag": 0.01, "direct": 0.0},
                     "route_margin": 0.97,
-                    "route_rationale": "Multi-turn context: Caller providing requested appointment parameters in response to assistant prompt.",
+                    "route_rationale": "Caller answering WhatsApp confirmation preference.",
                     "kb_resonance": 0.0,
                     "llm_required": True,
                     "rag_required": False,
                     "tool_required": True,
                     "is_complete": False,
-                    "routing_latency_ms": latency_ms,
+                    "routing_latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
                 }
 
-        # Sub-millisecond exact match shortcut for standard conversational greetings
-        mid_call_checkins = (
-            "hello", "hi", "hey", "can you hear me", "can you hear me clearly",
-            "are you there", "are you still there", "you there", "hello are you there"
-        )
-        if len(messages) > 0 and normalized_text in mid_call_checkins:
-            latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
+            scheduling_keywords = (
+                "full name", "preferred time", "preferred date", "what date",
+                "which time", "schedule an appointment", "mobile number", "email address"
+            )
+            if any(k in last_assistant for k in scheduling_keywords) and (has_time or has_date or has_name or has_email or has_phone):
+                return {
+                    **state,
+                    "route": "mcp",
+                    "route_confidence": 0.98,
+                    "similarity_scores": {"mcp": 0.98, "llm": 0.01, "rag": 0.01, "direct": 0.0},
+                    "route_margin": 0.97,
+                    "route_rationale": "Caller providing appointment parameters.",
+                    "kb_resonance": 0.0,
+                    "llm_required": True,
+                    "rag_required": False,
+                    "tool_required": True,
+                    "is_complete": False,
+                    "routing_latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
+                }
+
+        # Check mid-call greetings
+        if len(messages) > 0 and normalized_text in ("hello", "hi", "hey", "can you hear me", "are you there"):
             return {
                 **state,
                 "route": "direct",
                 "route_confidence": 0.99,
                 "similarity_scores": {"direct": 0.99, "rag": 0.0, "mcp": 0.0, "llm": 0.01},
                 "route_margin": 0.98,
-                "route_rationale": "Mid-call check-in detected during active conversation.",
+                "route_rationale": "Mid-call presence check-in.",
                 "kb_resonance": 0.0,
                 "response": "Yes, I am here. Please go ahead.",
                 "is_complete": True,
-                "routing_latency_ms": latency_ms,
+                "routing_latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
             }
 
-        if normalized_text in self.DIRECT_RESPONSES:
-            # If conversation is already active, only direct-route closings ("thanks", "bye"), not greeting resets
-            if len(messages) > 0 and normalized_text in ("good morning", "good afternoon", "good evening"):
-                # Pass to LLM so caller's greeting is handled in conversational context without wiping history
-                pass
-            else:
-                latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-                return {
-                    **state,
-                    "route": "direct",
-                    "route_confidence": 0.99,
-                    "similarity_scores": {"direct": 0.99, "rag": 0.0, "mcp": 0.0, "llm": 0.01},
-                    "route_margin": 0.98,
-                    "route_rationale": "Exact match for common courtesy greeting.",
-                    "kb_resonance": 0.0,
-                    "response": self.DIRECT_RESPONSES[normalized_text],
-                    "is_complete": True,
-                    "routing_latency_ms": latency_ms,
-                }
-
-        # Anti-RAG Safeguard: Simple conversational affirmative or negative responses must NEVER route to RAG
-        simple_yes_no = normalized_text in (
-            "yes", "no", "sure", "yeah", "yep", "nope", "ok", "okay",
-            "no thanks", "no thank you", "sounds good", "please do", "never mind",
-            "dont", "don't", "nah", "fine", "certainly", "absolutely"
-        )
-        if simple_yes_no:
-            latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-            return {
-                **state,
-                "route": "llm",
-                "route_confidence": 0.95,
-                "similarity_scores": {"llm": 0.95, "rag": 0.02, "mcp": 0.02, "direct": 0.01},
-                "route_margin": 0.93,
-                "route_rationale": "Conversational confirmation or negation. Routing to LLM with RAG disabled.",
-                "kb_resonance": 0.0,
-                "llm_required": True,
-                "rag_required": False,
-                "tool_required": False,
-                "is_complete": False,
-                "routing_latency_ms": latency_ms,
-            }
-
-        # Out-of-scope general knowledge and conceptual queries route directly to LLM with RAG disabled
-        if self.is_general_query(user_input):
-            latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-            return {
-                **state,
-                "route": "llm",
-                "route_confidence": 0.95,
-                "similarity_scores": {"llm": 0.95, "rag": 0.02, "mcp": 0.02, "direct": 0.01},
-                "route_margin": 0.93,
-                "route_rationale": "General out-of-scope conceptual query outside Vayvora company knowledge base. Routing to LLM with RAG disabled.",
-                "kb_resonance": 0.0,
-                "llm_required": True,
-                "rag_required": False,
-                "tool_required": False,
-                "is_complete": False,
-                "routing_latency_ms": latency_ms,
-            }
-
-        # Dense Vector Semantic Intent Classification with Context Enrichment
-        query_for_classification = user_input
-        if user_history and len(user_input.split()) < 12 and not simple_yes_no and "@" not in normalized_text and not has_phone:
-            query_for_classification = f"{user_history[-1]}. {user_input}"
-
-        selected_route, confidence, scores, margin, rationale, kb_resonance = self.classify_intent(query_for_classification)
-        latency_ms = round((time.perf_counter() - start_time) * 1000, 2)
-
-        # Ensure direct tool action intents route to MCP
-        action_intent_patterns = (
-            "send email", "send an email", "shoot an email", "mail to", "send mail",
-            "send whatsapp", "send a whatsapp", "ping on whatsapp", "message on whatsapp",
-            "schedule an appointment", "schedule a meeting", "schedule a call",
-            "schedule appointment", "schedule meeting", "schedule call", "schedule a discovery call",
-            "book an appointment", "book a meeting", "book a call", "book appointment",
-            "calendar events", "check my calendar", "month view",
-        )
-        has_action_intent = any(pat in normalized_text for pat in action_intent_patterns) or (
-            re.search(r"\b(email|mail|whatsapp)\b", normalized_text) and ("@" in normalized_text or re.search(r"\b\d{10}\b", normalized_text))
-        )
-        if has_action_intent:
-            if is_candidate_context and any(term in normalized_text for term in ("schedule", "book", "appointment", "meeting", "call", "interview")):
-                selected_route = "llm"
-                confidence = max(confidence, 0.95)
-                margin = max(margin, 0.90)
-                rationale = "Candidate or student requested scheduling a call/meeting. Routing to LLM to enforce no-candidate-call policy."
-            else:
-                selected_route = "mcp"
-                confidence = max(confidence, 0.98)
-                margin = max(margin, 0.95)
-                rationale = "Direct tool action request detected (calendar scheduling, email, or WhatsApp). Routing to MCP."
-
-        # Ensure company, pricing, course, and service inquiries route to RAG (unless an action tool is requested)
-        elif self.is_company_or_service_query(user_input):
-            action_words = {"schedule", "book", "appointment", "calendar", "meeting", "email", "whatsapp", "reschedule", "cancel"}
-            words = set(re.findall(r"\b\w+\b", user_input.lower()))
-            if not (words & action_words):
-                if selected_route != "rag":
-                    selected_route = "rag"
-                    confidence = max(confidence, 0.90)
-                    margin = max(margin, 0.85)
-                    rationale = "Inquiry regarding Vayvora services, courses, pricing, policies, or company details. Routing to RAG."
-
-        # Protect against false direct classifications during ongoing conversations
-        if selected_route == "direct":
-            greeting_words = {"hello", "hi", "hey", "good morning", "good afternoon", "good evening", "thanks", "thank you", "bye", "goodbye"}
-            if not any(gw in normalized_text for gw in greeting_words) or len(messages) > 0:
-                selected_route = "llm"
-                rationale = "Contextual fallback: non-greeting input during conversation redirected from direct to LLM."
-
-        if selected_route == "direct":
+        # Check standalone initial greeting
+        if len(messages) == 0 and normalized_text in self.DIRECT_RESPONSES:
             return {
                 **state,
                 "route": "direct",
-                "route_confidence": confidence,
-                "similarity_scores": scores,
-                "route_margin": margin,
-                "route_rationale": rationale,
-                "kb_resonance": kb_resonance,
-                "response": "Hello! I am Vayvora AI, the voice assistant for Vayvora Technology. How can I assist you with our engineering services or calendar appointments today?",
+                "route_confidence": 0.99,
+                "similarity_scores": {"direct": 0.99, "rag": 0.0, "mcp": 0.0, "llm": 0.01},
+                "route_margin": 0.98,
+                "route_rationale": "Greeting at start of call.",
+                "kb_resonance": 0.0,
+                "response": self.DIRECT_RESPONSES[normalized_text],
                 "is_complete": True,
-                "routing_latency_ms": latency_ms,
+                "routing_latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
             }
+
+        # Fast direct check for company/services inquiries
+        if self.is_company_or_service_query(user_input):
+            return {
+                **state,
+                "route": "rag",
+                "route_confidence": 0.95,
+                "similarity_scores": {"rag": 0.95, "llm": 0.03, "mcp": 0.01, "direct": 0.01},
+                "route_margin": 0.92,
+                "route_rationale": "Inquiry matched Vayvora services, courses, or company profile.",
+                "kb_resonance": 0.85,
+                "llm_required": True,
+                "rag_required": True,
+                "tool_required": False,
+                "is_complete": False,
+                "routing_latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
+            }
+
+        # Vector classification without affirmative prefix poisoning
+        selected_route, confidence, scores, margin, rationale, kb_resonance = self.classify_intent(user_input)
 
         if selected_route == "mcp":
             return {
@@ -786,30 +519,25 @@ class RouterNode:
                 "rag_required": False,
                 "tool_required": True,
                 "is_complete": False,
-                "routing_latency_ms": latency_ms,
+                "routing_latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
             }
 
         if selected_route == "rag":
-            if simple_yes_no or normalized_text in ("yes", "no", "sure", "ok", "okay", "nope", "fine"):
-                selected_route = "llm"
-                rationale = "Conversational affirmation/negation redirected from RAG to LLM."
-            else:
-                return {
-                    **state,
-                    "route": "rag",
-                    "route_confidence": confidence,
-                    "similarity_scores": scores,
-                    "route_margin": margin,
-                    "route_rationale": rationale,
-                    "kb_resonance": kb_resonance,
-                    "llm_required": True,
-                    "rag_required": True,
-                    "tool_required": False,
-                    "is_complete": False,
-                    "routing_latency_ms": latency_ms,
-                }
+            return {
+                **state,
+                "route": "rag",
+                "route_confidence": confidence,
+                "similarity_scores": scores,
+                "route_margin": margin,
+                "route_rationale": rationale,
+                "kb_resonance": kb_resonance,
+                "llm_required": True,
+                "rag_required": True,
+                "tool_required": False,
+                "is_complete": False,
+                "routing_latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
+            }
 
-        # Fallback to general conversational LLM
         return {
             **state,
             "route": "llm",
@@ -822,5 +550,5 @@ class RouterNode:
             "rag_required": False,
             "tool_required": False,
             "is_complete": False,
-            "routing_latency_ms": latency_ms,
+            "routing_latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
         }

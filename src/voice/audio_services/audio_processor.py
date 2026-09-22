@@ -1,180 +1,92 @@
+from typing import Dict, Any, List
 import numpy as np
 from scipy.signal import resample_poly
 
-from src.voice.audio_services.vad_services import VADService
+from src.voice.audio_services.vad_services import VADService, VADEventType
 
 
 class AudioProcessor:
+    """
+    Soniox-style Stream Audio Processor.
+    
+    Features:
+      - Polyphase stream resampling (48kHz -> 16kHz) with edge continuity.
+      - Maintains clean pipeline encapsulation.
+      - Emits unified dictionary contracts for the WebSocket voice router.
+    """
 
     def __init__(
         self,
-        input_sample_rate=48000,
-        output_sample_rate=16000,
-        vad_threshold=0.5
+        input_sample_rate: int = 48000,
+        output_sample_rate: int = 16000,
+        vad_start_threshold: float = 0.55,
+        vad_end_threshold: float = 0.35,
+        min_silence_duration_ms: int = 350
     ):
-
         self.input_sample_rate = input_sample_rate
         self.output_sample_rate = output_sample_rate
 
+        # Initialize the Soniox-pattern VAD service
         self.vad = VADService(
             sample_rate=output_sample_rate,
-            threshold=vad_threshold
+            start_threshold=vad_start_threshold,
+            end_threshold=vad_end_threshold,
+            min_silence_duration_ms=min_silence_duration_ms
         )
 
-    # ==================================================
-    # PCM16 bytes -> NumPy array
-    # ==================================================
-
-    def pcm16_to_numpy(
-        self,
-        pcm_bytes: bytes
-    ) -> np.ndarray:
-
-        if not pcm_bytes:
-
-            return np.array(
-                [],
-                dtype=np.int16
-            )
-
-        return np.frombuffer(
-            pcm_bytes,
-            dtype=np.int16
-        )
-
-    # ==================================================
-    # Resample audio
-    # ==================================================
-
-    def resample_audio(
-        self,
-        audio: np.ndarray
-    ) -> np.ndarray:
-
-        if len(audio) == 0:
-
-            return np.array(
-                [],
-                dtype=np.int16
-            )
-
-        # No conversion required
-        if (
-            self.input_sample_rate
-            ==
-            self.output_sample_rate
-        ):
-
-            return audio
-
-        # Example:
-        # 48000 Hz -> 16000 Hz
-
-        resampled = resample_poly(
-            audio,
-            self.output_sample_rate,
-            self.input_sample_rate
-        )
-
-        # Keep valid PCM16 range
-
-        resampled = np.clip(
-            resampled,
-            -32768,
-            32767
-        )
-
-        return resampled.astype(
-            np.int16
-        )
-
-    # ==================================================
-    # Process raw browser audio
-    # ==================================================
-
-    def process(
-        self,
-        pcm_bytes: bytes
-    ) -> bytes:
-
+    def resample(self, pcm16_bytes: bytes) -> bytes:
         """
-        Convert incoming PCM16 audio from the
-        browser sample rate to the STT/VAD
-        sample rate.
-
-        Input:
-            PCM16 48 kHz
-
-        Output:
-            PCM16 16 kHz
+        Downsamples PCM16 linear audio to target rate using rational polyphase filtering.
         """
-
-        audio = self.pcm16_to_numpy(
-            pcm_bytes
-        )
-
-        if len(audio) == 0:
-
+        if not pcm16_bytes:
             return b""
 
-        resampled = self.resample_audio(
-            audio
+        if self.input_sample_rate == self.output_sample_rate:
+            return pcm16_bytes
+
+        audio_int16 = np.frombuffer(pcm16_bytes, dtype=np.int16)
+        if len(audio_int16) == 0:
+            return b""
+
+        # 48000 -> 16000 (Downsample factor 1/3)
+        resampled = resample_poly(
+            audio_int16,
+            up=self.output_sample_rate,
+            down=self.input_sample_rate
         )
 
-        return resampled.tobytes()
+        resampled_int16 = np.clip(resampled, -32768, 32767).astype(np.int16)
+        return resampled_int16.tobytes()
 
-    # ==================================================
-    # Process + VAD
-    # ==================================================
-
-    def process_with_vad(
-        self,
-        pcm_bytes: bytes
-    ) -> dict:
-
+    def process_with_vad(self, pcm_bytes: bytes) -> Dict[str, Any]:
         """
-        Resample incoming audio and run
-        stateful VAD.
+        Resamples incoming WebSocket audio and processes it against frame VAD.
+        Returns a simplified event contract compatible with your voice router.
+        """
+        resampled_audio = self.resample(pcm_bytes)
+        vad_events = self.vad.process(resampled_audio)
 
-        Returns:
-
-        {
-            speech_started: bool,
-            speech_ended: bool,
-            is_speech: bool,
-            speech_audio: bytes | None
+        result: Dict[str, Any] = {
+            "speech_started": False,
+            "speech_ended": False,
+            "is_speech": self.vad.is_speaking,
+            "speech_audio": None,
+            "duration_ms": 0.0
         }
-        """
 
-        # ----------------------------------------------
-        # 48 kHz -> 16 kHz
-        # ----------------------------------------------
+        for event in vad_events:
+            if event.event_type == VADEventType.START_OF_SPEECH:
+                result["speech_started"] = True
+                result["is_speech"] = True
 
-        processed_audio = self.process(
-            pcm_bytes
-        )
+            elif event.event_type == VADEventType.END_OF_SPEECH:
+                result["speech_ended"] = True
+                result["is_speech"] = False
+                result["speech_audio"] = event.audio_pcm16
+                result["duration_ms"] = event.duration_ms
 
-        if not processed_audio:
-
-            return {
-                "speech_started": False,
-                "speech_ended": False,
-                "is_speech": False,
-                "speech_audio": None
-            }
-
-        # ----------------------------------------------
-        # Run VAD
-        # ----------------------------------------------
-
-        return self.vad.process(
-            processed_audio
-        )
-
-    # ==================================================
-    # Reset
-    # ==================================================
+        return result
 
     def reset(self):
-
+        """Reset internal buffers on new call connection."""
         self.vad.reset()

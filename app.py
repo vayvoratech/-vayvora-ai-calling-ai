@@ -1,20 +1,20 @@
+# app.py
 import os
 import sys
 import time
-import asyncio
-import logging
 import warnings
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel
 import uvicorn
 
 # 1. Resolve project root
-PROJECT_ROOT = Path(__file__).resolve().parent.parent if Path(__file__).resolve().parent.name == "src" else Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -23,31 +23,22 @@ os.environ["TOKENIZERS_PARALLELISM"] = "false"
 os.environ["TORCH_CPP_LOG_LEVEL"] = "ERROR"
 warnings.filterwarnings("ignore")
 
-from langchain_google_genai import ChatGoogleGenerativeAI
-from src.agents.config import DEFAULT_AGENT_CONFIG
-from src.agents.runtime import AgentRuntime
-from src.rag.services.retriever import RAGRetriever
-
 load_dotenv()
 
-# Global runtime holder
-runtime: Optional[AgentRuntime] = None
-
-def get_agent_runtime() -> AgentRuntime:
-    global runtime
-    if runtime is None:
-        llm = ChatGoogleGenerativeAI(
-            model=DEFAULT_AGENT_CONFIG.model_name,
-            max_output_tokens=DEFAULT_AGENT_CONFIG.max_tokens,
-        )
-        runtime = AgentRuntime(
-            llm=llm,
-            memory_store=None,
-            retriever=RAGRetriever(),
-        )
-    return runtime
+from src.agents.config import DEFAULT_AGENT_CONFIG
+from src.dependencies import get_agent_runtime
+from src.voice.voice import router as voice_router
 
 app = FastAPI(title="Vayvora AI Voice Agent API")
+app.include_router(voice_router)
+
+FRONTEND_DIR = PROJECT_ROOT / "src" / "frontend"
+if FRONTEND_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
+
+    @app.get("/pcm-player.js")
+    async def pcm_player():
+        return FileResponse(FRONTEND_DIR / "pcm-player.js", media_type="application/javascript")
 
 class ChatRequest(BaseModel):
     user_input: str
@@ -60,9 +51,9 @@ async def startup_event():
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    global runtime
-    if runtime:
-        await runtime.close()
+    from src import dependencies
+    if dependencies.runtime:
+        await dependencies.runtime.close()
 
 @app.get("/config")
 async def get_config():
@@ -77,7 +68,6 @@ async def get_config():
 @app.post("/chat")
 async def chat_endpoint(payload: ChatRequest):
     agent = get_agent_runtime()
-    
     state = {
         "session_id": "html_session",
         "user_input": payload.user_input,
@@ -108,8 +98,10 @@ async def chat_endpoint(payload: ChatRequest):
 
 @app.get("/", response_class=HTMLResponse)
 async def serve_ui():
-    html_file = Path(__file__).parent / "index.html"
-    return html_file.read_text(encoding="utf-8")
+    html_file = FRONTEND_DIR / "index.html"
+    if html_file.exists():
+        return html_file.read_text(encoding="utf-8")
+    return HTMLResponse("<h1>Vayvora Voice Agent Server Running</h1>")
 
 if __name__ == "__main__":
     uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)
