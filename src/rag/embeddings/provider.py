@@ -1,30 +1,34 @@
+import os
 from functools import lru_cache
 import numpy as np
-from fastembed import TextEmbedding
+from dotenv import load_dotenv
+from google import genai
 
 from src.rag.config import rag_config
+
+load_dotenv()
+
+# Resolve API Key
+api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+if not api_key:
+    raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY environment variable is required.")
 
 
 class EmbeddingProvider:
     """
-    Ultra-lightweight dense vector embedding provider for Vayvora RAG and semantic routing.
-    Powered by FastEmbed (ONNX Runtime).
-    - 0 API Keys / 0 Network Calls / 0 Cloud Version Mismatches
-    - Consumes only ~40MB RAM (Render 512MB safe)
-    - Replaces PyTorch, Transformers, and Google Cloud Embeddings.
+    Zero-RAM Cloud Embedding Provider using Google GenAI SDK.
+    Eliminates all local neural weights, HF Hub downloads, and memory bloat.
     """
 
-    def __init__(self, model_name: str = "BAAI/bge-small-en-v1.5"):
+    def __init__(self, model_name: str = "text-embedding-004"):
         self.model_name = model_name
-        # Loads a tiny ~60MB quantized ONNX model into memory
-        self.model = TextEmbedding(model_name=self.model_name)
-        # BAAI/bge-small-en-v1.5 produces 384 dimensions
-        self.dimension = 384
+        # Native lightweight Google GenAI client (pure HTTP)
+        self.client = genai.Client(api_key=api_key)
+        self.dimension = getattr(rag_config, "embedding_dimension", 768)
         self._cache: dict[str, list[float]] = {}
 
     @staticmethod
     def _normalize(vector: list[float]) -> list[float]:
-        """Unit L2-normalization for cosine dot products."""
         arr = np.array(vector, dtype=np.float32)
         norm = np.linalg.norm(arr)
         if norm > 0:
@@ -39,9 +43,12 @@ class EmbeddingProvider:
         if cleaned in self._cache:
             return self._cache[cleaned]
 
-        # FastEmbed returns a generator of numpy arrays
-        generator = self.model.embed([cleaned])
-        raw_vector = list(generator)[0].tolist()
+        response = self.client.models.embed_content(
+            model=self.model_name,
+            contents=cleaned,
+        )
+        # response.embeddings[0].values contains the 768-dim vector
+        raw_vector = response.embeddings[0].values
         result = self._normalize(raw_vector)
 
         if len(self._cache) < 4096:
@@ -51,9 +58,6 @@ class EmbeddingProvider:
     def embed_documents(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-
-        if any(not text or not text.strip() for text in texts):
-            raise ValueError("Document list contains empty text.")
 
         results: list[list[float]] = [[] for _ in texts]
         to_encode: list[str] = []
@@ -68,12 +72,13 @@ class EmbeddingProvider:
                 indices.append(idx)
 
         if to_encode:
-            # Batch embedding via FastEmbed
-            generator = self.model.embed(to_encode)
-            raw_vectors = [v.tolist() for v in generator]
-
-            for idx, raw_vec in zip(indices, raw_vectors):
-                normalized_vec = self._normalize(raw_vec)
+            # Batch embedding via native GenAI client
+            response = self.client.models.embed_content(
+                model=self.model_name,
+                contents=to_encode,
+            )
+            for idx, embedding in zip(indices, response.embeddings):
+                normalized_vec = self._normalize(embedding.values)
                 results[idx] = normalized_vec
                 cached_text = texts[idx].strip()
                 if len(self._cache) < 4096:
