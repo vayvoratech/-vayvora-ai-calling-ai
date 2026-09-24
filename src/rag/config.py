@@ -37,11 +37,8 @@ class RAGConfig:
     chunk_overlap: int = int(os.getenv("RAG_CHUNK_OVERLAP", "120"))
 
     # Embeddings
-    embedding_model: str = os.getenv(
-        "RAG_EMBEDDING_MODEL",
-        "all-MiniLM-L6-v2",
-    )
-    embedding_dimension: int = int(os.getenv("RAG_EMBEDDING_DIMENSION", "384"))
+    embedding_model: str = "BAAI/bge-small-en-v1.5"
+    embedding_dimension: int = 384
 
 
 rag_config = RAGConfig()

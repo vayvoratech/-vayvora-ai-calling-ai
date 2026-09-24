@@ -9,6 +9,15 @@ fastmcp
 fastapi
 langgraph
 langchain_google_genai
-torchvision
-sentence_transformers
 redis
+uvicorn[standard]
+python-dotenv
+pydantic
+numpy
+scipy
+groq
+deepgram-sdk
+websockets
+langchain
+langchain-core
+fastembed
