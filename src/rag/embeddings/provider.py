@@ -15,17 +15,15 @@ if not api_key:
 
 class EmbeddingProvider:
     """
-    Zero-RAM Cloud Embedding Provider using direct REST API calls.
-    Avoids SDK v1beta naming bugs and runs with negligible memory overhead.
+    Zero-RAM Cloud Embedding Provider using direct REST API.
+    Bypasses SDK model resolution bugs and stays within Render 512MB limits.
     """
 
-    def __init__(self, model_name: str = "text-embedding-004"):
-        # Strip prefixes
-        self.model_name = model_name.replace("models/", "").strip()
+    def __init__(self, model_name: str | None = None):
         self.api_key = api_key
-        # Target the stable API endpoint
-        self.url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:batchEmbedContents?key={self.api_key}"
-        self.single_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:embedContent?key={self.api_key}"
+        # Target Google's stable v1beta REST endpoints
+        self.embed_url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent?key={self.api_key}"
+        self.batch_url = f"https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:batchEmbedContents?key={self.api_key}"
         
         self.dimension = getattr(rag_config, "embedding_dimension", 768)
         self._cache: dict[str, list[float]] = {}
@@ -47,17 +45,17 @@ class EmbeddingProvider:
             return self._cache[cleaned]
 
         payload = {
-            "model": f"models/{self.model_name}",
+            "model": "models/text-embedding-004",
             "content": {"parts": [{"text": cleaned}]}
         }
 
-        resp = requests.post(self.single_url, json=payload, timeout=10)
+        resp = requests.post(self.embed_url, json=payload, timeout=10)
         
-        # Fallback to embedding-001 if the project hasn't activated text-embedding-004
+        # Fallback to embedding-001 if text-embedding-004 is restricted on the key
         if resp.status_code == 404:
-            fallback_url = f"https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent?key={self.api_key}"
+            alt_url = f"https://generativelanguage.googleapis.com/v1beta/models/embedding-001:embedContent?key={self.api_key}"
             payload["model"] = "models/embedding-001"
-            resp = requests.post(fallback_url, json=payload, timeout=10)
+            resp = requests.post(alt_url, json=payload, timeout=10)
 
         resp.raise_for_status()
         raw_vector = resp.json()["embedding"]["values"]
@@ -86,20 +84,20 @@ class EmbeddingProvider:
         if to_encode:
             requests_body = [
                 {
-                    "model": f"models/{self.model_name}",
+                    "model": "models/text-embedding-004",
                     "content": {"parts": [{"text": t}]}
                 }
                 for t in to_encode
             ]
 
-            resp = requests.post(self.url, json={"requests": requests_body}, timeout=15)
+            resp = requests.post(self.batch_url, json={"requests": requests_body}, timeout=20)
 
-            # Fallback if 404
+            # Fallback for projects where text-embedding-004 is unavailable
             if resp.status_code == 404:
-                fallback_url = f"https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents?key={self.api_key}"
+                alt_batch_url = f"https://generativelanguage.googleapis.com/v1beta/models/embedding-001:batchEmbedContents?key={self.api_key}"
                 for r in requests_body:
                     r["model"] = "models/embedding-001"
-                resp = requests.post(fallback_url, json={"requests": requests_body}, timeout=15)
+                resp = requests.post(alt_batch_url, json={"requests": requests_body}, timeout=20)
 
             resp.raise_for_status()
             data = resp.json()
