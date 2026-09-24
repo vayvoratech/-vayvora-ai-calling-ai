@@ -8,7 +8,7 @@ from fastapi.responses import Response
 from src.voice.audio_services.audio_processor import AudioProcessor
 from src.voice.stt.stt_service import STTService
 from src.voice.tts.deepgram_tts_service import DeepgramFluxTTS
-from src.dependencies import get_agent_runtime
+from api.dependencies import get_agent_runtime
 
 router = APIRouter()
 
