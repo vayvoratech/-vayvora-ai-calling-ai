@@ -49,10 +49,8 @@ class RAGConfig:
     )
 
     # Embedding
-    embedding_model: str = os.getenv(
-        "RAG_EMBEDDING_MODEL",
-        "all-MiniLM-L6-v2",
-    )
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_dimension: int = 384
 
     embedding_dimension: int = int(
         os.getenv("RAG_EMBEDDING_DIMENSION", "384")
