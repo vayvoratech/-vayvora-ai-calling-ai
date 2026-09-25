@@ -20,3 +20,4 @@ deepgram-sdk
 websockets
 langchain
 langchain-core
+sentence-transformers
