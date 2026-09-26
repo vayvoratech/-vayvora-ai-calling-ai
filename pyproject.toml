@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=68.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unified-voice-agent"
+version = "0.1.0"
+description = "Unified Real-Time Conversational AI Voice Agent for EduSaaS and Vayvora"
+readme = "README.md"
+requires-python = ">=3.11,<3.13"
+license = { text = "Proprietary" }
+authors = [{ name = "AI Engineering Team" }]
+
+dependencies = [
+    "pydantic>=2.7.0,<3.0.0",
+    "pydantic-settings>=2.2.0,<3.0.0",
+    "httpx>=0.27.0,<1.0.0",
+    "redis>=5.0.0,<9.0.0",
+    "fastembed>=0.8.0,<1.0.0",
+    "streamlit>=1.35.0,<2.0.0",
+    "soundfile>=0.12.0",
+    "openai>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+audio = [
+    "faster-whisper>=1.0.0",
+    "silero-vad>=5.1.0",
+]
+pipecat = [
+    "pipecat-ai>=0.0.50",
+]
+
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-v --strict-markers"
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning",
+    "ignore::ResourceWarning",
+    "ignore::pytest.PytestUnraisableExceptionWarning",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]

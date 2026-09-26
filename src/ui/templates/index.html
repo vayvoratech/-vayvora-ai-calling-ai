@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unified AI Voice Agent - Testing Console</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Top Header -->
+    <header class="app-header">
+      <div class="logo-area">
+        <span class="icon">🎙️</span>
+        <div class="title-group">
+          <h1>Unified Voice Agent Workbench</h1>
+          <p class="subtitle">Real-time Conversational Inbound & Outbound Testing Console</p>
+        </div>
+      </div>
+      <div class="header-badges">
+        <span id="badge-llm" class="badge badge-llm">LLM: Gemini</span>
+        <span id="badge-rag" class="badge badge-rag">RAG: Hybrid</span>
+        <span id="badge-tool" class="badge badge-tool">MCP: Active</span>
+        <span id="badge-status" class="badge badge-status">Ready</span>
+      </div>
+    </header>
+
+    <!-- Main 3-Column Layout -->
+    <main class="main-content">
+      <!-- Left Column: Session Configuration -->
+      <aside class="sidebar-panel">
+        <div class="card-header">
+          <h2>🎛️ Session Controls</h2>
+        </div>
+
+        <form id="session-form" class="controls-form">
+          <div class="form-group">
+            <label for="call-direction">Call Direction</label>
+            <select id="call-direction" class="form-select">
+              <option value="inbound" selected>📥 INBOUND (Caller Speaks First)</option>
+              <option value="outbound">📤 OUTBOUND (Agent Starts Call)</option>
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="domain-select">Target Domain</label>
+            <select id="domain-select" class="form-select">
+              <option value="vayvora" selected>🏢 Vayvora (Enterprise AI & Software)</option>
+              <option value="edusaas">🎓 EduSaaS (AI & Data Science Courses)</option>
+            </select>
+          </div>
+
+          <div class="section-divider"><span>Caller Profile</span></div>
+
+          <div class="form-group">
+            <label for="caller-name">Caller / Contact Name</label>
+            <input type="text" id="caller-name" class="form-input" placeholder="e.g. Alice Smith" value="Alice Smith">
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="caller-phone">Phone</label>
+              <input type="text" id="caller-phone" class="form-input" placeholder="+15551234567" value="+15551234567">
+            </div>
+            <div class="form-group">
+              <label for="caller-email">Email</label>
+              <input type="email" id="caller-email" class="form-input" placeholder="alice@example.com" value="alice@example.com">
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="caller-company">Company / Institution</label>
+            <input type="text" id="caller-company" class="form-input" placeholder="e.g. Acme Corp" value="Acme Corp">
+          </div>
+
+          <div id="outbound-fields" class="outbound-extra-fields">
+            <div class="section-divider"><span>Outbound Campaign Context</span></div>
+            <div class="form-group">
+              <label for="campaign-objective">Campaign Objective</label>
+              <input type="text" id="campaign-objective" class="form-input" placeholder="e.g. AI automation follow-up" value="Explore enterprise AI calling system">
+            </div>
+            <div class="form-group">
+              <label for="known-purpose">Known Interest / Purpose</label>
+              <input type="text" id="known-purpose" class="form-input" placeholder="e.g. Voice AI agent requirement" value="Voice AI telephony consultation">
+            </div>
+          </div>
+
+          <div class="action-buttons">
+            <button type="button" id="btn-start" class="btn btn-primary">🚀 Start Session</button>
+            <button type="button" id="btn-reset" class="btn btn-secondary">🔄 Reset</button>
+          </div>
+        </form>
+
+        <div class="notes-card">
+          <div class="notes-header">System Notes</div>
+          <ul id="system-notes-list" class="notes-list">
+            <li>Loading system status...</li>
+          </ul>
+        </div>
+      </aside>
+
+      <!-- Center Column: Conversation Chat -->
+      <section class="chat-panel">
+        <div class="chat-header">
+          <div class="chat-title-group">
+            <h2 id="chat-session-title">No Active Call</h2>
+            <span id="chat-direction-badge" class="badge badge-outline">INBOUND</span>
+            <span id="chat-domain-badge" class="badge badge-domain">VAYVORA</span>
+          </div>
+          <div class="session-meta">
+            <span id="session-id-display" class="meta-item">Session: —</span>
+            <span id="session-status-badge" class="meta-badge status-idle">IDLE</span>
+          </div>
+        </div>
+
+        <div id="chat-messages" class="chat-messages-container">
+          <div class="empty-state" id="empty-state">
+            <div class="empty-icon">🎧</div>
+            <h3>Call Workbench Idle</h3>
+            <p>Select your direction and domain, then click <strong>Start Session</strong> to initiate testing.</p>
+          </div>
+        </div>
+
+        <!-- Quick Prompts Bar -->
+        <div class="quick-prompts-bar" id="quick-prompts">
+          <button class="quick-btn" data-text="Hello">"Hello"</button>
+          <button class="quick-btn" data-text="yes">"yes"</button>
+          <button class="quick-btn" data-text="What services does Vayvora provide?">"What services does Vayvora provide?"</button>
+          <button class="quick-btn" data-text="We need an AI calling system.">"We need an AI calling system."</button>
+          <button class="quick-btn" data-text="Can you email me the details?">"Can you email me details?"</button>
+          <button class="quick-btn" data-text="That's all, thank you.">"That's all, goodbye."</button>
+        </div>
+
+        <!-- Message Input -->
+        <div class="chat-input-area">
+          <form id="chat-form" class="chat-form">
+            <input type="text" id="user-input" class="chat-input" placeholder="Type what caller says..." autocomplete="off" disabled>
+            <button type="submit" id="btn-send" class="btn btn-send" disabled>Send 💬</button>
+          </form>
+        </div>
+      </section>
+
+      <!-- Right Column: Live Diagnostics & Telemetry -->
+      <aside class="diagnostics-panel">
+        <div class="card-header">
+          <h2>🔍 Live Diagnostics</h2>
+          <span id="turn-counter" class="badge badge-turn">Turn 0</span>
+        </div>
+
+        <!-- Latency Card -->
+        <div class="diag-card">
+          <div class="diag-card-title">⚡ Latency Breakdown</div>
+          <div class="latency-hero">
+            <span class="latency-val" id="lat-total">0.0</span>
+            <span class="latency-unit">ms Total</span>
+          </div>
+          <div class="latency-grid">
+            <div class="lat-item">
+              <span class="lat-label">Prompt Prep:</span>
+              <span class="lat-data" id="lat-prompt">—</span>
+            </div>
+            <div class="lat-item">
+              <span class="lat-label">Gemini Decision:</span>
+              <span class="lat-data" id="lat-decision">—</span>
+            </div>
+            <div class="lat-item">
+              <span class="lat-label">RAG Retrieval:</span>
+              <span class="lat-data" id="lat-rag">—</span>
+            </div>
+            <div class="lat-item">
+              <span class="lat-label">Grounded Gen:</span>
+              <span class="lat-data" id="lat-grounded">—</span>
+            </div>
+            <div class="lat-item">
+              <span class="lat-label">Tool / MCP:</span>
+              <span class="lat-data" id="lat-tool">—</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- State & Intent Card -->
+        <div class="diag-card">
+          <div class="diag-card-title">🧠 Intent & State Progression</div>
+          <div class="diag-row">
+            <span class="diag-label">Current Domain:</span>
+            <span class="diag-value" id="diag-domain">—</span>
+          </div>
+          <div class="diag-row">
+            <span class="diag-label">Detected Intent:</span>
+            <span class="diag-value highlight-intent" id="diag-intent">—</span>
+          </div>
+          <div class="diag-row">
+            <span class="diag-label">Sub-Intent:</span>
+            <span class="diag-value" id="diag-sub-intent">—</span>
+          </div>
+          <div class="diag-row">
+            <span class="diag-label">Conversation Stage:</span>
+            <span class="diag-value badge-stage" id="diag-stage">—</span>
+          </div>
+          <div class="diag-row">
+            <span class="diag-label">Pending Question:</span>
+            <span class="diag-value" id="diag-pending-q">—</span>
+          </div>
+          <div class="diag-row">
+            <span class="diag-label">Pending Action:</span>
+            <span class="diag-value" id="diag-pending-a">—</span>
+          </div>
+        </div>
+
+        <!-- Extracted Slots Card -->
+        <div class="diag-card">
+          <div class="diag-card-title">🏷️ Extracted Entity Slots</div>
+          <div id="diag-slots-container" class="slots-container">
+            <span class="empty-tag">No entity slots extracted yet</span>
+          </div>
+        </div>
+
+        <!-- Grounded RAG Card -->
+        <div class="diag-card">
+          <div class="diag-card-title">📚 Grounded RAG Status</div>
+          <div class="diag-row">
+            <span class="diag-label">RAG Required:</span>
+            <span class="diag-value" id="diag-rag-required">False</span>
+          </div>
+          <div class="diag-row">
+            <span class="diag-label">RAG Query:</span>
+            <span class="diag-value query-text" id="diag-rag-query">—</span>
+          </div>
+          <div class="diag-citations-box">
+            <span class="diag-label">Retrieved Chunks / Citations:</span>
+            <ul id="diag-citations-list" class="citations-list">
+              <li class="empty-item">None for current turn</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- MCP Tool Card -->
+        <div class="diag-card">
+          <div class="diag-card-title">🛠️ External Actions (MCP / SMTP)</div>
+          <div class="diag-row">
+            <span class="diag-label">Action Proposed:</span>
+            <span class="diag-value" id="diag-action-proposed">False</span>
+          </div>
+          <div class="diag-row">
+            <span class="diag-label">Tool Name:</span>
+            <span class="diag-value highlight-tool" id="diag-tool-name">—</span>
+          </div>
+          <div class="diag-tool-result" id="diag-tool-result">
+            <pre id="diag-tool-json">No tool execution recorded yet.</pre>
+          </div>
+        </div>
+
+        <!-- Error Banner -->
+        <div id="error-banner" class="error-banner hidden">
+          <span class="error-icon">⚠️</span>
+          <span id="error-text" class="error-text">No errors</span>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
