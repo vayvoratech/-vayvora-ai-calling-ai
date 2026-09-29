@@ -15,7 +15,7 @@ class RAGConfig:
     chunk_overlap: int = 120
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_dimension: int = 384
-    relevance_threshold: float = 0.30
+    relevance_threshold: float = 0.60
     top_k: int = 5
     final_top_k: int = 3
     rrf_k: int = 60

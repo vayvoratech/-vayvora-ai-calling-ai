@@ -37,13 +37,24 @@ class MarkdownChunker:
         text = document.get("text", "")
         document_id = document.get("document_id", "")
 
-        return self.chunk_text(
+        chunks = self.chunk_text(
             text=text,
             domain_or_tenant=doc_tenant,
             category=category,
             source_file=source,
             document_id=document_id,
         )
+
+        if doc_tenant.lower() == "edusaas" and (category == "courses" or "catalog" in source.lower()):
+            catalog_chunk = self._extract_catalog_overview_chunk(
+                text=text,
+                tenant_id=doc_tenant,
+                source_file=source,
+            )
+            if catalog_chunk and not any(c.chunk_id == catalog_chunk.chunk_id for c in chunks):
+                chunks.insert(0, catalog_chunk)
+
+        return chunks
 
     def chunk_file(
         self,
@@ -60,13 +71,24 @@ class MarkdownChunker:
         inferred_category = category or path.parent.name
         tenant_val = domain.value if isinstance(domain, DomainType) else str(domain)
 
-        return self.chunk_text(
+        chunks = self.chunk_text(
             text=raw_text,
             domain_or_tenant=tenant_val,
             category=inferred_category,
             source_file=path.name,
             document_id=path.stem.lower().replace(" ", "_"),
         )
+
+        if tenant_val.lower() == "edusaas" and (inferred_category == "courses" or "catalog" in path.name.lower()):
+            catalog_chunk = self._extract_catalog_overview_chunk(
+                text=raw_text,
+                tenant_id=tenant_val,
+                source_file=path.name,
+            )
+            if catalog_chunk and not any(c.chunk_id == catalog_chunk.chunk_id for c in chunks):
+                chunks.insert(0, catalog_chunk)
+
+        return chunks
 
     def chunk_text(
         self,
@@ -276,10 +298,13 @@ class MarkdownChunker:
             # Deterministic chunk ID
             chunk_id = f"{tenant_id}:{category}:{clean_stem}:{index}"
 
+            doc_type = "course_detail" if category == "courses" else "general"
+
             metadata = {
                 "tenant_id": tenant_id,
                 "domain": tenant_id,
                 "category": category,
+                "document_type": doc_type,
                 "source_file": source_file,
                 "source": source_file,
                 "document_id": doc_id,
@@ -298,6 +323,7 @@ class MarkdownChunker:
                     document_id=doc_id,
                     source=source_file,
                     category=category,
+                    document_type=doc_type,
                     section=section,
                     chunk_index=index,
                     total_chunks=total,
@@ -306,6 +332,80 @@ class MarkdownChunker:
             )
 
         return chunks
+
+    def _extract_catalog_overview_chunk(
+        self,
+        text: str,
+        tenant_id: str = "edusaas",
+        source_file: str = "edusaas/courses/overview_catalog.md",
+    ) -> Optional[DocumentChunk]:
+        """Extract a dedicated course catalog chunk containing all EduSaaS courses."""
+        course_pattern = re.compile(r"###\s+(\d+\.\s+[^\n]+)(.*?)(?=(?:###|\Z|---))", re.DOTALL)
+        courses = []
+        for match in course_pattern.finditer(text):
+            title = match.group(1).strip()
+            body = match.group(2).strip()
+            courses.append((title, body))
+
+        if not courses:
+            return None
+
+        lines = [
+            "# EduSaaS Complete Course Catalog & Available Programs",
+            "",
+            "EduSaaS offers six comprehensive engineering training programs:",
+            "",
+        ]
+        for title, body in courses:
+            lines.append(f"### {title}")
+            for b_line in body.splitlines():
+                b_str = b_line.strip()
+                if any(b_str.startswith(p) for p in ("- **Focus**:", "- **Key Stack**:", "- **Tuition Fee**:")):
+                    lines.append(b_str)
+            lines.append("")
+
+        lines.extend([
+            "### Program Details & Enrollment",
+            "- **Tuition Fee**: ₹5,000 INR per program track",
+            "- **Learning Tracks**: Student Track (with placement preparation and resume building) and Working Professional Track (evening/weekend cohorts)",
+            "- **Official Enrollment Portal**: edusaas.vayvora.com",
+            "- **Official Email**: info@edusaas.vayvora.com",
+        ])
+
+        catalog_text = "\n".join(lines).strip()
+        chunk_id = f"{tenant_id}:courses:course_catalog"
+        doc_id = "course_catalog"
+        title = "EduSaaS Complete Course Catalog & Available Programs"
+        section = "Available Courses"
+
+        metadata = {
+            "tenant_id": tenant_id,
+            "domain": tenant_id,
+            "category": "courses",
+            "document_type": "course_catalog",
+            "source_file": source_file,
+            "source": source_file,
+            "document_id": doc_id,
+            "title": title,
+            "section": section,
+            "char_length": len(catalog_text),
+            "chunk_index": 0,
+            "total_chunks": 1,
+        }
+
+        return DocumentChunk(
+            chunk_id=chunk_id,
+            text=catalog_text,
+            tenant_id=tenant_id,
+            document_id=doc_id,
+            source=source_file,
+            category="courses",
+            document_type="course_catalog",
+            section=section,
+            chunk_index=0,
+            total_chunks=1,
+            metadata=metadata,
+        )
 
 
 # Alias for backward compatibility

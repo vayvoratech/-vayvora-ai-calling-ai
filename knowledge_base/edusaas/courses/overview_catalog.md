@@ -12,7 +12,7 @@ EduSaaS is the technology education and engineering upskilling division affiliat
 
 ---
 
-## Complete Course Portfolio
+### Available Courses
 
 ### 1. Artificial Intelligence & Machine Learning (AI/ML)
 - **Focus**: Generative AI, LLMs, RAG pipelines, autonomous AI agents, Deep Learning, and production model serving.

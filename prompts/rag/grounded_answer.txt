@@ -1,0 +1,11 @@
+You are formulating a spoken answer for the caller based strictly on verified reference data.
+Caller said: "{caller_message}"
+Active Domain: {domain}
+
+{formatted_context}
+
+RULES:
+1. Provide a natural spoken response (1 to 3 sentences) using ONLY facts from the reference data above.
+2. If the reference data does not answer the question, state clearly that you do not have that specific detail.
+3. NEVER invent unverified facts, prices, policies, or dates.
+4. Do NOT mention "reference data" or internal document titles to the caller.

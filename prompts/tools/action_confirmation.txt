@@ -1,0 +1,8 @@
+An action requested by the caller has been EXECUTED and VERIFIED successfully.
+Caller said: "{caller_message}"
+Action: {tool_name}
+Verification Code: {verification_code}
+Data: {data}
+
+Formulate a natural, courteous spoken response (1-2 sentences) confirming the action was completed and inviting any further questions.
+Do NOT fabricate delivery details beyond what is confirmed above.

@@ -89,6 +89,7 @@ class RedisVectorStore:
             TagField("doc_id"),
             TagField("domain"),
             TagField("category"),
+            TagField("document_type"),
             TextField("title"),
             TextField("content"),
             VectorField(
@@ -127,6 +128,7 @@ class RedisVectorStore:
         category: str,
         vector: List[float],
         metadata: Optional[Dict[str, Any]] = None,
+        document_type: str = "general",
     ) -> bool:
         """Ingest or update a document chunk in Redis."""
         client = await self.get_client()
@@ -134,15 +136,18 @@ class RedisVectorStore:
 
         # Convert float vector to 32-bit float byte string
         vector_bytes = np.array(vector, dtype=np.float32).tobytes()
+        meta = metadata or {}
+        doc_type = meta.get("document_type") or document_type
 
         mapping = {
             b"doc_id": doc_id.encode("utf-8"),
             b"domain": domain.value.encode("utf-8"),
             b"category": category.encode("utf-8"),
+            b"document_type": doc_type.encode("utf-8"),
             b"title": title.encode("utf-8"),
             b"content": content.encode("utf-8"),
             b"vector": vector_bytes,
-            b"metadata": json.dumps(metadata or {}).encode("utf-8"),
+            b"metadata": json.dumps(meta).encode("utf-8"),
         }
 
         await client.hset(key, mapping=mapping)
@@ -155,6 +160,7 @@ class RedisVectorStore:
         top_k: int = 3,
         relevance_threshold: float = 0.0,
         category: Optional[str] = None,
+        document_type: Optional[str] = None,
     ) -> List[RAGChunk]:
         """Perform KNN vector similarity search with domain isolation and relevance cutoff."""
         client = await self.get_client()
@@ -164,6 +170,8 @@ class RedisVectorStore:
         filter_expr = f"(@domain:{{{domain.value}}}"
         if category:
             filter_expr += f" @category:{{{category}}}"
+        if document_type:
+            filter_expr += f" @document_type:{{{document_type}}}"
         filter_expr += ")"
 
         # Redis KNN query format: (filter)=>[KNN top_k @vector $vec AS score]
@@ -209,6 +217,57 @@ class RedisVectorStore:
                         title=title_val,
                         content=content_val,
                         score=similarity,
+                        metadata=metadata,
+                    )
+                )
+            except Exception as parse_err:
+                logger.warning("Error parsing retrieved document chunk: %s", parse_err)
+                continue
+
+        return chunks
+
+    async def get_documents_by_type(
+        self,
+        domain: DomainType,
+        document_type: str,
+        limit: int = 5,
+    ) -> List[RAGChunk]:
+        """Retrieve documents by domain and document_type directly via metadata tags."""
+        client = await self.get_client()
+        index_name = self.get_index_name(domain)
+
+        query_str = f"(@domain:{{{domain.value}}} @document_type:{{{document_type}}})"
+        query = (
+            Query(query_str)
+            .return_fields("doc_id", "domain", "category", "document_type", "title", "content", "metadata")
+            .paging(0, limit)
+            .dialect(2)
+        )
+
+        try:
+            results = await client.ft(index_name).search(query)
+        except Exception as exc:
+            logger.error("Metadata search by document_type failed on index '%s': %s", index_name, exc)
+            return []
+
+        chunks: List[RAGChunk] = []
+        for doc in results.docs:
+            try:
+                raw_meta = getattr(doc, "metadata", b"{}")
+                meta_str = raw_meta.decode("utf-8") if isinstance(raw_meta, bytes) else str(raw_meta)
+                metadata = json.loads(meta_str) if meta_str else {}
+
+                doc_id_val = doc.doc_id.decode("utf-8") if isinstance(doc.doc_id, bytes) else str(doc.doc_id)
+                title_val = doc.title.decode("utf-8") if isinstance(doc.title, bytes) else str(doc.title)
+                content_val = doc.content.decode("utf-8") if isinstance(doc.content, bytes) else str(doc.content)
+
+                chunks.append(
+                    RAGChunk(
+                        doc_id=doc_id_val,
+                        domain=domain,
+                        title=title_val,
+                        content=content_val,
+                        score=1.0,
                         metadata=metadata,
                     )
                 )

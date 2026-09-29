@@ -17,6 +17,7 @@ class DocumentChunk:
     document_id: str = ""
     source: str = ""
     category: str = "general"
+    document_type: str = "general"
     section: Optional[str] = None
     version: str = "1"
     chunk_index: int = 1
@@ -30,6 +31,8 @@ class DocumentChunk:
             self.metadata["tenant_id"] = self.tenant_id
         if "category" not in self.metadata:
             self.metadata["category"] = self.category
+        if "document_type" not in self.metadata:
+            self.metadata["document_type"] = self.document_type
         if "source" not in self.metadata and self.source:
             self.metadata["source"] = self.source
         if self.section and "section" not in self.metadata:
@@ -63,6 +66,7 @@ class DocumentChunk:
                 **self.metadata,
                 "source_file": self.source,
                 "category": self.category,
+                "document_type": self.metadata.get("document_type", self.document_type),
                 "section": self.section,
                 "tenant_id": self.tenant_id,
                 "version": self.version,

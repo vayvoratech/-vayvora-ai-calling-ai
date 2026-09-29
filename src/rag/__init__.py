@@ -16,6 +16,7 @@ from src.rag.embeddings import (
     get_embedding_provider,
 )
 from src.rag.redis_client import RedisVectorStore
+from src.rag.retrieval.catalog_intent import is_catalog_query
 from src.rag.retrieval.fusion import ReciprocalRankFusion
 from src.rag.retrieval.hybrid_search import BM25Retriever, KeywordDocument
 from src.rag.retrieval.keyword_index import (
@@ -63,6 +64,7 @@ __all__ = [
     "ReciprocalRankFusion",
     "Reranker",
     "get_reranker",
+    "is_catalog_query",
     "GroundedContextResult",
     "GroundedKnowledgeProvider",
     "RetrievalResult",

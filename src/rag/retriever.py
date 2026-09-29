@@ -17,6 +17,7 @@ from src.logging import get_logger
 from src.rag.embeddings import BaseEmbeddingProvider, get_embedding_provider
 from src.rag.models import DocumentChunk
 from src.rag.redis_client import RedisVectorStore
+from src.rag.retrieval.catalog_intent import is_catalog_query
 from src.rag.retrieval.fusion import ReciprocalRankFusion
 from src.rag.retrieval.keyword_index import KnowledgeBaseKeywordIndex, get_keyword_index
 from src.rag.retrieval.reranker import Reranker, get_reranker
@@ -105,6 +106,9 @@ class GroundedKnowledgeProvider(KnowledgeProvider):
         cat = chunk.metadata.get("category")
         if cat:
             meta_parts.append(f"Category: {cat}")
+        doc_type = chunk.metadata.get("document_type", "general")
+        if doc_type:
+            meta_parts.append(f"Document Type: {doc_type}")
         sec = chunk.metadata.get("section")
         if sec:
             meta_parts.append(f"Section: {sec}")
@@ -121,6 +125,7 @@ class GroundedKnowledgeProvider(KnowledgeProvider):
             document_id=chunk.metadata.get("document_id", chunk.doc_id),
             source=chunk.metadata.get("source_file", chunk.title),
             category=chunk.metadata.get("category", "general"),
+            document_type=doc_type,
             section=chunk.metadata.get("section", chunk.title),
             metadata=chunk.metadata,
         )
@@ -149,15 +154,22 @@ class GroundedKnowledgeProvider(KnowledgeProvider):
             category=chunk.metadata.get("category", "general"),
             vector=vector,
             metadata=chunk.metadata,
+            document_type=doc_type,
         )
 
     async def retrieve_grounded_context(self, query: RAGQuery) -> GroundedContextResult:
-        """Execute full hybrid retrieval flow (Dense + BM25 + RRF + Reranker)."""
-        # 1. In-memory path for fast offline unit tests
+        """Execute full hybrid retrieval flow (Catalog Fast-Path or Dense + BM25 + RRF + Reranker)."""
+        # 1. Dedicated catalog retrieval path for broad catalog/list queries
+        if is_catalog_query(query.query_text, query.domain):
+            catalog_result = await self._retrieve_catalog_context(query)
+            if catalog_result.knowledge_available or catalog_result.service_unavailable:
+                return catalog_result
+
+        # 2. In-memory path for fast offline unit tests
         if self.in_memory:
             return self._retrieve_in_memory(query)
 
-        # 2. Redis Stack live path
+        # 3. Redis Stack live path
         is_healthy = await self.store.health_check()
         if not is_healthy:
             logger.warning("Redis Stack is not available on %s", self.store.redis_url)
@@ -240,14 +252,93 @@ class GroundedKnowledgeProvider(KnowledgeProvider):
         # Relevance threshold gating
         passing_chunks: List[RAGChunk] = []
         for res in final_candidates:
+            # Course catalog is dedicated to broad catalog queries; exclude from specific queries
+            if res.metadata.get("document_type") == "course_catalog":
+                continue
             score_to_check = res.metadata.get("cosine_score", res.score)
             if score_to_check >= query.relevance_threshold:
                 passing_chunks.append(res.to_rag_chunk(domain=query.domain))
 
         return self._format_result(query, passing_chunks)
 
+    async def _retrieve_catalog_context(self, query: RAGQuery) -> GroundedContextResult:
+        """Retrieve dedicated course catalog chunk for catalog/list queries."""
+        if self.in_memory:
+            return self._retrieve_catalog_in_memory(query)
+        return await self._retrieve_catalog_redis(query)
+
+    def _retrieve_catalog_in_memory(self, query: RAGQuery) -> GroundedContextResult:
+        """Retrieve course catalog chunk from in-memory store."""
+        items = self._mem_store.get(query.domain, [])
+        catalog_chunks = [
+            item["chunk"] for item in items
+            if item["chunk"].metadata.get("document_type") == "course_catalog"
+            or "course_catalog" in item["chunk"].doc_id
+        ]
+        if catalog_chunks:
+            primary = catalog_chunks[0]
+            primary.score = 1.0
+            return self._format_result(query, [primary])
+
+        return GroundedContextResult(
+            query=query,
+            chunks=[],
+            knowledge_available=False,
+            formatted_context="",
+        )
+
+    async def _retrieve_catalog_redis(self, query: RAGQuery) -> GroundedContextResult:
+        """Retrieve course catalog chunk from Redis via metadata filter."""
+        is_healthy = await self.store.health_check()
+        if not is_healthy:
+            logger.warning("Redis Stack is not available on %s", self.store.redis_url)
+            return GroundedContextResult(
+                query=query,
+                chunks=[],
+                knowledge_available=False,
+                service_unavailable=True,
+                error_message="Knowledge retrieval service is currently unavailable.",
+            )
+
+        # 1. Direct metadata query by document_type tag
+        catalog_chunks = await self.store.get_documents_by_type(
+            domain=query.domain,
+            document_type="course_catalog",
+            limit=1,
+        )
+        if catalog_chunks:
+            primary = catalog_chunks[0]
+            primary.score = 1.0
+            return self._format_result(query, [primary])
+
+        # 2. Fallback: vector search filtered by document_type=course_catalog
+        query_vector = self.embeddings.embed_text(query.query_text)
+        vec_catalog_chunks = await self.store.search_vector(
+            domain=query.domain,
+            query_vector=query_vector,
+            top_k=1,
+            relevance_threshold=0.0,
+            document_type="course_catalog",
+        )
+        if vec_catalog_chunks:
+            primary = vec_catalog_chunks[0]
+            primary.score = 1.0
+            return self._format_result(query, [primary])
+
+        return GroundedContextResult(
+            query=query,
+            chunks=[],
+            knowledge_available=False,
+            formatted_context="",
+        )
+
     def _retrieve_in_memory(self, query: RAGQuery) -> GroundedContextResult:
         """Deterministic in-memory hybrid vector + BM25 search with threshold filtering."""
+        if is_catalog_query(query.query_text, query.domain):
+            cat_res = self._retrieve_catalog_in_memory(query)
+            if cat_res.knowledge_available:
+                return cat_res
+
         items = self._mem_store.get(query.domain, [])
         kw_idx = self._keyword_indexes.get(query.domain)
 
@@ -326,6 +417,9 @@ class GroundedKnowledgeProvider(KnowledgeProvider):
         # Relevance threshold gating
         passing_chunks: List[RAGChunk] = []
         for res in final_candidates:
+            # Course catalog is dedicated to broad catalog queries; exclude from specific queries
+            if res.metadata.get("document_type") == "course_catalog":
+                continue
             score_to_check = res.metadata.get("cosine_score", res.score)
             if score_to_check >= query.relevance_threshold:
                 passing_chunks.append(res.to_rag_chunk(domain=query.domain))

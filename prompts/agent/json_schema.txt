@@ -1,0 +1,61 @@
+=== OUTPUT FORMAT ===
+
+You MUST respond with a valid raw JSON object conforming EXACTLY to this schema.
+
+Do NOT use markdown fences.
+Do NOT add commentary outside the JSON object.
+
+{
+  "detected_domain": "edusaas" | "vayvora" | "general",
+  "detected_intent": "<intent_name_from_domain_or_general>",
+  "detected_sub_intent": "<optional_sub_intent_or_null>",
+
+  "extracted_slots": {
+    "<slot_name>": "<extracted_value>"
+  },
+
+  "proposed_stage":
+    "greeting"
+    | "identity"
+    | "purpose_discovery"
+    | "discovery"
+    | "information"
+    | "recommendation"
+    | "objection_handling"
+    | "action_confirmation"
+    | "follow_up"
+    | "closing"
+    | "completed",
+
+  "user_facing_response": "<spoken_response_to_caller>",
+
+  "knowledge_required": true | false,
+
+  "knowledge_query": "<retrieval_optimized_query_or_null>",
+
+  "action_proposed": true | false,
+
+  "proposed_action": {
+    "tool_name":
+      "send_email"
+      | "find_available_slots"
+      | "create_calendar_event"
+      | "update_lead"
+      | "create_hr_followup"
+      | "send_message"
+      | "update_business_status",
+
+    "arguments": {
+      "...": "..."
+    },
+
+    "rationale": "<reason>"
+  } | null,
+
+  "needs_clarification": true | false,
+
+  "clarification_question":
+    "<question_if_needs_clarification_else_null>",
+
+  "suggested_termination": true | false
+}

@@ -17,6 +17,7 @@ from src.core.decision import (
 )
 from src.core.interfaces import KnowledgeProvider, LLMProvider, ToolProvider
 from src.core.prompts import PromptSynthesizer
+from src.prompts import load_prompt, render_prompt
 from src.core.types import (
     CallDirection,
     ConversationStage,
@@ -88,11 +89,10 @@ class ConversationEngine:
 
         # 1. Synthesize opening prompt
         prompt = self.synthesizer.build_outbound_opening_prompt(state, domain_config)
-        system_instruction = (
-            f"You are the professional voice agent for {domain_config.name} initiating an outbound outreach call. "
-            "Speak naturally, concisely, and warmly. Introduce yourself, state the reason for calling based on known context, "
-            "and check availability in 1-2 spoken sentences."
-        )
+        system_instruction = render_prompt(
+            "conversation/outbound_opening_system.txt",
+            domain_name=domain_config.name,
+        ).strip()
 
         opening_text: Optional[str] = None
         # 2. Try LLM generation if available
@@ -410,22 +410,17 @@ class ConversationEngine:
                 else:
                     # Chunks found and passed relevance threshold
                     grounded_citations = [c.doc_id for c in grounded_res.chunks]
-                    grounding_prompt = f"""You are formulating a spoken answer for the caller based strictly on verified reference data.
-Caller said: "{cleaned_msg}"
-Active Domain: {decision.detected_domain.value}
-
-{grounded_res.formatted_context}
-
-RULES:
-1. Provide a natural spoken response (1 to 3 sentences) using ONLY facts from the reference data above.
-2. If the reference data does not answer the question, state clearly that you do not have that specific detail.
-3. NEVER invent unverified facts, prices, policies, or dates.
-4. Do NOT mention "reference data" or internal document titles to the caller."""
+                    grounding_prompt = render_prompt(
+                        "rag/grounded_answer.txt",
+                        caller_message=cleaned_msg,
+                        domain=decision.detected_domain.value,
+                        formatted_context=grounded_res.formatted_context,
+                    ).strip()
 
                     t_ground = time.perf_counter()
                     grounded_speech = await self.llm.generate_response(
                         prompt=grounding_prompt,
-                        system_instruction="You are a voice agent responding strictly from verified reference data.",
+                        system_instruction=load_prompt("rag/system.txt").strip(),
                     )
                     timing["grounded_llm_ms"] = round((time.perf_counter() - t_ground) * 1000, 2)
                     final_response_text = grounded_speech.strip()
@@ -537,18 +532,17 @@ RULES:
                             state.update_business_status(str(new_status))
 
                     # Synthesize verbal confirmation incorporating verified reference
-                    action_prompt = f"""An action requested by the caller has been EXECUTED and VERIFIED successfully.
-Caller said: "{cleaned_msg}"
-Action: {tool_name}
-Verification Code: {tool_exec_result.verification_code}
-Data: {tool_exec_result.data}
-
-Formulate a natural, courteous spoken response (1-2 sentences) confirming the action was completed and inviting any further questions.
-Do NOT fabricate delivery details beyond what is confirmed above."""
+                    action_prompt = render_prompt(
+                        "tools/action_confirmation.txt",
+                        caller_message=cleaned_msg,
+                        tool_name=tool_name,
+                        verification_code=tool_exec_result.verification_code,
+                        data=tool_exec_result.data,
+                    ).strip()
 
                     speech_confirmation = await self.llm.generate_response(
                         prompt=action_prompt,
-                        system_instruction="You are a voice agent confirming a verified action.",
+                        system_instruction=load_prompt("tools/system.txt").strip(),
                     )
                     try:
                         from src.core.llm import extract_json_block
