@@ -30,6 +30,8 @@ class CallerProfile(BaseModel):
     phone: Optional[str] = Field(default=None, description="Caller phone number (E.164 format)")
     email: Optional[str] = Field(default=None, description="Caller email address")
     company: Optional[str] = Field(default=None, description="Caller company or academic institution")
+    job_title: Optional[str] = Field(default=None, description="Caller job title or role")
+    location: Optional[str] = Field(default=None, description="Caller location or city")
     caller_type: Optional[str] = Field(
         default=None,
         description="Caller classification: student, job_seeker, corporate_client, or general",
@@ -185,24 +187,41 @@ class ConversationState(BaseModel):
             self.conversation_active = False
 
     def update_slot(self, key: str, value: Any, sync_caller: bool = True) -> None:
-        """Record or update an extracted slot and optionally synchronize caller profile."""
+        """Record or update an extracted slot and synchronize caller profile."""
         if value is None or not str(value).strip():
             return
         clean_key = key.strip()
+        str_val = str(value).strip()
+
+        prohibited = {
+            "default caller",
+            "caller@mail",
+            "unknown@example.com",
+            "john doe",
+            "jane doe",
+        }
+        if str_val.lower() in prohibited:
+            return
+
         self.extracted_slots[clean_key] = value
 
         if not sync_caller:
             return
 
-        str_val = str(value).strip()
-        if clean_key in ("student_name", "contact_name", "name") and not self.caller.name:
+        if clean_key in ("student_name", "contact_name", "name", "caller_name"):
             self.caller.name = str_val
-        elif clean_key == "email" and not self.caller.email:
+            self.metadata.caller_name = str_val
+        elif clean_key in ("email", "caller_email", "student_email", "recipient"):
             self.caller.email = str_val
-        elif clean_key in ("phone", "caller_phone") and not self.caller.phone:
+        elif clean_key in ("phone", "caller_phone"):
             self.caller.phone = str_val
-        elif clean_key in ("company_name", "company") and not self.caller.company:
+            self.metadata.caller_phone = str_val
+        elif clean_key in ("company_name", "company", "caller_company"):
             self.caller.company = str_val
+        elif clean_key in ("job_title", "title"):
+            self.caller.job_title = str_val
+        elif clean_key in ("location", "city"):
+            self.caller.location = str_val
         elif clean_key in ("interest", "product_interest", "target_course"):
             self.current_interest = str_val
 

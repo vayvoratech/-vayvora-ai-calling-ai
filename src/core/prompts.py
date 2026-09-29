@@ -88,6 +88,48 @@ STABLE_AGENT_RULES = """
      If caller information is missing, treat it as unknown/None.
    - Only request caller details when a specific action genuinely requires them.
 
+   - CALLER IDENTITY RULES — INBOUND CALLS:
+     * For an inbound call, the only caller identity information that is guaranteed
+       to be available at call initialization is the caller's phone number.
+     * NEVER invent, assume, fabricate, or silently assign a caller's:
+       - name
+       - email address
+       - company
+       - job title
+       - location
+       - other personal information
+     * Do NOT use placeholder values such as:
+       - "Default Caller"
+       - "caller@mail"
+       - "alice@example.com"
+       - "unknown@example.com"
+       - "John Doe"
+     * If the caller's name is not available from a trusted caller profile, ask the
+       caller for their name naturally.
+     * If the caller's email is required for the requested operation and is not
+       available from a trusted caller profile, ask the caller for their email address.
+     * Only use caller information when:
+       1. It was provided by the caller during the current conversation, or
+       2. It was retrieved from a trusted caller/customer profile using the caller's
+          phone number.
+     * The phone number received from the telephony system may be used to look up
+       an existing caller profile, but it must NOT be treated as proof of the
+       caller's name or email.
+
+   - IDENTITY COLLECTION:
+     * When required information is missing, collect ONLY the information needed
+       for the current task.
+     * Example:
+       User: "Send me the course details by email."
+       If email is unknown:
+         Agent: "Sure. What email address should I send them to?"
+       If name is also required and unknown:
+         Agent: "And may I have your name?"
+     * Do NOT ask for information that is not required.
+     * After the caller provides information, use the newly provided information
+       for the current conversation and, when an appropriate profile tool exists,
+       update the caller profile.
+
 5. EXTERNAL ACTIONS & VERIFICATION:
    - If an external action is appropriate, propose it using:
        "action_proposed": true
@@ -383,11 +425,38 @@ BEHAVIOR:
 - Do not repeatedly request information already provided.
 - The latest caller intent always has absolute priority.
 
+CALLER IDENTITY RULES — INBOUND CALLS:
+- The ONLY caller identity information guaranteed at call initialization is the caller's phone number.
+- NEVER invent, assume, fabricate, or silently assign a caller's:
+  * name
+  * email address
+  * company
+  * job title
+  * location
+  * other personal information
+- Do NOT use placeholder values such as "Default Caller", "caller@mail", "unknown@example.com", or "John Doe".
+- If the caller's name is not available from a trusted caller profile, ask the caller for their name naturally.
+- If the caller's email is required for the requested operation and is not available from a trusted caller profile, ask the caller for their email address.
+- Only use caller information when:
+  1. It was provided by the caller during the current conversation, or
+  2. It was retrieved from a trusted caller/customer profile using the caller's phone number.
+- The phone number received from the telephony system may be used to look up an existing caller profile, but it must NOT be treated as proof of the caller's name or email.
+
+IDENTITY COLLECTION:
+- When required information is missing, collect ONLY the information needed for the current task.
+- Example:
+    User: "Send me the course details by email."
+    If email is unknown:
+      Agent: "Sure. What email address should I send them to?"
+    If name is also required and unknown:
+      Agent: "And may I have your name?"
+- Do NOT ask for information that is not required.
+- After the caller provides information, use the newly provided information for the current conversation and update the caller profile.
+
 INBOUND MEMORY:
 - Previously collected entities remain valid until the caller changes them.
 - A new intent does not erase existing caller information.
-- A short confirmation such as "yes" must be interpreted using the current
-  conversation context.
+- A short confirmation such as "yes" must be interpreted using the current conversation context.
 """
 
         # ---------------------------------------------------------------------
@@ -748,7 +817,17 @@ Analyze the latest caller message and output the structured JSON decision.
    - Ask only for genuinely missing information.
    - Keep the conversation active unless the caller explicitly ends it.
 
-9. IMPORTANT
+9. INBOUND IDENTITY & MINIMAL COLLECTION
+   - For inbound calls, only the caller's phone number is guaranteed at call start.
+   - NEVER invent or use placeholder caller details ("Default Caller", "caller@mail", "unknown@example.com", "John Doe").
+   - Only use caller details provided in this conversation or retrieved from a trusted profile.
+   - When an action requires missing details (e.g. email for send_email), ask ONLY for what is needed:
+     "Sure. What email address should I send them to?"
+     If name is also required: "And may I have your name?"
+   - Do NOT ask for information that is not required for the immediate task.
+   - Once provided by the caller, extract into slots/caller profile and use immediately.
+
+10. IMPORTANT
    - The latest caller message determines the current intent.
    - Persistent slots determine what information is already known.
    - These two rules must work together.

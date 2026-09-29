@@ -445,27 +445,51 @@ RULES:
             tool_name = decision.proposed_action.tool_name
             tool_args = dict(decision.proposed_action.arguments)
 
+            # Prohibited placeholders that must never be used
+            prohibited_vals = {
+                "default caller",
+                "caller@mail",
+                "unknown@example.com",
+                "john doe",
+                "jane doe",
+            }
+
+            # Strip any hallucinated placeholders from tool arguments
+            for arg_k in ["caller_name", "candidate_name", "name", "recipient", "email", "caller_email"]:
+                if arg_k in tool_args and str(tool_args[arg_k]).strip().lower() in prohibited_vals:
+                    tool_args.pop(arg_k, None)
+
             # Auto-populate caller profile details into arguments if absent
-            if "caller_name" not in tool_args and state.caller.name:
+            if "caller_name" not in tool_args and state.caller.name and state.caller.name.strip().lower() not in prohibited_vals:
                 tool_args["caller_name"] = state.caller.name
-            if "caller_email" not in tool_args and state.caller.email:
+            if "caller_email" not in tool_args and state.caller.email and state.caller.email.strip().lower() not in prohibited_vals:
                 tool_args["caller_email"] = state.caller.email
-            if "email" not in tool_args and state.caller.email:
+            if "email" not in tool_args and state.caller.email and state.caller.email.strip().lower() not in prohibited_vals:
                 tool_args["email"] = state.caller.email
-            if "recipient" not in tool_args and state.caller.email:
+            if "recipient" not in tool_args and state.caller.email and state.caller.email.strip().lower() not in prohibited_vals:
                 tool_args["recipient"] = state.caller.email
-            if "caller_phone" not in tool_args and state.caller.phone:
+            if "caller_phone" not in tool_args and state.caller.phone and state.caller.phone.strip().lower() not in prohibited_vals:
                 tool_args["caller_phone"] = state.caller.phone
             if "domain" not in tool_args:
                 tool_args["domain"] = state.current_domain.value
 
             # Guard 1: Email Safety - missing or invalid recipient email
             recipient = (tool_args.get("recipient") or tool_args.get("email") or state.caller.email or "").strip()
+            if recipient.lower() in prohibited_vals:
+                recipient = ""
+
             if tool_name == "send_email" and (not recipient or "@" not in recipient):
-                final_response_text = "I would be happy to email those details to you. Could you please share your email address?"
+                final_response_text = "Sure. What email address should I send them to? Could you please share your email address?"
                 decision.user_facing_response = final_response_text
                 state.set_pending_question("Could you please share your email address?")
-            # Guard 2: Calendar Safety - missing confirmed slot
+            # Guard 2: HR Followup / Candidate Safety - missing candidate name
+            elif tool_name == "create_hr_followup" and not (
+                tool_args.get("candidate_name") or tool_args.get("name") or state.caller.name
+            ):
+                final_response_text = "And may I have your name?"
+                decision.user_facing_response = final_response_text
+                state.set_pending_question("And may I have your name?")
+            # Guard 3: Calendar Safety - missing confirmed slot
             elif tool_name == "create_calendar_event" and not (
                 tool_args.get("slot")
                 or tool_args.get("start_time")

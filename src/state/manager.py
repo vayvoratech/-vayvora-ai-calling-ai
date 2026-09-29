@@ -19,11 +19,48 @@ from src.core.types import (
 from src.state.models import CallerProfile, ConversationState
 
 
+PROHIBITED_CALLER_PLACEHOLDERS = {
+    "default caller",
+    "caller@mail",
+    "unknown@example.com",
+    "john doe",
+    "jane doe",
+}
+
+
+def sanitize_caller_value(val: Optional[str]) -> Optional[str]:
+    """Strip whitespace and reject any placeholder/fabricated caller values."""
+    if not val:
+        return None
+    cleaned = str(val).strip()
+    if not cleaned or cleaned.lower() in PROHIBITED_CALLER_PLACEHOLDERS:
+        return None
+    return cleaned
+
+
 class ConversationStateManager(MemoryProvider):
-    """Factory and repository for conversation sessions."""
+    """Factory and repository for conversation sessions with trusted caller profile lookup."""
 
     def __init__(self) -> None:
         self._sessions: Dict[str, ConversationState] = {}
+        self._trusted_profiles: Dict[str, CallerProfile] = {}
+
+    def register_trusted_profile(self, phone: str, profile: CallerProfile) -> None:
+        """Register a verified trusted caller profile keyed by phone number."""
+        if phone:
+            clean_phone = sanitize_caller_value(phone)
+            if clean_phone:
+                self._trusted_profiles[clean_phone] = profile.model_copy(deep=True)
+
+    def lookup_trusted_profile(self, phone: Optional[str]) -> Optional[CallerProfile]:
+        """Lookup an existing verified caller profile by phone number."""
+        if not phone:
+            return None
+        clean_phone = sanitize_caller_value(phone)
+        if not clean_phone:
+            return None
+        profile = self._trusted_profiles.get(clean_phone)
+        return profile.model_copy(deep=True) if profile else None
 
     # -------------------------------------------------------------------------
     # Factory Methods
@@ -38,23 +75,52 @@ class ConversationStateManager(MemoryProvider):
         caller_email: Optional[str] = None,
         caller_company: Optional[str] = None,
     ) -> ConversationState:
-        """Create a fresh conversation state for an incoming call."""
+        """Create a fresh conversation state for an incoming call.
+
+        Rules:
+        - The only caller identity guaranteed at initialization is caller_phone.
+        - Never silently invent or populate placeholder names or emails.
+        - If a trusted caller profile exists for caller_phone, populate from it.
+        - Otherwise, name, email, and company remain None until provided by caller.
+        - Phone number is not proof of name or email.
+        """
+        clean_phone = sanitize_caller_value(caller_phone)
+        clean_name = sanitize_caller_value(caller_name)
+        clean_email = sanitize_caller_value(caller_email)
+        clean_company = sanitize_caller_value(caller_company)
+
+        # Lookup trusted profile by phone if explicit attributes were not supplied
+        trusted_profile = self.lookup_trusted_profile(clean_phone) if clean_phone else None
+        if trusted_profile:
+            final_name = clean_name or trusted_profile.name
+            final_email = clean_email or trusted_profile.email
+            final_company = clean_company or trusted_profile.company
+            caller_type = trusted_profile.caller_type or "known"
+            known_purpose = trusted_profile.known_purpose
+        else:
+            final_name = clean_name
+            final_email = clean_email
+            final_company = clean_company
+            caller_type = "unknown"
+            known_purpose = None
+
         metadata = CallMetadata(
             call_id=call_id,
             direction=CallDirection.INBOUND,
             primary_domain=domain,
-            caller_phone=caller_phone,
-            caller_name=caller_name,
+            caller_phone=clean_phone,
+            caller_name=final_name,
             status=CallStatus.ACTIVE,
             start_time=time.time(),
         )
 
         caller = CallerProfile(
-            name=caller_name,
-            phone=caller_phone,
-            email=caller_email,
-            company=caller_company,
-            caller_type="unknown",
+            name=final_name,
+            phone=clean_phone,
+            email=final_email,
+            company=final_company,
+            caller_type=caller_type,
+            known_purpose=known_purpose,
         )
 
         state = ConversationState(
@@ -83,12 +149,17 @@ class ConversationStateManager(MemoryProvider):
         known_purpose: Optional[str] = None,
     ) -> ConversationState:
         """Create an enriched conversation state for an outbound outreach call."""
+        clean_phone = sanitize_caller_value(caller_phone)
+        clean_name = sanitize_caller_value(caller_name)
+        clean_email = sanitize_caller_value(caller_email)
+        clean_company = sanitize_caller_value(company)
+
         metadata = CallMetadata(
             call_id=call_id,
             direction=CallDirection.OUTBOUND,
             primary_domain=domain,
-            caller_phone=caller_phone,
-            caller_name=caller_name,
+            caller_phone=clean_phone,
+            caller_name=clean_name,
             campaign_id=campaign_id,
             outbound_objective=campaign_objective,
             status=CallStatus.ACTIVE,
@@ -96,10 +167,10 @@ class ConversationStateManager(MemoryProvider):
         )
 
         caller = CallerProfile(
-            name=caller_name,
-            phone=caller_phone,
-            email=caller_email,
-            company=company,
+            name=clean_name,
+            phone=clean_phone,
+            email=clean_email,
+            company=clean_company,
             campaign=campaign_id,
             campaign_objective=campaign_objective,
             known_purpose=known_purpose,
