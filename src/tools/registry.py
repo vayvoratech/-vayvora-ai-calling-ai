@@ -99,6 +99,16 @@ REGISTERED_TOOLS: List[ToolDefinition] = [
             "required": ["status"],
         },
     ),
+    ToolDefinition(
+        name="mail_read_recent",
+        description="Read recent emails from IMAP inbox.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "description": "Number of recent emails to retrieve (default 5)"},
+            },
+        },
+    ),
 ]
 
 

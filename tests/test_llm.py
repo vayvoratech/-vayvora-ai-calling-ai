@@ -52,10 +52,18 @@ class TestGeminiLLMProvider:
         settings = Settings(
             _env_file=None,
             GEMINI_API_KEY="test-key",
-            GEMINI_MODEL="gemini-3.5-flash",
+            GEMINI_MODEL="gemini-3.5-flash-lite",
         )
         provider = GeminiLLMProvider(settings=settings)
-        assert provider.model == "gemini-3.5-flash"
+        assert provider.model == "gemini-3.5-flash-lite"
+
+    def test_default_model_is_flash_lite(self):
+        settings = Settings(
+            _env_file=None,
+            GEMINI_API_KEY="test-key",
+        )
+        provider = GeminiLLMProvider(settings=settings)
+        assert provider.model == "gemini-3.5-flash-lite"
 
     def test_api_key_never_exposed_in_repr(self):
         settings = Settings(

@@ -315,7 +315,16 @@ class MockLLMProvider(LLMProvider):
         from src.core.types import ConversationStage, DomainType
 
         clean_user_text = ""
-        if "Latest Caller Message:" in prompt:
+        if "=== LATEST CALLER MESSAGE" in prompt:
+            chunk = prompt.split("=== LATEST CALLER MESSAGE")[-1]
+            if "=== DECISION INSTRUCTIONS ===" in chunk:
+                chunk = chunk.split("=== DECISION INSTRUCTIONS ===")[0]
+            lines = [
+                l for l in chunk.strip().splitlines()
+                if l.strip() and not l.strip().startswith("(") and not l.strip().startswith("=")
+            ]
+            clean_user_text = lines[0].strip().strip('"').strip().lower().rstrip(".!?") if lines else ""
+        elif "Latest Caller Message:" in prompt:
             chunk = prompt.split("Latest Caller Message:")[-1]
             if "Analyze the latest caller message" in chunk:
                 chunk = chunk.split("Analyze the latest caller message")[0]

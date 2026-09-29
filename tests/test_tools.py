@@ -380,7 +380,7 @@ class TestMockToolProvider:
         provider = MockToolProvider()
         req = ToolCallRequest(
             tool_name="send_message",
-            arguments={"recipient": "+15551234567", "text": "Confirmation SMS"},
+            arguments={"recipient": "+919949350699", "text": "Confirmation SMS"},
             call_id="call-sms-01",
         )
         res = await provider.execute_tool(req)
@@ -406,7 +406,7 @@ class TestMockToolProvider:
         provider = MockToolProvider(force_unavailable=True)
         req = ToolCallRequest(
             tool_name="send_email",
-            arguments={"recipient": "user@example.com"},
+            arguments={"recipient": "pawanganesh21511111@gmail.com"},
             call_id="call-err-01",
         )
         res = await provider.execute_tool(req)
@@ -446,7 +446,7 @@ class TestMockToolProvider:
         provider = MockToolProvider(force_malformed=True)
         req = ToolCallRequest(
             tool_name="send_email",
-            arguments={"recipient": "user@example.com"},
+            arguments={"recipient": "pawanganesh1413@gmail.com"},
             call_id="call-err-04",
         )
         res = await provider.execute_tool(req)
@@ -459,7 +459,7 @@ class TestMockToolProvider:
         provider = MockToolProvider(force_verification_failure=True)
         req = ToolCallRequest(
             tool_name="send_email",
-            arguments={"recipient": "user@example.com"},
+            arguments={"recipient": "pawanganesh1413@gmail.com"},
             call_id="call-ver-01",
         )
         res = await provider.execute_tool(req)
@@ -472,7 +472,7 @@ class TestMockToolProvider:
         provider = MockToolProvider()
         req = ToolCallRequest(
             tool_name="send_email",
-            arguments={"recipient": "lead@example.com", "subject": "Hello"},
+            arguments={"recipient": "pawanganesh1413@gmail.com", "subject": "Hello"},
             call_id="call-idem-01",
         )
 

@@ -93,7 +93,7 @@ class CallMetadata(BaseModel):
     call_id: str = Field(..., min_length=1, description="Unique identifier for the call session")
     direction: CallDirection = Field(..., description="Inbound or outbound call direction")
     primary_domain: DomainType = Field(..., description="Primary domain assigned to the session")
-    caller_phone: str = Field(..., min_length=1, description="Caller or recipient phone number")
+    caller_phone: Optional[str] = Field(default=None, description="Caller or recipient phone number")
     caller_name: Optional[str] = Field(default=None, description="Caller name if known or identified")
     campaign_id: Optional[str] = Field(default=None, description="Campaign ID if outbound call")
     outbound_objective: Optional[str] = Field(

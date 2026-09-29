@@ -124,7 +124,7 @@ class TelephonyVoiceAdapter:
         # 2. Create inbound ConversationState (supports unknown caller)
         state = self.state_manager.create_inbound_state(
             call_id=self.transport.call_id,
-            caller_phone=self.transport.caller_number or "+15551234567",
+            caller_phone=self.transport.caller_number,
             domain=domain,
             caller_name=caller_name,
         )
@@ -180,7 +180,7 @@ class TelephonyVoiceAdapter:
         # Create enriched outbound ConversationState
         state = self.state_manager.create_outbound_state(
             call_id=self.transport.call_id,
-            caller_phone=self.transport.callee_number or "+15551234567",
+            caller_phone=self.transport.callee_number,
             domain=domain,
             caller_name=caller_name,
             campaign_id=campaign_id,

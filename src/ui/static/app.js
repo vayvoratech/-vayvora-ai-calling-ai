@@ -146,12 +146,12 @@
 
     const direction = callDirectionSelect.value;
     const domain = domainSelect.value;
-    const callerName = callerNameInput.value.trim() || 'Valued Caller';
-    const callerPhone = callerPhoneInput.value.trim() || '+15551234567';
-    const callerEmail = callerEmailInput.value.trim() || 'caller@example.com';
-    const callerCompany = callerCompanyInput.value.trim() || 'Acme Corp';
-    const campaignObjective = campaignObjectiveInput.value.trim() || 'Product follow-up consultation';
-    const knownPurpose = knownPurposeInput.value.trim() || 'AI consulting services';
+    const callerName = callerNameInput.value.trim() || null;
+    const callerPhone = callerPhoneInput.value.trim() || null;
+    const callerEmail = callerEmailInput.value.trim() || null;
+    const callerCompany = callerCompanyInput.value.trim() || null;
+    const campaignObjective = campaignObjectiveInput.value.trim() || null;
+    const knownPurpose = knownPurposeInput.value.trim() || null;
 
     const payload = {
       direction: direction,

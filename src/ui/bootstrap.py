@@ -9,7 +9,11 @@ from typing import Any, Dict, List, Optional
 import httpx
 from src.core.llm import GeminiLLMProvider, MockLLMProvider
 from src.config import Settings, get_settings
-from src.core.decision import ConversationalDecision, ProposedAction
+from src.core.decision import (
+    ConversationalDecision,
+    ProposedAction,
+    extract_datetime_preference,
+)
 from src.core.engine import ConversationEngine
 from src.core.interfaces import KnowledgeProvider, LLMProvider, ToolProvider
 
@@ -115,19 +119,49 @@ class InteractiveMockLLMProvider(MockLLMProvider):
             )
             return self.validator.validate_and_filter(decision)
 
+        # Extract date/time from user message and persistent slot context
+        dt_in_user_text = extract_datetime_preference(clean_user_text)
+        dt_in_state = None
+        if "=== PERSISTENT CONVERSATION SLOTS ===" in prompt:
+            chunk_slots = prompt.split("=== PERSISTENT CONVERSATION SLOTS ===")[-1]
+            if "===" in chunk_slots:
+                chunk_slots = chunk_slots.split("===")[0]
+            for line in chunk_slots.splitlines():
+                if "meeting_preference:" in line.lower():
+                    dt_in_state = line.split(":", 1)[1].strip()
+                    break
+
+        resolved_slot = dt_in_user_text or dt_in_state
+
         # (C) Scheduling / Meeting Consultations
-        if any(w in clean_user_text for w in ["schedule", "meeting", "consultation", "demo", "book a slot", "calendar"]):
-            decision = ConversationalDecision(
-                detected_domain=DomainType.VAYVORA if "vayvora" in clean_user_text else DomainType.EDUSAAS,
-                detected_intent="schedule_consultation",
-                proposed_stage=ConversationStage.ACTION_CONFIRMATION,
-                action_proposed=True,
-                proposed_action=ProposedAction(
-                    tool_name="create_calendar_event",
-                    arguments={"slot": "Tomorrow 10:00 AM", "confirmed": True},
-                ),
-                user_facing_response="I would be happy to schedule a consultation for you. I have confirmed Tomorrow at 10:00 AM.",
-            )
+        if any(w in clean_user_text for w in ["schedule", "meeting", "consultation", "demo", "book a slot", "calendar"]) or dt_in_user_text:
+            dom = DomainType.VAYVORA if "vayvora" in clean_user_text else DomainType.EDUSAAS
+            if resolved_slot:
+                decision = ConversationalDecision(
+                    detected_domain=dom,
+                    detected_intent="schedule_consultation",
+                    extracted_slots={"meeting_preference": resolved_slot},
+                    proposed_stage=ConversationStage.ACTION_CONFIRMATION,
+                    action_proposed=True,
+                    proposed_action=ProposedAction(
+                        tool_name="create_calendar_event",
+                        arguments={"slot": resolved_slot, "confirmed": True},
+                    ),
+                    user_facing_response=f"I would be happy to schedule a consultation for you. I have confirmed {resolved_slot}.",
+                )
+            else:
+                decision = ConversationalDecision(
+                    detected_domain=dom,
+                    detected_intent="schedule_consultation",
+                    extracted_slots={},
+                    proposed_stage=ConversationStage.ACTION_CONFIRMATION,
+                    action_proposed=True,
+                    proposed_action=ProposedAction(
+                        tool_name="create_calendar_event",
+                        arguments={},
+                    ),
+                    user_facing_response="I can certainly schedule that consultation. Which date or time slot would work best for you?",
+                )
             return self.validator.validate_and_filter(decision)
 
         # (D) Brochure / Email Information
@@ -154,7 +188,7 @@ class InteractiveMockLLMProvider(MockLLMProvider):
                 action_proposed=True,
                 proposed_action=ProposedAction(
                     tool_name="create_hr_followup",
-                    arguments={"candidate_name": "Applicant", "position": "Software Engineer"},
+                    arguments={"position": "Software Engineer"},
                 ),
                 user_facing_response="We are always looking for talented engineers at Vayvora. I have queued a follow-up ticket with our HR team.",
             )

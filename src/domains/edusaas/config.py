@@ -72,6 +72,12 @@ EDUSAAS_SLOTS = [
         description="Level of urgency or commitment to enrolling",
         example="Planning to start within 2 weeks",
     ),
+    SlotDefinition(
+        name="meeting_preference",
+        slot_type="string",
+        description="Preferred date, time, or schedule for counseling session, demo, or consultation",
+        example="Today by 12 PM",
+    ),
 ]
 
 EDUSAAS_DOMAIN_CONFIG = DomainConfig(

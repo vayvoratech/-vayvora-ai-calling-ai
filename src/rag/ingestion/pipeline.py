@@ -91,10 +91,20 @@ class IngestionPipeline:
 KnowledgeIngestionPipeline = IngestionPipeline
 
 
-async def async_main():
+async def async_main(drop_existing: bool = False):
     from src.rag.retriever import GroundedKnowledgeProvider
 
     provider = GroundedKnowledgeProvider()
+    if hasattr(provider, "store") and provider.store is not None:
+        if await provider.store.health_check():
+            print(f"Connected to Redis Stack at {provider.store.redis_url}")
+            print("Creating/verifying RediSearch vector indexes (idx:edusaas_vdb, idx:vayvora_vdb)...")
+            await provider.store.create_index(DomainType.EDUSAAS, drop_existing=drop_existing)
+            await provider.store.create_index(DomainType.VAYVORA, drop_existing=drop_existing)
+            print("RediSearch vector indexes ready.")
+        else:
+            print(f"Notice: Redis is not reachable on {provider.store.redis_url}. Ingesting to local keyword index only.")
+
     pipeline = IngestionPipeline(knowledge_provider=provider)
     summary = await pipeline.ingest_all()
 
@@ -105,9 +115,21 @@ async def async_main():
         print(f"Domain: {domain.value:<10} | Files: {res['files_processed']:<3} | Chunks: {res['chunks_indexed']}")
     print("=" * 50)
 
+    if hasattr(provider, "store") and provider.store is not None:
+        await provider.store.close()
+
 
 def main():
-    asyncio.run(async_main())
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Create vector indexes and ingest knowledge base documents into Redis Stack.")
+    parser.add_argument(
+        "--drop-existing",
+        action="store_true",
+        help="Drop and recreate existing Redis vector indexes before ingestion.",
+    )
+    args = parser.parse_args()
+    asyncio.run(async_main(drop_existing=args.drop_existing))
 
 
 if __name__ == "__main__":

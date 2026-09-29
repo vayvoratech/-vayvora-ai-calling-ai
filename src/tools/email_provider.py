@@ -6,8 +6,10 @@ MockEmailProvider for isolated unit and integration testing without network call
 
 from abc import ABC, abstractmethod
 import asyncio
+import email
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+import imaplib
 import smtplib
 import socket
 import time
@@ -39,8 +41,23 @@ class EmailSendResult(BaseModel):
     )
 
 
+class EmailReadResult(BaseModel):
+    """Structured result returned when querying recent emails via IMAP."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    success: bool = Field(..., description="True if mailbox was successfully read")
+    messages: List[Dict[str, str]] = Field(default_factory=list, description="Parsed email message summaries")
+    summary: str = Field(default="", description="Voice or text summary of retrieved emails")
+    error: Optional[str] = Field(default=None, description="Detailed error description if query failed")
+    status: str = Field(
+        default="ok",
+        description="Result classification: ok, empty, auth_failed, connection_failed, timeout, failed",
+    )
+
+
 class EmailProvider(ABC):
-    """Abstract interface for transactional email dispatch."""
+    """Abstract interface for transactional email dispatch and inbox access."""
 
     @abstractmethod
     async def send_email(
@@ -52,6 +69,14 @@ class EmailProvider(ABC):
         sender: Optional[str] = None,
     ) -> EmailSendResult:
         """Send an email message asynchronously."""
+        pass
+
+    @abstractmethod
+    async def read_recent_emails(
+        self,
+        limit: int = 5,
+    ) -> EmailReadResult:
+        """Read recent emails from inbox asynchronously."""
         pass
 
 
@@ -196,6 +221,123 @@ class SMTPEmailProvider(EmailProvider):
             sender=sender,
         )
 
+    def _read_recent_sync(self, limit: int = 5) -> EmailReadResult:
+        """Synchronously query recent emails from IMAP inbox."""
+        if limit < 1:
+            return EmailReadResult(
+                success=False,
+                error="Limit must be at least 1.",
+                status="failed",
+            )
+        imap_host = getattr(self.settings, "imap_host", "imap.gmail.com")
+        imap_port = getattr(self.settings, "imap_port", 993)
+        imap_user = getattr(self.settings, "imap_username", None) or self.username
+        imap_pass = None
+        if getattr(self.settings, "imap_password", None):
+            imap_pass = self.settings.imap_password.get_secret_value()
+        else:
+            imap_pass = self._get_password()
+
+        if not (imap_user and imap_pass and imap_host not in ("localhost", "127.0.0.1", "")):
+            logger.warning("IMAP credentials or host not configured. Returning empty inbox.")
+            return EmailReadResult(
+                success=True,
+                messages=[],
+                summary="IMAP inbox not configured or offline.",
+                status="empty",
+            )
+
+        mail = None
+        try:
+            timeout = getattr(self.settings, "imap_timeout_seconds", 10.0)
+            mail = imaplib.IMAP4_SSL(imap_host, imap_port, timeout=timeout)
+            mail.login(imap_user, imap_pass)
+            status, _ = mail.select("INBOX")
+            if status != "OK":
+                return EmailReadResult(
+                    success=False,
+                    error="Unable to open the inbox.",
+                    status="failed",
+                )
+
+            status, messages = mail.search(None, "ALL")
+            if status != "OK" or not messages or not messages[0]:
+                return EmailReadResult(
+                    success=True,
+                    messages=[],
+                    summary="No messages found in inbox.",
+                    status="empty",
+                )
+
+            mail_ids = messages[0].split()
+            if not mail_ids:
+                return EmailReadResult(
+                    success=True,
+                    messages=[],
+                    summary="No messages found in inbox.",
+                    status="empty",
+                )
+
+            recent_ids = mail_ids[-limit:]
+            records: List[Dict[str, str]] = []
+            lines: List[str] = []
+
+            for mid in reversed(recent_ids):
+                status, data = mail.fetch(mid, "(RFC822)")
+                if status != "OK" or not data or not data[0]:
+                    continue
+                raw_message = data[0][1]
+                parsed_message = email.message_from_bytes(raw_message)
+                sender = parsed_message.get("From", "Unknown sender")
+                subject = parsed_message.get("Subject", "(No subject)")
+                date_str = parsed_message.get("Date", "")
+                records.append({
+                    "id": mid.decode("utf-8") if isinstance(mid, bytes) else str(mid),
+                    "from": sender,
+                    "subject": subject,
+                    "date": date_str,
+                })
+                lines.append(f"From: {sender} | Subject: {subject}")
+
+            summary_text = "\n".join(lines) if lines else "No messages found."
+            return EmailReadResult(
+                success=True,
+                messages=records,
+                summary=summary_text,
+                status="ok",
+            )
+        except imaplib.IMAP4.error as exc:
+            logger.error("IMAP authentication or protocol error: %s", exc)
+            return EmailReadResult(
+                success=False,
+                error=f"IMAP protocol failure: {exc}",
+                status="auth_failed",
+            )
+        except (socket.timeout, TimeoutError) as exc:
+            logger.error("IMAP read timed out: %s", exc)
+            return EmailReadResult(
+                success=False,
+                error=f"IMAP operation timed out: {exc}",
+                status="timeout",
+            )
+        except Exception as exc:
+            logger.error("Failed to read mail via IMAP: %s", exc)
+            return EmailReadResult(
+                success=False,
+                error=f"Failed to read mail via IMAP: {exc}",
+                status="failed",
+            )
+        finally:
+            if mail is not None:
+                try:
+                    mail.logout()
+                except Exception:
+                    pass
+
+    async def read_recent_emails(self, limit: int = 5) -> EmailReadResult:
+        """Asynchronously query recent emails from IMAP inbox."""
+        return await asyncio.to_thread(self._read_recent_sync, limit=limit)
+
 
 class MockEmailProvider(EmailProvider):
     """Deterministic in-memory mock email provider for unit testing without network dependencies."""
@@ -206,12 +348,17 @@ class MockEmailProvider(EmailProvider):
         force_auth_failure: bool = False,
         force_connection_failure: bool = False,
         force_timeout: bool = False,
+        mock_inbox: Optional[List[Dict[str, str]]] = None,
     ) -> None:
         self.force_success = force_success
         self.force_auth_failure = force_auth_failure
         self.force_connection_failure = force_connection_failure
         self.force_timeout = force_timeout
         self.sent_messages: List[Dict[str, Any]] = []
+        self.mock_inbox: List[Dict[str, str]] = mock_inbox if mock_inbox is not None else [
+            {"from": "counseling@edusaas.com", "subject": "Enrollment Inquiry Followup", "date": "2026-09-28"},
+            {"from": "partners@vayvora.com", "subject": "Enterprise AI Voice Consultation", "date": "2026-09-29"},
+        ]
 
     async def send_email(
         self,
@@ -264,4 +411,40 @@ class MockEmailProvider(EmailProvider):
             success=False,
             error="Mock email dispatch configured to fail",
             status="failed",
+        )
+
+    async def read_recent_emails(self, limit: int = 5) -> EmailReadResult:
+        """Simulate IMAP email reading."""
+        if limit < 1:
+            return EmailReadResult(
+                success=False,
+                error="Limit must be at least 1.",
+                status="failed",
+            )
+        if self.force_auth_failure:
+            return EmailReadResult(
+                success=False,
+                error="IMAP authentication failure",
+                status="auth_failed",
+            )
+        if self.force_connection_failure:
+            return EmailReadResult(
+                success=False,
+                error="IMAP connection refused",
+                status="connection_failed",
+            )
+        if self.force_timeout:
+            return EmailReadResult(
+                success=False,
+                error="IMAP operation timed out",
+                status="timeout",
+            )
+
+        recent = self.mock_inbox[-limit:]
+        lines = [f"From: {m.get('from', '')} | Subject: {m.get('subject', '')}" for m in reversed(recent)]
+        return EmailReadResult(
+            success=True,
+            messages=recent,
+            summary="\n".join(lines) if lines else "No messages found.",
+            status="ok",
         )

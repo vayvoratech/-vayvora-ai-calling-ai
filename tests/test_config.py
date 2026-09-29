@@ -27,7 +27,7 @@ class TestSettings:
         settings = Settings(_env_file=None)
         assert settings.app_env == "development"
         assert settings.log_level == "INFO"
-        assert settings.gemini_model == "gemini-3.5-flash"
+        assert settings.gemini_model == "gemini-3.5-flash-lite"
         assert settings.gemini_api_key is None
         assert settings.redis_host == "localhost"
         assert settings.redis_port == 6379

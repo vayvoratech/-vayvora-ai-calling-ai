@@ -59,16 +59,16 @@ def get_service() -> WorkbenchService:
 class CreateSessionRequest(BaseModel):
     direction: str = Field(default="inbound", description="Call direction: 'inbound' or 'outbound'")
     domain: str = Field(default="vayvora", description="Domain: 'vayvora' or 'edusaas'")
-    caller_name: str = Field(default="Valued Caller", description="Caller/Customer name")
-    caller_phone: str = Field(default="+15551234567", description="Caller phone number")
-    caller_email: Optional[str] = Field(default="caller@example.com", description="Caller email")
-    caller_company: Optional[str] = Field(default="Acme Corp", description="Caller company")
+    caller_name: Optional[str] = Field(default=None, description="Caller/Customer name")
+    caller_phone: Optional[str] = Field(default=None, description="Caller phone number")
+    caller_email: Optional[str] = Field(default=None, description="Caller email")
+    caller_company: Optional[str] = Field(default=None, description="Caller company")
     campaign_objective: Optional[str] = Field(
-        default="Product follow-up consultation",
+        default=None,
         description="Outbound campaign objective",
     )
     known_purpose: Optional[str] = Field(
-        default="AI consulting services",
+        default=None,
         description="Known purpose or interest of the contact",
     )
 
@@ -108,6 +108,24 @@ async def get_system_status() -> Dict[str, Any]:
     }
 
 
+@app.post("/mcp")
+async def handle_mcp_jsonrpc(request: Request) -> JSONResponse:
+    """JSON-RPC 2.0 endpoint for Model Context Protocol (MCP) tool execution."""
+    try:
+        body = await request.json()
+    except Exception as parse_err:
+        return JSONResponse(
+            status_code=400,
+            content={"jsonrpc": "2.0", "error": {"code": -32700, "message": f"Parse error: {parse_err}"}},
+        )
+
+    from src.tools.server import mcp
+    resp = await mcp.handle_jsonrpc(body)
+    if resp is None:
+        return JSONResponse(status_code=204, content=None)
+    return JSONResponse(status_code=200, content=resp)
+
+
 @app.post("/api/sessions")
 async def create_session(req: CreateSessionRequest) -> Dict[str, Any]:
     """Create a new conversational session (Inbound or Outbound)."""
@@ -135,7 +153,7 @@ async def create_session(req: CreateSessionRequest) -> Dict[str, Any]:
             domain=domain,
             caller_name=req.caller_name,
             campaign_id="CAMP-OUTBOUND-01",
-            campaign_objective=req.campaign_objective or "Product follow-up consultation",
+            campaign_objective=req.campaign_objective,
             caller_email=req.caller_email,
             company=req.caller_company,
             known_purpose=req.known_purpose,

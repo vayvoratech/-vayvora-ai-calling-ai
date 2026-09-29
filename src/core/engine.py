@@ -9,7 +9,12 @@ from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import Settings, get_settings
-from src.core.decision import ConversationalDecision, DecisionValidator, ProposedAction
+from src.core.decision import (
+    ConversationalDecision,
+    DecisionValidator,
+    ProposedAction,
+    extract_datetime_preference,
+)
 from src.core.interfaces import KnowledgeProvider, LLMProvider, ToolProvider
 from src.core.prompts import PromptSynthesizer
 from src.core.types import (
@@ -291,6 +296,10 @@ class ConversationEngine:
             )
             state.switch_domain(decision.detected_domain)
 
+        # Capture pending question/action prior to intent preemption
+        prior_pending_question = state.pending_question
+        prior_pending_action = state.pending_action
+
         # 6. Intent Preemption & Updating
         # The latest explicit user intent has priority over prior pending questions
         if decision.detected_intent:
@@ -300,9 +309,20 @@ class ConversationEngine:
                 clear_pending_question=True,
             )
 
+        # Check if caller message provides or updates date/time preference
+        extracted_pref = extract_datetime_preference(cleaned_msg)
+        if extracted_pref:
+            if not decision.extracted_slots.get("meeting_preference"):
+                decision.extracted_slots["meeting_preference"] = extracted_pref
+            elif any(w in cleaned_msg.lower() for w in ["actually", "instead", "make it", "change", "rather"]):
+                decision.extracted_slots["meeting_preference"] = extracted_pref
+
         # 7. Slot Updates
         for slot_key, slot_val in decision.extracted_slots.items():
             state.update_slot(slot_key, slot_val, sync_caller=True)
+
+        if extracted_pref and (not state.get_slot("meeting_preference") or any(w in cleaned_msg.lower() for w in ["actually", "instead", "make it", "change", "rather"])):
+            state.update_slot("meeting_preference", extracted_pref, sync_caller=True)
 
         # 8. Stage Progression
         # Guard: LLM suggestion of completion requires explicit termination check
@@ -319,6 +339,28 @@ class ConversationEngine:
         # CRITICAL: We distinguish proposed action from executed action.
         # We record pending_action, but DO NOT claim tool success.
         action_proposed = decision.action_proposed and decision.proposed_action is not None
+
+        # Promote to calendar action if caller is answering a pending date/time question or pending calendar action
+        if not action_proposed and (
+            prior_pending_action == "create_calendar_event"
+            or state.pending_action == "create_calendar_event"
+            or (
+                prior_pending_question
+                and any(w in prior_pending_question.lower() for w in ["date", "time slot", "time would", "work best", "schedule"])
+            )
+            or (
+                state.pending_question
+                and any(w in state.pending_question.lower() for w in ["date", "time slot", "time would", "work best", "schedule"])
+            )
+        ) and (extracted_pref or state.get_slot("meeting_preference")):
+            slot_to_book = extracted_pref or state.get_slot("meeting_preference")
+            decision.action_proposed = True
+            decision.proposed_action = ProposedAction(
+                tool_name="create_calendar_event",
+                arguments={"slot": slot_to_book, "confirmed": True},
+            )
+            action_proposed = True
+
         if action_proposed and decision.proposed_action:
             state.set_pending_action(decision.proposed_action.tool_name)
 
@@ -424,30 +466,32 @@ RULES:
                 decision.user_facing_response = final_response_text
                 state.set_pending_question("Could you please share your email address?")
             # Guard 2: Calendar Safety - missing confirmed slot
-            elif tool_name == "create_calendar_event":
-                meeting_preference = state.get_slot("meeting_preference")
-
-                if meeting_preference and not (
-                    tool_args.get("slot")
-                    or tool_args.get("start_time")
-                    or tool_args.get("time")
-                ):
-                    tool_args["slot"] = meeting_preference
-
-                if not (
-                    tool_args.get("slot")
-                    or tool_args.get("start_time")
-                    or tool_args.get("time")
-                ):
-                    final_response_text = (
-                        "I can certainly schedule that consultation. "
-                        "Which date or time slot would work best for you?"
-                    )
-                    decision.user_facing_response = final_response_text
-                    state.set_pending_question(
-                        "Which date or time slot would work best for you?"
-                    )
+            elif tool_name == "create_calendar_event" and not (
+                tool_args.get("slot")
+                or tool_args.get("start_time")
+                or tool_args.get("time")
+                or state.get_slot("meeting_preference")
+            ):
+                final_response_text = (
+                    "I can certainly schedule that consultation. "
+                    "Which date or time slot would work best for you?"
+                )
+                decision.user_facing_response = final_response_text
+                state.set_pending_question(
+                    "Which date or time slot would work best for you?"
+                )
             else:
+                if tool_name == "create_calendar_event":
+                    slot = (
+                        tool_args.get("slot")
+                        or tool_args.get("start_time")
+                        or tool_args.get("time")
+                        or state.get_slot("meeting_preference")
+                    )
+                    if slot:
+                        tool_args["slot"] = slot
+                    tool_args.setdefault("confirmed", True)
+
                 # Dispatch to tool provider
                 tool_call_req = ToolCallRequest(
                     tool_name=tool_name,
@@ -461,6 +505,7 @@ RULES:
                 if tool_exec_result.success:
                     # Verified Success: update state
                     state.complete_action(tool_name, tool_exec_result)
+                    state.set_pending_question(None)
 
                     if tool_name == "update_business_status":
                         new_status = tool_exec_result.data.get("status") or tool_args.get("status")
@@ -502,7 +547,7 @@ Do NOT fabricate delivery details beyond what is confirmed above."""
                             recipient_addr = recipient or "your email"
                             speech_confirmation = f"I have sent the email with the requested details to {recipient_addr}. Is there anything else I can help you with today?"
                         elif tool_name == "create_calendar_event":
-                            slot = tool_args.get("slot", "the requested time")
+                            slot = tool_args.get("slot") or state.get_slot("meeting_preference") or "the requested time"
                             speech_confirmation = f"I have scheduled your consultation for {slot}. Is there anything else I can assist you with?"
                         else:
                             speech_confirmation = "I have completed that request for you. Is there anything else I can assist you with?"

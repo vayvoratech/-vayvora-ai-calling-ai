@@ -4,6 +4,7 @@ Defines the structured output contract expected from Gemini 3.5 Flash,
 distinguishing proposed actions, grounding queries, and stage advancements.
 """
 
+import re
 from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -119,6 +120,87 @@ class ConversationalDecision(BaseModel):
         return v
 
 
+def extract_datetime_preference(text: str) -> Optional[str]:
+    """Extract natural-language meeting date/time preference from user utterance.
+
+    Extracts expressions like 'today by 12 PM', 'tomorrow at 3 PM', 'next Tuesday at 10 AM IST',
+    or revision phrases like 'actually, make it 2 PM instead'.
+    """
+    if not text:
+        return None
+    cleaned = text.strip()
+
+    time_part = r'(?:\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)|\b(?:morning|afternoon|evening|noon|midnight)\b)'
+    tz_part = r'(?:\s+(?:ist|est|pst|cst|utc|gmt|edt|pdt))?'
+    date_part = (
+        r'(?:today|tomorrow|yesterday|'
+        r'(?:this\s+|next\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)|'
+        r'(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?'
+        r')'
+    )
+
+    # 1. Date followed by Time (e.g. 'today by 12 PM', 'tomorrow at 3 PM', 'tomorrow afternoon')
+    p1 = re.compile(
+        rf'\b({date_part}(?:\s+(?:by|at|around|on|for))?\s+{time_part}{tz_part})\b',
+        re.IGNORECASE,
+    )
+    m = p1.search(cleaned)
+    if m:
+        return m.group(1).strip()
+
+    # 2. Time followed by Date (e.g. '10:00 AM tomorrow', '4 PM on Friday', '4 PM tomorrow')
+    p2 = re.compile(
+        rf'\b({time_part}{tz_part}(?:\s+(?:on|for|by|at))?\s+{date_part})\b',
+        re.IGNORECASE,
+    )
+    m = p2.search(cleaned)
+    if m:
+        return m.group(1).strip()
+
+    # 3. Date with time of day (e.g. 'tomorrow afternoon', 'next Tuesday morning')
+    p3 = re.compile(
+        rf'\b({date_part}\s+(?:morning|afternoon|evening|noon|night))\b',
+        re.IGNORECASE,
+    )
+    m = p3.search(cleaned)
+    if m:
+        return m.group(1).strip()
+
+    # 4. Explicit revision or single time (e.g. 'actually, make it 2 PM instead', '2 PM', '2:00 PM')
+    p4 = re.compile(
+        rf'(?:make\s+it\s+|at\s+|by\s+|for\s+)?\b({time_part}{tz_part})\b(?:\s+instead)?',
+        re.IGNORECASE,
+    )
+    m = p4.search(cleaned)
+    if m:
+        matched_str = m.group(1).strip()
+        if re.search(r'\d|noon|midnight', matched_str, re.IGNORECASE):
+            return matched_str
+
+    # 5. Bare Date only if the utterance is focused on scheduling or is a standalone date response
+    is_scheduling_intent = bool(
+        re.search(
+            r'\b(schedule|meeting|consultation|demo|book|call|appointment|slot)\b',
+            cleaned,
+            re.IGNORECASE,
+        )
+    )
+    is_standalone_date = bool(
+        re.match(
+            rf'^(?:yes,?\s*|sure,?\s*|for\s+|on\s+)?{date_part}[\.!\?]?$',
+            cleaned,
+            re.IGNORECASE,
+        )
+    )
+    if is_scheduling_intent or is_standalone_date:
+        p5 = re.compile(rf'\b({date_part})\b', re.IGNORECASE)
+        m = p5.search(cleaned)
+        if m:
+            return m.group(1).strip()
+
+    return None
+
+
 class DecisionValidator:
     """Validates ConversationalDecision instances against domain rules and registries."""
 
@@ -140,15 +222,49 @@ class DecisionValidator:
         if decision.detected_intent:
             intent_clean = decision.detected_intent.strip().lower()
             if not domain_config.is_intent_supported(intent_clean):
-                # Check if it belongs to another domain or fallback
-                # If unsupported in current domain, flag as general or keep raw intent
                 pass
 
-        # 3. Validate & Filter Slots
+        # 3. Canonicalize date/time slot aliases to 'meeting_preference'
+        datetime_aliases = {
+            "slot",
+            "preferred_date",
+            "preferred_time",
+            "meeting_time",
+            "appointment_time",
+            "calendar_slot",
+            "time",
+            "date",
+        }
+        for key, val in list(decision.extracted_slots.items()):
+            k_clean = key.strip().lower()
+            if k_clean in datetime_aliases and val is not None and str(val).strip():
+                if "meeting_preference" not in decision.extracted_slots:
+                    decision.extracted_slots["meeting_preference"] = str(val).strip()
+
+        # Check if proposed calendar action contains slot that should be captured in extracted_slots
+        if decision.proposed_action and decision.proposed_action.tool_name == "create_calendar_event":
+            act_slot = (
+                decision.proposed_action.arguments.get("slot")
+                or decision.proposed_action.arguments.get("start_time")
+                or decision.proposed_action.arguments.get("time")
+            )
+            if act_slot and str(act_slot).strip() and "meeting_preference" not in decision.extracted_slots:
+                decision.extracted_slots["meeting_preference"] = str(act_slot).strip()
+
+        # 4. Validate & Filter Slots
         sanitized_slots: Dict[str, Any] = {}
         allowed_slot_names = set(domain_config.get_slot_names())
-        # Universal caller slots are always allowed
-        universal_slots = {"name", "student_name", "contact_name", "email", "phone", "company", "company_name"}
+        # Universal caller slots are always allowed across ALL domains
+        universal_slots = {
+            "name",
+            "student_name",
+            "contact_name",
+            "email",
+            "phone",
+            "company",
+            "company_name",
+            "meeting_preference",
+        }
 
         for key, val in decision.extracted_slots.items():
             k_clean = key.strip().lower()
@@ -156,7 +272,7 @@ class DecisionValidator:
                 if val is not None and str(val).strip():
                     sanitized_slots[k_clean] = val
 
-        # 4. Action Validation & Normalization
+        # 5. Action Validation & Normalization
         if decision.proposed_action:
             tool_name = decision.proposed_action.tool_name.strip()
             if tool_name == "connect_advisor":
@@ -169,15 +285,16 @@ class DecisionValidator:
                     or sanitized_slots.get("name")
                     or sanitized_slots.get("contact_name")
                     or sanitized_slots.get("student_name")
-                    or "Caller"
                 )
                 if phone:
                     decision.proposed_action.tool_name = "create_hr_followup"
-                    decision.proposed_action.arguments = {
-                        "candidate_name": name,
+                    followup_args = {
                         "phone": phone,
                         "notes": decision.proposed_action.arguments.get("notes") or "Advisor connection callback requested",
                     }
+                    if name:
+                        followup_args["candidate_name"] = name
+                    decision.proposed_action.arguments = followup_args
                     decision.action_proposed = True
                 else:
                     decision.proposed_action = None
@@ -187,9 +304,8 @@ class DecisionValidator:
         elif decision.action_proposed and not decision.proposed_action:
             decision.action_proposed = False
 
-        # 5. Knowledge query consistency
+        # 6. Knowledge query consistency
         if decision.knowledge_required and not decision.knowledge_query:
-            # Default query to user facing response or intent
             decision.knowledge_query = decision.detected_intent or "general inquiry"
 
         decision.extracted_slots = sanitized_slots

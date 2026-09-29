@@ -268,6 +268,43 @@ class MockToolProvider(BaseMCPClient):
                 data={"status": args.get("status")},
             )
 
+        elif action == "mail_read_recent":
+            if self.email_provider:
+                read_res = await self.email_provider.read_recent_emails(limit=args.get("limit", 5))
+                if read_res.success:
+                    return ToolResult(
+                        action_name=action,
+                        requested=True,
+                        started=True,
+                        succeeded=True,
+                        external_reference=f"emails_read_{len(read_res.messages)}",
+                        data={"messages": read_res.messages, "summary": read_res.summary, "status": read_res.status},
+                    )
+                else:
+                    return ToolResult(
+                        action_name=action,
+                        requested=True,
+                        started=True,
+                        succeeded=False,
+                        failed=True,
+                        verification_status=VerificationStatus.FAILED,
+                        error=read_res.error or "IMAP read failed",
+                    )
+            return ToolResult(
+                action_name=action,
+                requested=True,
+                started=True,
+                succeeded=True,
+                external_reference="emails_read_2",
+                data={
+                    "messages": [
+                        {"from": "counseling@edusaas.com", "subject": "Enrollment Inquiry Followup"},
+                        {"from": "partners@vayvora.com", "subject": "Enterprise AI Voice Consultation"},
+                    ],
+                    "summary": "From: partners@vayvora.com | Subject: Enterprise AI Voice Consultation\nFrom: counseling@edusaas.com | Subject: Enrollment Inquiry Followup",
+                },
+            )
+
         return ToolResult(
             action_name=action,
             requested=True,
@@ -284,6 +321,7 @@ class MockToolProvider(BaseMCPClient):
             "create_hr_followup",
             "send_message",
             "update_business_status",
+            "mail_read_recent",
         ]]
 
 
@@ -349,7 +387,8 @@ class HttpMCPToolProvider(BaseMCPClient):
             "id": request.correlation_id,
         }
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        timeout = getattr(self.settings, "mcp_timeout_seconds", 15.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
             try:
                 resp = await client.post(self.endpoint, json=payload)
                 if resp.status_code == 401 or resp.status_code == 403:
@@ -377,13 +416,32 @@ class HttpMCPToolProvider(BaseMCPClient):
                     )
 
                 res_data = body.get("result", {})
+                if res_data.get("isError"):
+                    return ToolResult(
+                        action_name=request.action_name,
+                        requested=True,
+                        started=True,
+                        succeeded=False,
+                        failed=True,
+                        error=res_data.get("error") or "Tool execution reported error",
+                        data=res_data,
+                    )
+
+                ext_ref = (
+                    res_data.get("external_reference")
+                    or res_data.get("id")
+                    or res_data.get("message_id")
+                    or res_data.get("event_id")
+                    or res_data.get("lead_id")
+                    or res_data.get("ticket_id")
+                )
                 return ToolResult(
                     action_name=request.action_name,
                     requested=True,
                     started=True,
                     succeeded=True,
                     data=res_data,
-                    external_reference=res_data.get("external_reference") or res_data.get("id"),
+                    external_reference=ext_ref,
                 )
             except httpx.TimeoutException:
                 return ToolResult(
@@ -391,7 +449,7 @@ class HttpMCPToolProvider(BaseMCPClient):
                     requested=True,
                     started=True,
                     failed=True,
-                    error="MCP tool request timed out.",
+                    error=f"MCP tool request timed out after {timeout}s.",
                 )
             except Exception as exc:
                 return ToolResult(
@@ -410,4 +468,5 @@ class HttpMCPToolProvider(BaseMCPClient):
             "create_hr_followup",
             "send_message",
             "update_business_status",
+            "mail_read_recent",
         ]]

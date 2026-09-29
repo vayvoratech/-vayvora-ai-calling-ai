@@ -17,6 +17,7 @@ SUPPORTED_ACTIONS: Set[str] = {
     "create_hr_followup",
     "send_message",
     "update_business_status",
+    "mail_read_recent",
 }
 
 
@@ -86,3 +87,12 @@ class ActionValidator:
                 raise InvalidToolArgumentsError(
                     "Action 'update_business_status' requires a valid status string."
                 )
+
+        # 7. Recent Mail Read Validation
+        elif action == "mail_read_recent":
+            limit = args.get("limit", 5)
+            if not isinstance(limit, int) or limit < 1:
+                raise InvalidToolArgumentsError(
+                    "Action 'mail_read_recent' requires limit to be an integer >= 1."
+                )
+

@@ -186,10 +186,12 @@ class ConversationState(BaseModel):
 
     def update_slot(self, key: str, value: Any, sync_caller: bool = True) -> None:
         """Record or update an extracted slot and optionally synchronize caller profile."""
+        if value is None or not str(value).strip():
+            return
         clean_key = key.strip()
         self.extracted_slots[clean_key] = value
 
-        if not sync_caller or value is None:
+        if not sync_caller:
             return
 
         str_val = str(value).strip()
@@ -197,10 +199,13 @@ class ConversationState(BaseModel):
             self.caller.name = str_val
         elif clean_key == "email" and not self.caller.email:
             self.caller.email = str_val
+        elif clean_key in ("phone", "caller_phone") and not self.caller.phone:
+            self.caller.phone = str_val
         elif clean_key in ("company_name", "company") and not self.caller.company:
             self.caller.company = str_val
         elif clean_key in ("interest", "product_interest", "target_course"):
             self.current_interest = str_val
+
     def get_slot(self, key: str, default: Any = None) -> Any:
         """Return a previously collected conversation slot."""
         return self.extracted_slots.get(key.strip(), default)

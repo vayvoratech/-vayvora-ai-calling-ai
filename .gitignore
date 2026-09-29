@@ -28,6 +28,7 @@ logs/
 temp/
 scratch/
 recordings/
+data/
 
 # IDE & OS
 .vscode/

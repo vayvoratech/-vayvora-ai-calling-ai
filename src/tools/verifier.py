@@ -114,6 +114,19 @@ class ActionVerifier:
                 result.failed = True
                 result.error = "Verification failure: Business status update lacked confirmation."
 
+        # 8. Recent Mail Read Verification
+        elif action == "mail_read_recent":
+            messages = data.get("messages")
+            if isinstance(messages, list) and not data.get("error"):
+                result.external_reference = f"emails_read_{len(messages)}"
+                result.verification_status = VerificationStatus.VERIFIED
+            else:
+                result.verification_status = VerificationStatus.UNVERIFIED
+                result.succeeded = False
+                result.failed = True
+                result.error = "Verification failure: Inbox read operation did not return messages list."
+
+
         else:
             # Generic fallback: if succeeded but unrecognized verification pattern
             result.verification_status = VerificationStatus.UNVERIFIED

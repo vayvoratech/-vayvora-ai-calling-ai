@@ -5,8 +5,8 @@ and .env files for future components without connecting to external services.
 """
 
 from functools import lru_cache
-from typing import Optional
-from pydantic import Field, SecretStr
+from typing import Any, Dict, Optional
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -18,6 +18,37 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _map_legacy_environment_variables(cls, data: Any) -> Any:
+        """Map environment variables from old MCP project into current settings."""
+        if isinstance(data, dict):
+            if "MAIL_HOST_SMTP" in data and "SMTP_HOST" not in data and "smtp_host" not in data:
+                data["smtp_host"] = data["MAIL_HOST_SMTP"]
+            if "MAIL_PORT_SMTP" in data and "SMTP_PORT" not in data and "smtp_port" not in data:
+                data["smtp_port"] = data["MAIL_PORT_SMTP"]
+            if "MAIL_HOST_IMAP" in data and "IMAP_HOST" not in data and "imap_host" not in data:
+                data["imap_host"] = data["MAIL_HOST_IMAP"]
+            if "MAIL_PORT_IMAP" in data and "IMAP_PORT" not in data and "imap_port" not in data:
+                data["imap_port"] = data["MAIL_PORT_IMAP"]
+            if "MAIL_USER" in data:
+                if "SMTP_USERNAME" not in data and "smtp_username" not in data:
+                    data["smtp_username"] = data["MAIL_USER"]
+                if "IMAP_USERNAME" not in data and "imap_username" not in data:
+                    data["imap_username"] = data["MAIL_USER"]
+            if "MAIL_PASS" in data:
+                if "SMTP_PASSWORD" not in data and "smtp_password" not in data:
+                    data["smtp_password"] = data["MAIL_PASS"]
+                if "IMAP_PASSWORD" not in data and "imap_password" not in data:
+                    data["imap_password"] = data["MAIL_PASS"]
+            if "WHATSAPP_API_URL" in data and "OPENWA_BASE_URL" not in data and "openwa_base_url" not in data:
+                data["openwa_base_url"] = data["WHATSAPP_API_URL"]
+            if "WHATSAPP_API_TOKEN" in data and "OPENWA_API_KEY" not in data and "openwa_api_key" not in data:
+                data["openwa_api_key"] = data["WHATSAPP_API_TOKEN"]
+            if "EVENTS_FILE" in data and "CALENDAR_EVENTS_PATH" not in data and "calendar_events_path" not in data:
+                data["calendar_events_path"] = data["EVENTS_FILE"]
+        return data
 
     # Application Environment
     app_env: str = Field(
@@ -38,7 +69,7 @@ class Settings(BaseSettings):
         description="Google Gemini API authentication token",
     )
     gemini_model: str = Field(
-        default="gemini-3.5-flash",
+        default="gemini-3.5-flash-lite",
         alias="GEMINI_MODEL",
         description="Gemini LLM model identifier",
     )
@@ -217,6 +248,61 @@ class Settings(BaseSettings):
         le=120.0,
         alias="SMTP_TIMEOUT_SECONDS",
         description="Timeout in seconds for SMTP operations",
+    )
+
+    # IMAP Email Settings (for reading recent emails)
+    imap_host: str = Field(
+        default="imap.gmail.com",
+        alias="IMAP_HOST",
+        description="IMAP server hostname or IP address",
+    )
+    imap_port: int = Field(
+        default=993,
+        ge=1,
+        le=65535,
+        alias="IMAP_PORT",
+        description="IMAP server port",
+    )
+    imap_username: Optional[str] = Field(
+        default=None,
+        alias="IMAP_USERNAME",
+        description="IMAP authentication username",
+    )
+    imap_password: Optional[SecretStr] = Field(
+        default=None,
+        alias="IMAP_PASSWORD",
+        description="IMAP authentication password",
+    )
+    imap_timeout_seconds: float = Field(
+        default=10.0,
+        ge=1.0,
+        le=120.0,
+        alias="IMAP_TIMEOUT_SECONDS",
+        description="Timeout in seconds for IMAP operations",
+    )
+
+    # WhatsApp Messaging Settings (via OpenWA)
+    openwa_base_url: str = Field(
+        default="http://localhost:2785",
+        alias="OPENWA_BASE_URL",
+        description="Base URL for self-hosted OpenWA WhatsApp service",
+    )
+    openwa_api_key: Optional[SecretStr] = Field(
+        default=None,
+        alias="OPENWA_API_KEY",
+        description="Optional API key for OpenWA service",
+    )
+    whatsapp_session_id: str = Field(
+        default="default",
+        alias="WHATSAPP_SESSION_ID",
+        description="Session ID for OpenWA WhatsApp instance",
+    )
+
+    # Calendar Storage Settings
+    calendar_events_path: str = Field(
+        default="data/events.json",
+        alias="CALENDAR_EVENTS_PATH",
+        description="Path to JSON file used for calendar event storage",
     )
 
     # Local Audio Engine Settings: VAD, STT & TTS (Phase 7)
