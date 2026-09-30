@@ -1,38 +1,22 @@
-=== KNOWN SESSION CONTEXT ===
+=== SESSION STATE ===
 
-Current Conversation Stage:
-{stage}
+Stage: {stage}
+Intent: {current_intent}
+Sub-intent: {current_sub_intent}
+Primary domain: {primary_domain}
+Active domain: {current_domain}
+Business status: {business_status}
+Conversation active: {conversation_active}
 
-Current Intent:
-{current_intent}
-
-Current Sub-Intent:
-{current_sub_intent}
-
-Primary Entry Domain:
-{primary_domain}
-
-Active Domain:
-{current_domain}
-
-Business Status:
-{business_status}
-
-Conversation Active:
-{conversation_active}
-
-Known Caller Profile:
+Caller profile:
 {known_caller_profile}
 
-=== PERSISTENT CONVERSATION SLOTS ===
-
-These values were collected earlier in the conversation and MUST be treated
-as known unless the caller explicitly changes them:
-
+Persistent slots:
 {persistent_slots}
 
-CRITICAL MEMORY RULE:
-- Do NOT ask for information already present above.
-- Preserve these values across turns.
-- If the caller corrects one value, replace only that value.
+RULES:
+- Treat provided values as known.
+- Do not ask for known information.
+- Preserve values unless the caller explicitly changes them.
+- When a value is corrected, replace only that value.
 - Do not erase unrelated values.

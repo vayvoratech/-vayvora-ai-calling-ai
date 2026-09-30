@@ -342,16 +342,103 @@ class Settings(BaseSettings):
         description="Silence duration in seconds required to trigger speech end",
     )
 
-    # STT Configuration
+    # Noise Suppression & Real-Time Acoustic Hygiene Settings
+    noise_suppression_enabled: bool = Field(
+        default=True,
+        alias="NOISE_SUPPRESSION_ENABLED",
+        description="Enable WebRTC-based real-time noise suppression",
+    )
+    noise_suppression_level: int = Field(
+        default=2,
+        ge=0,
+        le=3,
+        alias="NOISE_SUPPRESSION_LEVEL",
+        description="WebRTC noise suppression aggressiveness level (0=mild, 1=medium, 2=high, 3=very high)",
+    )
+    high_pass_filter_enabled: bool = Field(
+        default=True,
+        alias="HIGH_PASS_FILTER_ENABLED",
+        description="Enable high-pass filter to strip sub-80Hz mechanical rumble and electrical hum",
+    )
+    noise_gate_enabled: bool = Field(
+        default=True,
+        alias="NOISE_GATE_ENABLED",
+        description="Enable soft noise gate to suppress residual background acoustic floor during speech pauses",
+    )
+    noise_gate_threshold_db: float = Field(
+        default=-42.0,
+        alias="NOISE_GATE_THRESHOLD_DB",
+        description="Threshold in dBFS below which soft noise gating is applied",
+    )
+    vad_start_threshold: float = Field(
+        default=0.45,
+        ge=0.0,
+        le=1.0,
+        alias="VAD_START_THRESHOLD",
+        description="Silero VAD speech detection onset threshold",
+    )
+    vad_end_threshold: float = Field(
+        default=0.20,
+        ge=0.0,
+        le=1.0,
+        alias="VAD_END_THRESHOLD",
+        description="Silero VAD speech termination threshold",
+    )
+    vad_min_speech_duration_ms: int = Field(
+        default=160,
+        ge=32,
+        le=2000,
+        alias="VAD_MIN_SPEECH_DURATION_MS",
+        description="Minimum consecutive speech duration in milliseconds to trigger speech start",
+    )
+    vad_min_silence_duration_ms: int = Field(
+        default=400,
+        ge=64,
+        le=2000,
+        alias="VAD_MIN_SILENCE_DURATION_MS",
+        description="Silence duration in milliseconds required to trigger speech end",
+    )
+    vad_pre_roll_ms: int = Field(
+        default=300,
+        ge=0,
+        le=1000,
+        alias="VAD_PRE_ROLL_MS",
+        description="Pre-roll buffer duration in milliseconds to preserve initial speech consonants",
+    )
+    pre_stt_min_duration_ms: int = Field(
+        default=200,
+        ge=50,
+        le=2000,
+        alias="PRE_STT_MIN_DURATION_MS",
+        description="Minimum speech duration in milliseconds required before sending audio to STT",
+    )
+    pre_stt_min_rms: float = Field(
+        default=120.0,
+        ge=0.0,
+        alias="PRE_STT_MIN_RMS",
+        description="Minimum RMS energy required before sending audio segment to STT",
+    )
+
+    # STT Configuration (Groq Whisper Cloud STT)
+    groq_api_key: Optional[SecretStr] = Field(
+        default=None,
+        alias="GROQ_API_KEY",
+        description="Groq API key for cloud Whisper speech-to-text",
+    )
     stt_provider: str = Field(
-        default="faster-whisper",
+        default="groq",
         alias="STT_PROVIDER",
-        description="STT provider identifier (faster-whisper, mock)",
+        description="STT provider identifier (groq, mock, faster-whisper)",
     )
     stt_model: str = Field(
-        default="base.en",
+        default="whisper-large-v3-turbo",
         alias="STT_MODEL",
         description="Whisper model name or path",
+    )
+    groq_stt_model: str = Field(
+        default="whisper-large-v3-turbo",
+        alias="GROQ_STT_MODEL",
+        description="Groq STT model override",
     )
     stt_language: str = Field(
         default="en",
@@ -375,16 +462,36 @@ class Settings(BaseSettings):
         description="Beam search size for decoding",
     )
 
-    # TTS Configuration
+    # TTS Configuration (Deepgram Streaming TTS)
+    deepgram_api_key: Optional[SecretStr] = Field(
+        default=None,
+        alias="DEEPGRAM_API_KEY",
+        description="Deepgram API key for real-time streaming speech synthesis",
+    )
     tts_provider: str = Field(
-        default="kokoro",
+        default="deepgram",
         alias="TTS_PROVIDER",
-        description="TTS provider identifier (kokoro, piper, mock)",
+        description="TTS provider identifier (deepgram, mock, kokoro, piper)",
     )
     tts_voice: str = Field(
-        default="af_heart",
+        default="aura-asteria-en",
         alias="TTS_VOICE",
         description="Voice identifier for synthesis",
+    )
+    deepgram_tts_model: str = Field(
+        default="aura-asteria-en",
+        alias="DEEPGRAM_TTS_MODEL",
+        description="Deepgram TTS model voice identifier",
+    )
+    deepgram_tts_encoding: str = Field(
+        default="linear16",
+        alias="DEEPGRAM_TTS_ENCODING",
+        description="Deepgram TTS audio encoding",
+    )
+    deepgram_tts_sample_rate: int = Field(
+        default=48000,
+        alias="DEEPGRAM_TTS_SAMPLE_RATE",
+        description="Deepgram TTS audio sample rate",
     )
     tts_language: str = Field(
         default="en-us",
@@ -392,14 +499,14 @@ class Settings(BaseSettings):
         description="Target synthesis language code",
     )
     tts_sample_rate: int = Field(
-        default=24000,
+        default=48000,
         alias="TTS_SAMPLE_RATE",
         description="Synthesized audio sample rate in Hz",
     )
     tts_output_format: str = Field(
-        default="wav",
+        default="linear16",
         alias="TTS_OUTPUT_FORMAT",
-        description="Synthesized audio container/codec format (wav, pcm)",
+        description="Synthesized audio container/codec format (linear16, wav, pcm)",
     )
 
     # Telephony Integration Settings (Phase 9)

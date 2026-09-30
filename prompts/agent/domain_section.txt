@@ -1,22 +1,20 @@
-=== ACTIVE BUSINESS DOMAIN: {name} ({domain}) ===
+=== ACTIVE DOMAIN: {name} ({domain}) ===
 
-Overview:
+Description:
 {description}
 
-Persona & Tone Guidelines:
+Persona:
 {persona_guidelines}
 
-Supported Intents in this Domain:
+Supported intents:
 {supported_intents}
 
-Recognized Entity Slots:
+Available slots:
 {supported_slots}
 
 DOMAIN SWITCHING:
-- If the caller clearly asks about the other organization, switch the
-  detected_domain accordingly.
-- EduSaaS is used for student education, courses, assessments, admissions,
-  and related academic guidance.
-- Vayvora is used for software engineering, AI solutions, corporate
-  requirements, products, services, careers, and related company inquiries.
-- Preserve useful conversation state when switching domains.
+- Use the latest caller message to detect the active domain.
+- Switch domains when the caller clearly changes organization/topic.
+- EduSaaS: education, courses, assessments, admissions, academic guidance.
+- Vayvora: software engineering, AI solutions, corporate requirements, products, services, careers.
+- Preserve relevant state when switching domains.

@@ -285,3 +285,55 @@ class PiperTTSProvider(BaseTTSProvider):
             raise InvalidAudioDataError("Cannot synthesize empty text.")
 
         raise NotImplementedError("Piper execution requires local binary / ONNX model.")
+
+
+class DeepgramTTSProvider(BaseTTSProvider):
+    """Deepgram Streaming TTS provider."""
+
+    def __init__(
+        self,
+        voice: str = "aura-asteria-en",
+        language: str = "en-us",
+        sample_rate: int = 48000,
+        output_format: str = "linear16",
+        api_key: Optional[str] = None,
+        settings: Optional[Settings] = None,
+    ) -> None:
+        super().__init__(
+            voice=voice,
+            language=language,
+            sample_rate=sample_rate,
+            output_format=output_format,
+            settings=settings,
+        )
+        from src.voice.tts.deepgram_tts_service import DeepgramTTS
+        key = api_key or (self.settings.deepgram_api_key.get_secret_value() if self.settings.deepgram_api_key else None)
+        self.service = DeepgramTTS(
+            model=voice,
+            encoding=output_format,
+            sample_rate=sample_rate,
+            api_key=key,
+        )
+
+    async def synthesize(self, text: str, voice_id: Optional[str] = None) -> TTSResult:
+        if not text or not text.strip():
+            raise InvalidAudioDataError("Cannot synthesize empty or whitespace text.")
+        t0 = time.perf_counter()
+        audio_data = await self.service.synthesize(text, voice_id=voice_id)
+        elapsed = time.perf_counter() - t0
+        duration = len(audio_data) / (self.sample_rate * 2) if self.sample_rate else 1.0
+        return TTSResult(
+            audio_data=audio_data,
+            sample_rate=self.sample_rate,
+            channels=1,
+            format=self.output_format,
+            duration=round(duration, 3),
+            processing_time=round(elapsed, 4),
+            real_time_factor=round(elapsed / max(0.001, duration), 4),
+            provider="deepgram",
+            voice=voice_id or self.voice,
+        )
+
+    def cancel_current_synthesis(self) -> None:
+        self.service.cancel_current_synthesis()
+

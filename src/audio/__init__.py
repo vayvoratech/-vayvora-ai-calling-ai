@@ -7,9 +7,10 @@ for unit testing and local development.
 
 from src.audio.pipeline import AudioPipeline
 from src.audio.schemas import AudioChunk, SpeechSegment, STTResult, TTSResult, VADResult
-from src.audio.stt import BaseSTTProvider, FasterWhisperSTTProvider, MockSTTProvider
+from src.audio.stt import BaseSTTProvider, FasterWhisperSTTProvider, GroqWhisperSTTProvider, MockSTTProvider
 from src.audio.tts import (
     BaseTTSProvider,
+    DeepgramTTSProvider,
     KokoroTTSProvider,
     MockTTSProvider,
     PiperTTSProvider,
@@ -32,11 +33,13 @@ __all__ = [
     "BaseSTTProvider",
     "MockSTTProvider",
     "FasterWhisperSTTProvider",
+    "GroqWhisperSTTProvider",
     # TTS
     "BaseTTSProvider",
     "MockTTSProvider",
     "KokoroTTSProvider",
     "PiperTTSProvider",
+    "DeepgramTTSProvider",
     "create_pcm_wav_bytes",
     # Pipeline
     "AudioPipeline",

@@ -4,6 +4,7 @@ Provides separate namespaces and search indexes for EduSaaS and Vayvora,
 KNN cosine vector search, metadata filtering, hybrid search, and health checks.
 """
 
+import asyncio
 import json
 from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
@@ -36,6 +37,8 @@ class RedisVectorStore:
             self._client = redis.from_url(
                 self.redis_url,
                 decode_responses=False,  # Keep binary support for float32 vector blobs
+                socket_connect_timeout=1.0,
+                socket_timeout=1.0,
             )
         return self._client
 
@@ -49,7 +52,8 @@ class RedisVectorStore:
         """Check if Redis server is reachable."""
         try:
             client = await self.get_client()
-            return await client.ping()
+            res = await asyncio.wait_for(client.ping(), timeout=1.0)
+            return bool(res)
         except Exception as exc:
             logger.debug("Redis health check failed: %s", exc)
             return False

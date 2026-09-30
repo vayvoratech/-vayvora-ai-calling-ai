@@ -197,6 +197,36 @@ class ConversationStateManager(MemoryProvider):
         """Store or update session state in the repository."""
         self._sessions[state.metadata.call_id] = state
 
+    def create_session(
+        self,
+        session_id: str,
+        domain: DomainType = DomainType.EDUSAAS,
+        direction: CallDirection = CallDirection.INBOUND,
+        caller_profile: Optional[CallerProfile] = None,
+    ) -> ConversationState:
+        """Create or initialize a session respecting inbound/outbound identity rules."""
+        if direction == CallDirection.OUTBOUND:
+            return self.create_outbound_state(
+                call_id=session_id,
+                caller_phone=caller_profile.phone if caller_profile else None,
+                domain=domain,
+                caller_name=caller_profile.name if caller_profile else None,
+                campaign_id=caller_profile.campaign if caller_profile else None,
+                campaign_objective=caller_profile.campaign_objective if caller_profile else None,
+                caller_email=caller_profile.email if caller_profile else None,
+                company=caller_profile.company if caller_profile else None,
+                known_purpose=caller_profile.known_purpose if caller_profile else None,
+            )
+        else:
+            return self.create_inbound_state(
+                call_id=session_id,
+                caller_phone=caller_profile.phone if caller_profile else None,
+                domain=domain,
+                caller_name=caller_profile.name if caller_profile else None,
+                caller_email=caller_profile.email if caller_profile else None,
+                caller_company=caller_profile.company if caller_profile else None,
+            )
+
     def get(self, call_id: str) -> Optional[ConversationState]:
         """Fetch session state by unique call ID."""
         return self._sessions.get(call_id)

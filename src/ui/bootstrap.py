@@ -441,27 +441,25 @@ def bootstrap_workbench(
         )
         notes.append("VAD: Mock VAD provider active")
 
-    # STT
+    # STT (Groq Whisper STT)
     stt_mode = "MOCK"
     stt_provider = None
-    if not force_mock and getattr(cfg, "stt_provider", "").lower() in ["faster-whisper", "whisper"]:
+    if not force_mock and getattr(cfg, "stt_provider", "").lower() in ["groq", "groq-whisper", "whisper-large-v3-turbo"]:
         try:
-            from src.audio.stt import FasterWhisperSTTProvider
+            from src.voice.stt.stt_service import GroqWhisperSTT
 
-            candidate_stt = FasterWhisperSTTProvider(
-                model_name=cfg.stt_model,
+            groq_key = cfg.groq_api_key.get_secret_value() if cfg.groq_api_key else None
+            candidate_stt = GroqWhisperSTT(
+                api_key=groq_key,
+                model=cfg.stt_model,
                 language=cfg.stt_language,
-                device=cfg.stt_device,
-                compute_type=cfg.stt_compute_type,
-                beam_size=cfg.stt_beam_size,
-                settings=cfg,
             )
-            if candidate_stt._model is not None:
+            if candidate_stt.client is not None:
                 stt_provider = candidate_stt
                 stt_mode = "LIVE"
-                notes.append(f"STT: Live faster-whisper provider active ({cfg.stt_model})")
+                notes.append(f"STT: Live Groq Whisper provider active ({cfg.stt_model})")
         except Exception as exc:
-            logger.warning("Faster-whisper STT init failed, falling back to mock: %s", exc)
+            logger.warning("Groq STT init failed, falling back to mock: %s", exc)
 
     if stt_provider is None:
         from src.audio.stt import MockSTTProvider
@@ -471,35 +469,35 @@ def bootstrap_workbench(
         )
         notes.append("STT: Mock STT provider active")
 
-    # TTS
+    # TTS (Deepgram Streaming TTS)
     tts_mode = "MOCK"
     tts_provider = None
-    if not force_mock and getattr(cfg, "tts_provider", "").lower() == "kokoro":
+    if not force_mock and getattr(cfg, "tts_provider", "").lower() in ["deepgram", "deepgram-flux", "deepgram-aura"]:
         try:
-            from src.audio.tts import KokoroTTSProvider
+            from src.voice.tts.deepgram_tts_service import DeepgramTTS
 
-            candidate_tts = KokoroTTSProvider(
-                voice=cfg.tts_voice,
-                language=cfg.tts_language,
+            deepgram_key = cfg.deepgram_api_key.get_secret_value() if cfg.deepgram_api_key else None
+            candidate_tts = DeepgramTTS(
+                model=cfg.tts_voice,
+                encoding=cfg.tts_output_format,
                 sample_rate=cfg.tts_sample_rate,
-                output_format=cfg.tts_output_format,
-                settings=cfg,
+                api_key=deepgram_key,
             )
-            if candidate_tts._pipeline is not None:
+            if candidate_tts.api_key:
                 tts_provider = candidate_tts
                 tts_mode = "LIVE"
-                notes.append(f"TTS: Live Kokoro provider active ({cfg.tts_voice})")
+                notes.append(f"TTS: Live Deepgram TTS provider active ({cfg.tts_voice})")
         except Exception as exc:
-            logger.warning("Kokoro TTS init failed, falling back to mock: %s", exc)
+            logger.warning("Deepgram TTS init failed, falling back to mock: %s", exc)
 
     if tts_provider is None:
         from src.audio.tts import MockTTSProvider
 
         tts_provider = MockTTSProvider(
-            voice=getattr(cfg, "tts_voice", "af_heart"),
+            voice=getattr(cfg, "tts_voice", "aura-asteria-en"),
             language=getattr(cfg, "tts_language", "en-us"),
-            sample_rate=getattr(cfg, "tts_sample_rate", 24000),
-            output_format=getattr(cfg, "tts_output_format", "wav"),
+            sample_rate=getattr(cfg, "tts_sample_rate", 48000),
+            output_format=getattr(cfg, "tts_output_format", "linear16"),
         )
         notes.append("TTS: Mock TTS provider active (sine wave audio generator)")
 

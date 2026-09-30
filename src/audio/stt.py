@@ -250,3 +250,66 @@ class FasterWhisperSTTProvider(BaseSTTProvider):
             )
         except Exception as exc:
             raise STTTranscriptionError(f"faster-whisper transcription failed: {exc}") from exc
+
+
+class GroqWhisperSTTProvider(BaseSTTProvider):
+    """Groq Whisper STT provider using cloud whisper-large-v3-turbo."""
+
+    def __init__(
+        self,
+        model_name: str = "whisper-large-v3-turbo",
+        language: str = "en",
+        api_key: Optional[str] = None,
+        settings: Optional[Settings] = None,
+    ) -> None:
+        super().__init__(
+            model_name=model_name,
+            language=language,
+            settings=settings,
+        )
+        from src.voice.stt.stt_service import GroqWhisperSTT
+        key = api_key or (self.settings.groq_api_key.get_secret_value() if self.settings.groq_api_key else None)
+        self.service = GroqWhisperSTT(
+            api_key=key,
+            model=model_name,
+            language=language,
+        )
+
+    async def transcribe(
+        self,
+        audio_data: Union[bytes, AudioChunk, SpeechSegment],
+        sample_rate: int = 16000,
+    ) -> STTResult:
+        if audio_data is None:
+            raise InvalidAudioDataError("Cannot transcribe None audio data.")
+
+        if hasattr(audio_data, "data"):
+            raw_bytes = audio_data.data
+            duration = getattr(audio_data, "duration", len(raw_bytes) / (sample_rate * 2))
+        elif hasattr(audio_data, "audio_data"):
+            raw_bytes = audio_data.audio_data
+            duration = getattr(audio_data, "duration", len(raw_bytes) / (sample_rate * 2))
+        elif isinstance(audio_data, (bytes, bytearray)):
+            raw_bytes = bytes(audio_data)
+            duration = len(raw_bytes) / (sample_rate * 2)
+        else:
+            raise InvalidAudioDataError("Unsupported audio data format.")
+
+        if len(raw_bytes) < 2:
+            raise InvalidAudioDataError(f"Insufficient audio data: {len(raw_bytes)} bytes.")
+
+        t0 = time.perf_counter()
+        text = self.service.transcribe_pcm16(raw_bytes)
+        elapsed = time.perf_counter() - t0
+
+        return STTResult(
+            text=text,
+            confidence=0.98 if text else 0.0,
+            language=self.language,
+            audio_duration=round(duration, 3),
+            processing_time=round(elapsed, 4),
+            real_time_factor=round(elapsed / max(0.001, duration), 4),
+            provider="groq",
+            model=self.model_name,
+            is_final=True,
+        )

@@ -1,6 +1,7 @@
-"""Pipecat Real-Time Voice Orchestration and Barge-In System.
+"""Real-Time Voice Orchestration, Media Streaming, and Barge-In System.
 
 Exports the VoicePipeline engine, VoiceSession lifecycle coordinator,
+VoiceSessionManager, AudioProcessor, VADService, STTService, DeepgramFluxTTS,
 temporal state models, typed events, and provider adapters.
 """
 
@@ -10,6 +11,8 @@ from src.voice.adapters import (
     PipecatTTSAdapter,
     PipecatVADAdapter,
 )
+from src.voice.audio_services.audio_processor import AudioProcessor
+from src.voice.audio_services.vad_services import VADEvent, VADEventType, VADService
 from src.voice.context import CancellationToken, TurnLifecycleState, VoiceDiagnostics
 from src.voice.events import (
     AgentResponseCompleted,
@@ -33,11 +36,23 @@ from src.voice.session import (
     MockPipecatTransport,
     VoiceSession,
 )
+from src.voice.session_manager import VoiceSessionManager
+from src.voice.stt.stt_service import GroqWhisperSTT, STTService
+from src.voice.tts.deepgram_tts_service import DeepgramFluxTTS, DeepgramTTS
 
 __all__ = [
-    # Core Pipeline & Session
+    # Core Pipeline, Manager & Session
     "VoicePipeline",
     "VoiceSession",
+    "VoiceSessionManager",
+    "AudioProcessor",
+    "VADService",
+    "VADEvent",
+    "VADEventType",
+    "STTService",
+    "GroqWhisperSTT",
+    "DeepgramFluxTTS",
+    "DeepgramTTS",
     # Mocks
     "MockAudioInput",
     "MockAudioOutput",

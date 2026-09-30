@@ -28,11 +28,28 @@ BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 
+from fastapi.middleware.cors import CORSMiddleware
+from src.api.routes import chat, health, voice
+
 app = FastAPI(
-    title="Unified AI Voice Agent Testing Workbench",
-    description="Interactive conversational testing console for Inbound and Outbound voice agent flows.",
+    title="Unified AI Voice Agent Testing Workbench & API Engine",
+    description="Interactive conversational testing console and real-time voice media streaming engine.",
     version="2.0.0",
 )
+
+# CORS configuration
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Register API & Voice Streaming Routers
+app.include_router(health.router)
+app.include_router(chat.router)
+app.include_router(voice.router)
 
 # Static and Templates mounting
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
@@ -88,6 +105,17 @@ async def serve_index(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="index.html",
+        context={"request": request},
+    )
+
+
+@app.get("/voice-test", response_class=HTMLResponse)
+@app.get("/voice-testing", response_class=HTMLResponse)
+async def serve_voice_test(request: Request):
+    """Serve the dedicated real-time voice pipeline testing console."""
+    return templates.TemplateResponse(
+        request=request,
+        name="voice_test.html",
         context={"request": request},
     )
 
