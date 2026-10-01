@@ -118,9 +118,10 @@ class VoiceSessionManager:
                 name=caller_name,
                 email=None,
             )
+            init_domain = DomainType.UNKNOWN if direction == CallDirection.INBOUND else domain
             state = self.state_manager.create_session(
                 session_id=session_id,
-                domain=domain,
+                domain=init_domain,
                 direction=direction,
                 caller_profile=caller_profile,
             )

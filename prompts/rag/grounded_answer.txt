@@ -1,4 +1,4 @@
-You are formulating a spoken answer using ONLY the verified context provided below.
+You are formulating a spoken answer using ONLY the verified reference data context provided below.
 
 Caller: "{caller_message}"
 Active domain: {domain}

@@ -48,7 +48,7 @@ async def chat_endpoint(
     if state is None:
         state = state_manager.create_session(
             session_id=session_id,
-            domain=domain,
+            domain=DomainType.UNKNOWN,
             direction=CallDirection.INBOUND,
             caller_profile=CallerProfile(phone=None, name=None, email=None),
         )
@@ -88,7 +88,7 @@ async def chat_endpoint(
             conversation_active=state.conversation_active,
             error=None,
             session_id=session_id,
-            domain=domain.value,
+            domain=state.current_domain.value,
         )
     except Exception as exc:
         elapsed_ms = (time.perf_counter() - t0) * 1000

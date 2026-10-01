@@ -5,13 +5,14 @@ distinguishing proposed actions, grounding queries, and stage advancements.
 """
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.core.errors import DecisionValidationError
 from src.core.types import ConversationStage, DomainType
-from src.domains.base import DomainConfig
-from src.domains.registry import DomainRegistry, get_domain_registry
+
+if TYPE_CHECKING:
+    from src.domains.registry import DomainRegistry
 
 
 class ProposedAction(BaseModel):
@@ -98,7 +99,11 @@ class ConversationalDecision(BaseModel):
                 return DomainType.EDUSAAS
             if "vayvora" in clean:
                 return DomainType.VAYVORA
-            return DomainType.GENERAL
+            if "unknown" in clean:
+                return DomainType.UNKNOWN
+            if "general" in clean:
+                return DomainType.GENERAL
+            return DomainType.UNKNOWN
         return v
 
     @field_validator("proposed_stage", mode="before")
@@ -204,8 +209,11 @@ def extract_datetime_preference(text: str) -> Optional[str]:
 class DecisionValidator:
     """Validates ConversationalDecision instances against domain rules and registries."""
 
-    def __init__(self, registry: Optional[DomainRegistry] = None) -> None:
-        self.registry = registry or get_domain_registry()
+    def __init__(self, registry: Optional["DomainRegistry"] = None) -> None:
+        if registry is None:
+            from src.domains.registry import get_domain_registry
+            registry = get_domain_registry()
+        self.registry = registry
 
     def validate_and_filter(
         self, decision: ConversationalDecision
@@ -310,3 +318,368 @@ class DecisionValidator:
 
         decision.extracted_slots = sanitized_slots
         return decision
+
+
+# =============================================================================
+# Inbound Dynamic Domain Routing & Classification Utilities
+# =============================================================================
+
+# Explicit Vayvora intent patterns
+_VAYVORA_KEYWORDS = [
+    r"\bvayvora\b",
+    r"\bai\s+solutions?\b",
+    r"\bsoftware\s+engineer(?:ing)?\b",
+    r"\bsoftware\s+development\b",
+    r"\bsoftware\s+services?\b",
+    r"\bcustom\s+software\b",
+    r"\bvoice\s+ai\b",
+    r"\bai\s+agents?\b",
+    r"\benterprise\s+ai\b",
+    r"\bautomation\s+solutions?\b",
+    r"\btechnical\s+solutions?\b",
+    r"\bit\s+consulting\b",
+    r"\bcloud\s+development\b",
+    r"\bhiring\s+software\s+engineers?\b",
+    r"\bcareers?\s+at\s+vayvora\b",
+    r"\bjob\s+application\b",
+    r"\bapply\s+for\s+a\s+job\b",
+    r"\bdeveloper\s+position\b",
+]
+
+# Explicit EduSaaS intent patterns
+_EDUSAAS_KEYWORDS = [
+    r"\bedusaas\b",
+    r"\bedu\s+saas\b",
+    r"\beducation\s+platform\b",
+    r"\beducation\s+services?\b",
+    r"\bcourses?\b",
+    r"\bdata\s+science\s+course\b",
+    r"\bai\s+course\b",
+    r"\bfull\s*stack\s+course\b",
+    r"\bcloud\s+devops\s+course\b",
+    r"\bcurriculum\b",
+    r"\bsyllabus\b",
+    r"\badmissions?\b",
+    r"\benrollment\b",
+    r"\benroll\b",
+    r"\bdemo\s+class\b",
+    r"\btuition\b",
+    r"\bcourse\s+fees?\b",
+    r"\bplacement\s+assistance\b",
+    r"\bacademic\s+guidance\b",
+    r"\blearning\s+platform\b",
+    r"\bstudent\s+support\b",
+]
+
+_VAYVORA_REGEX = re.compile("|".join(_VAYVORA_KEYWORDS), re.IGNORECASE)
+_EDUSAAS_REGEX = re.compile("|".join(_EDUSAAS_KEYWORDS), re.IGNORECASE)
+
+
+def classify_inbound_domain(message: str) -> Optional[DomainType]:
+    """Classify the business domain from a caller utterance if clearly identified.
+    
+    Returns:
+        DomainType.VAYVORA if clearly indicating Vayvora,
+        DomainType.EDUSAAS if clearly indicating EduSaaS,
+        None if ambiguous, conflicting, or neither.
+    """
+    if not message or not message.strip():
+        return None
+    cleaned = message.strip()
+
+    vayvora_match = bool(_VAYVORA_REGEX.search(cleaned))
+    edusaas_match = bool(_EDUSAAS_REGEX.search(cleaned))
+
+    # If both or neither match, cannot cleanly determine domain from keywords alone
+    if vayvora_match and not edusaas_match:
+        return DomainType.VAYVORA
+    if edusaas_match and not vayvora_match:
+        return DomainType.EDUSAAS
+    return None
+
+
+def is_pure_greeting(message: str) -> bool:
+    """Check if utterance is purely a conversational greeting without substantive inquiry."""
+    if not message:
+        return False
+    cleaned = message.strip().lower().rstrip(".!?")
+    greetings = {
+        "hello",
+        "hi",
+        "hey",
+        "hello there",
+        "hi there",
+        "hey there",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "greetings",
+    }
+    return cleaned in greetings
+
+
+def is_ambiguous_purpose(message: str) -> bool:
+    """Determine if caller utterance is an underspecified inquiry requiring domain clarification.
+    
+    Example: 'I need some information.'
+    """
+    if not message:
+        return False
+    cleaned = message.strip().lower().rstrip(".!?")
+
+    # If domain is already explicit, it is not ambiguous
+    if classify_inbound_domain(cleaned) is not None:
+        return False
+
+    ambiguous_patterns = [
+        r"^i\s+(?:need|want|would\s+like)\s+(?:some\s+)?information",
+        r"^can\s+(?:you\s+give|i\s+get)\s+(?:me\s+)?(?:some\s+)?information",
+        r"^i\s+need\s+info\b",
+        r"^give\s+me\s+(?:some\s+)?information",
+        r"^tell\s+me\s+about\s+your\s+services",
+        r"^what\s+(?:services\s+do\s+you\s+(?:offer|provide)|do\s+you\s+do)",
+        r"^i\s+have\s+a\s+question",
+        r"^i\s+(?:need|want)\s+help",
+        r"^can\s+you\s+help\s+me",
+        r"^i(?:'m|\s+am)\s+looking\s+for\s+(?:some\s+)?(?:information|details)",
+        r"^tell\s+me\s+more$",
+    ]
+    for pattern in ambiguous_patterns:
+        if re.search(pattern, cleaned):
+            return True
+    return False
+
+
+def is_noise_or_unclear(message: str) -> bool:
+    """Determine if transcript is unintelligible, noise, or lacks actionable content."""
+    if not message:
+        return True
+    cleaned = message.strip()
+    if len(cleaned) <= 1 and not cleaned.isalnum():
+        return True
+    # Pure non-alphanumeric
+    if not re.search(r"[a-zA-Z0-9]", cleaned):
+        return True
+
+    noise_tokens = {"[noise]", "[inaudible]", "[applause]", "[laughter]", "...", "uh", "um", "ah"}
+    if cleaned.lower() in noise_tokens:
+        return True
+    return False
+
+
+def detect_explicit_domain_correction(
+    message: str, current_domain: DomainType
+) -> Optional[DomainType]:
+    """Detect if caller explicitly states the original domain was wrong and indicates a correction.
+    
+    Rules:
+    - Must contain an explicit correction indicator (e.g. 'actually', 'i meant', 'wrong company', 'not vayvora').
+    - Must indicate the alternate domain.
+    - Pure negative phrases like 'no', 'no thanks', 'not now' do NOT trigger domain correction.
+    - Normal conversation or questions containing keywords of the other domain do NOT trigger correction.
+    """
+    if not message:
+        return None
+    cleaned = message.strip().lower()
+
+    # Guard: Simple negative replies must NEVER be treated as domain correction
+    negative_only = [
+        r"^no[\.!\?]?$",
+        r"^no\s+thanks[\.!\?]?$",
+        r"^no\s+thank\s+you[\.!\?]?$",
+        r"^not\s+really[\.!\?]?$",
+        r"^not\s+now[\.!\?]?$",
+        r"^nope[\.!\?]?$",
+        r"^nah[\.!\?]?$",
+    ]
+    for pattern in negative_only:
+        if re.match(pattern, cleaned):
+            return None
+
+    # Explicit correction trigger phrases
+    correction_cues = [
+        "actually",
+        "i meant",
+        "i really meant",
+        "meant",
+        "wrong company",
+        "wrong domain",
+        "wrong organization",
+        "mistake",
+        "misunderstanding",
+        "not vayvora",
+        "not edusaas",
+        "instead of vayvora",
+        "instead of edusaas",
+        "didn't mean vayvora",
+        "didn't mean edusaas",
+        "did not mean vayvora",
+        "did not mean edusaas",
+        "called for",
+        "calling for",
+        "calling about",
+        "correction",
+        "sorry, meant",
+        "sorry i meant",
+        "sorry, i meant",
+    ]
+    has_cue = any(cue in cleaned for cue in correction_cues)
+    if not has_cue:
+        return None
+
+    # Evaluate target domain based on current locked domain
+    if current_domain == DomainType.VAYVORA:
+        # Check if caller is correcting towards EduSaaS
+        edusaas_targets = ["edusaas", "education", "courses", "course", "education platform", "learning platform"]
+        if any(t in cleaned for t in edusaas_targets):
+            return DomainType.EDUSAAS
+
+    elif current_domain == DomainType.EDUSAAS:
+        # Check if caller is correcting towards Vayvora
+        vayvora_targets = ["vayvora", "software", "ai solutions", "software engineering", "software development"]
+        if any(t in cleaned for t in vayvora_targets):
+            return DomainType.VAYVORA
+
+    return None
+
+
+# =============================================================================
+# Contact Email Validation & Extraction Utilities
+# =============================================================================
+
+def is_valid_email(email: Optional[str]) -> bool:
+    """Validate if an email is well-formed and not an unauthorized placeholder/fallback."""
+    if not email or not isinstance(email, str):
+        return False
+    clean = email.strip().lower()
+
+    # Prohibited placeholder, fallback, and dummy emails
+    prohibited = {
+        "default caller",
+        "caller@mail",
+        "unknown@example.com",
+        "john doe",
+        "jane doe",
+        "default@example.com",
+        "fallback@example.com",
+        "noreply@vayvora.com",
+        "noreply@edusaas.com",
+        "info@vayvora.com",
+        "info@edusaas.com",
+        "admin@vayvora.com",
+        "admin@edusaas.com",
+        "developer@example.com",
+        "none",
+        "null",
+        "empty",
+    }
+    if clean in prohibited:
+        return False
+
+    # Check for basic well-formed RFC email: local@domain.tld (tld >= 2 letters)
+    pattern = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}$"
+    if not re.match(pattern, clean):
+        return False
+
+    return True
+
+
+def extract_email_address(text: str) -> Optional[str]:
+    """Extract a valid email address from user utterance.
+    
+    Handles standard formats (e.g. 'alice@example.com') and spoken
+    patterns (e.g. 'alice at example dot com').
+    """
+    if not text:
+        return None
+    cleaned = text.strip()
+
+    # 1. Standard email pattern search
+    std_pattern = r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+'
+    matches = re.findall(std_pattern, cleaned)
+    if matches:
+        for m in matches:
+            cand = m.strip().rstrip(".!?,;:)")
+            if is_valid_email(cand):
+                return cand
+
+    # 2. Spoken patterns: "alice at example dot com" or "alice.new at example dot com"
+    spoken = cleaned.lower()
+    if " at " in spoken and (" dot " in spoken or "." in spoken):
+        norm = spoken.replace(" at ", "@").replace(" dot ", ".").replace(" ", "")
+        matches = re.findall(std_pattern, norm)
+        if matches:
+            for m in matches:
+                cand = m.strip().rstrip(".!?,;:)")
+                if is_valid_email(cand):
+                    return cand
+
+    return None
+
+
+def is_unclear_or_invalid_email_attempt(text: str) -> bool:
+    """Detect if caller attempted to provide an email address but it is malformed or incomplete."""
+    if not text:
+        return False
+    cleaned = text.strip().lower()
+
+    # If it already contains a valid email, it's not unclear/invalid
+    if extract_email_address(cleaned):
+        return False
+
+    # Check for genuine email indicators in speech
+    if "@" in cleaned:
+        return True
+    if any(phrase in cleaned for phrase in ["my email is", "email is", "send to my email", "email address is"]):
+        return True
+
+    providers = [".com", ".org", ".edu", ".net", ".io", ".co", "gmail", "yahoo", "outlook", "hotmail", "mail", "example"]
+    if " at " in cleaned and (" dot " in cleaned or any(tld in cleaned for tld in providers)):
+        return True
+    if " dot " in cleaned and any(tld in cleaned for tld in providers):
+        return True
+
+    return False
+
+
+def detect_explicit_email_correction(message: str) -> Optional[str]:
+    """Detect explicit caller correction indicating a new or updated email address.
+    
+    Rules:
+    - Must contain an explicit correction indicator (e.g. 'actually', 'instead', 'wrong email', 'change email').
+    - Must contain a valid email address.
+    - Ambiguous speech without an explicit correction cue does NOT overwrite contact email.
+    """
+    if not message:
+        return None
+    cleaned = message.strip()
+    cleaned_lower = cleaned.lower()
+
+    correction_cues = [
+        "actually",
+        "i meant",
+        "meant",
+        "instead",
+        "change my email",
+        "change email",
+        "update my email",
+        "update email",
+        "wrong email",
+        "not that email",
+        "correct email is",
+        "correct email",
+        "send it to",
+        "send to",
+        "use",
+        "my new email",
+    ]
+    has_cue = any(cue in cleaned_lower for cue in correction_cues)
+    if not has_cue:
+        return None
+
+    extracted = extract_email_address(cleaned)
+    if extracted and is_valid_email(extracted):
+        return extracted
+
+    return None
+

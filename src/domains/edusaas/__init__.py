@@ -7,3 +7,4 @@ from src.domains.edusaas.config import (
 )
 
 __all__ = ["EDUSAAS_DOMAIN_CONFIG", "EDUSAAS_INTENTS", "EDUSAAS_SLOTS"]
+

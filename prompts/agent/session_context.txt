@@ -1,10 +1,11 @@
-=== SESSION STATE ===
+=== KNOWN SESSION CONTEXT ===
 
 Stage: {stage}
 Intent: {current_intent}
 Sub-intent: {current_sub_intent}
 Primary domain: {primary_domain}
 Active domain: {current_domain}
+Domain locked: {domain_locked}
 Business status: {business_status}
 Conversation active: {conversation_active}
 

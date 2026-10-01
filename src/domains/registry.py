@@ -28,6 +28,30 @@ GENERAL_DOMAIN_CONFIG = DomainConfig(
     persona_guidelines="You are a helpful and polite conversational receptionist assisting callers in reaching either EduSaaS or Vayvora.",
 )
 
+UNKNOWN_DOMAIN_CONFIG = DomainConfig(
+    domain=DomainType.UNKNOWN,
+    name="Inbound Purpose Discovery",
+    description="Initial inbound domain state before dynamic routing to Vayvora Technologies or EduSaaS.",
+    supported_intents=[
+        "greeting",
+        "identity_inquiry",
+        "purpose_discovery",
+        "domain_routing",
+        "general_inquiry",
+        "fallback",
+        "help",
+        "end_call",
+    ],
+    supported_slots=[
+        SlotDefinition(
+            name="target_organization",
+            slot_type="string",
+            description="Which organization caller is trying to reach (EduSaaS or Vayvora)",
+        )
+    ],
+    persona_guidelines="You are a welcoming and concise voice receptionist answering an inbound call to understand the caller's purpose and assist them directly.",
+)
+
 
 class DomainRegistry:
     """Central registry of registered business domain configurations."""
@@ -38,6 +62,7 @@ class DomainRegistry:
         self.register(EDUSAAS_DOMAIN_CONFIG)
         self.register(VAYVORA_DOMAIN_CONFIG)
         self.register(GENERAL_DOMAIN_CONFIG)
+        self.register(UNKNOWN_DOMAIN_CONFIG)
 
     def register(self, config: DomainConfig) -> None:
         """Register or override a domain configuration."""

@@ -169,11 +169,11 @@ class MockToolProvider(BaseMCPClient):
         args = request.arguments
 
         if action == "send_email":
+            recipient = args.get("recipient") or args.get("email") or request.caller_email
+            subject = args.get("subject") or f"Information from {request.domain.value.title()}"
+            body = args.get("body") or f"Hello {request.caller_name or 'there'},\n\nHere are the details you requested."
+            html_body = args.get("html_body")
             if self.email_provider:
-                recipient = args.get("recipient") or args.get("email") or request.caller_email
-                subject = args.get("subject") or f"Information from {request.domain.value.title()}"
-                body = args.get("body") or f"Hello {request.caller_name or 'there'},\n\nHere are the details you requested."
-                html_body = args.get("html_body")
                 send_res = await self.email_provider.send_email(
                     recipient=recipient,
                     subject=subject,
@@ -187,7 +187,14 @@ class MockToolProvider(BaseMCPClient):
                         started=True,
                         succeeded=True,
                         external_reference=send_res.message_id,
-                        data={"status": send_res.status, "message_id": send_res.message_id},
+                        data={
+                            "status": send_res.status,
+                            "message_id": send_res.message_id,
+                            "recipient": recipient,
+                            "subject": subject,
+                            "body": body,
+                            "html_body": html_body,
+                        },
                     )
                 else:
                     return ToolResult(
@@ -206,7 +213,14 @@ class MockToolProvider(BaseMCPClient):
                 started=True,
                 succeeded=True,
                 external_reference=f"msg_mock_{hash(request.correlation_id) % 100000}",
-                data={"status": "dispatched", "message_id": f"msg_mock_{hash(request.correlation_id) % 100000}"},
+                data={
+                    "status": "dispatched",
+                    "message_id": f"msg_mock_{hash(request.correlation_id) % 100000}",
+                    "recipient": recipient,
+                    "subject": subject,
+                    "body": body,
+                    "html_body": html_body,
+                },
             )
 
         elif action == "find_available_slots":
@@ -356,7 +370,14 @@ class HttpMCPToolProvider(BaseMCPClient):
                     started=True,
                     succeeded=True,
                     external_reference=send_res.message_id,
-                    data={"status": send_res.status, "message_id": send_res.message_id},
+                    data={
+                        "status": send_res.status,
+                        "message_id": send_res.message_id,
+                        "recipient": recipient,
+                        "subject": subject,
+                        "body": body,
+                        "html_body": html_body,
+                    },
                 )
             else:
                 return ToolResult(

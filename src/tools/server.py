@@ -224,12 +224,22 @@ def create_mcp_server(
     email_provider: Optional[EmailProvider] = None,
     calendar_provider: Optional[CalendarProvider] = None,
     message_provider: Optional[MessageProvider] = None,
+    postgres_repo: Optional[Any] = None,
 ) -> FastMCP:
     """Factory creating and configuring the FastMCP server with all registered tools."""
     cfg = settings or get_settings()
     mail = email_provider or SMTPEmailProvider(settings=cfg)
     cal = calendar_provider or FileCalendarProvider(settings=cfg)
     msg = message_provider or WhatsAppMessageProvider(settings=cfg)
+
+    db_repo = postgres_repo
+    if db_repo is None:
+        try:
+            from src.database.repository import PostgresRepository
+            db_repo = PostgresRepository()
+        except Exception as exc:
+            logger.debug("PostgresRepository not initialized for MCP server: %s", exc)
+            db_repo = None
 
     server = FastMCP(name="Vayvora-AI-MCP")
 
@@ -415,8 +425,33 @@ def create_mcp_server(
     # 4. Lead & CRM Tools (update_lead, create_hr_followup, update_business_status)
     # -------------------------------------------------------------------------
     @server.tool(name="update_lead", description="Update CRM lead details and qualification notes.")
-    async def update_lead(status: Optional[str] = None, notes: Optional[str] = None, **kwargs: Any) -> Dict[str, Any]:
-        lead_id = f"lead_crm_{os.getpid()}_{int(asyncio.get_event_loop().time() * 1000)}"
+    async def update_lead(
+        status: Optional[str] = None,
+        notes: Optional[str] = None,
+        name: Optional[str] = None,
+        phone: Optional[str] = None,
+        email: Optional[str] = None,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        lead_id = None
+        if db_repo is not None:
+            try:
+                db_id = await db_repo.upsert_lead(
+                    name=name or kwargs.get("caller_name") or "Lead Prospect",
+                    phone_number=phone or kwargs.get("caller_phone") or kwargs.get("phone_number"),
+                    email=email or kwargs.get("caller_email"),
+                    status=status or "updated",
+                    interested_in=kwargs.get("interested_in") or kwargs.get("course") or kwargs.get("service"),
+                    metadata={"notes": notes, **kwargs} if (notes or kwargs) else None,
+                )
+                if db_id is not None:
+                    lead_id = f"lead_crm_{db_id}"
+            except Exception as exc:
+                logger.warning("Postgres lead upsert fallback to local ID: %s", exc)
+
+        if not lead_id:
+            lead_id = f"lead_crm_{os.getpid()}_{int(asyncio.get_event_loop().time() * 1000)}"
+
         return {
             "lead_id": lead_id,
             "id": lead_id,
@@ -438,7 +473,30 @@ def create_mcp_server(
         c_name = candidate_name or name
         if not c_name:
             raise ValueError("Action 'create_hr_followup' requires candidate name or identification.")
-        ticket_id = f"ticket_hr_{int(asyncio.get_event_loop().time() * 1000)}"
+
+        ticket_id = None
+        if db_repo is not None:
+            try:
+                session_id = kwargs.get("session_id") or kwargs.get("call_id") or f"session_{os.getpid()}"
+                phone_num = phone or kwargs.get("phone_number") or kwargs.get("caller_phone")
+                email_addr = kwargs.get("email") or kwargs.get("caller_email")
+                reason = notes or kwargs.get("reason") or "HR callback requested"
+                db_ticket = await db_repo.create_hr_followup(
+                    candidate_name=c_name,
+                    session_id=session_id,
+                    phone_number=phone_num,
+                    email=email_addr,
+                    reason=reason,
+                    status="queued",
+                )
+                if db_ticket is not None:
+                    ticket_id = f"ticket_hr_{db_ticket}"
+            except Exception as exc:
+                logger.warning("Postgres HR followup fallback to local ticket: %s", exc)
+
+        if not ticket_id:
+            ticket_id = f"ticket_hr_{int(asyncio.get_event_loop().time() * 1000)}"
+
         return {
             "ticket_id": ticket_id,
             "id": ticket_id,

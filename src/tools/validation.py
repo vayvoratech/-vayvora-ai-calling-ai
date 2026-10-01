@@ -6,6 +6,7 @@ MCP servers, enforcing calendar and email safety invariants.
 
 import re
 from typing import Any, Dict, Set
+from src.core.decision import is_valid_email
 from src.core.errors import InvalidToolArgumentsError, UnsupportedActionError
 from src.tools.schemas import ValidatedToolRequest
 
@@ -38,9 +39,9 @@ class ActionValidator:
         # 1. Email Safety Validation
         if action == "send_email":
             recipient = args.get("recipient") or args.get("email") or request.caller_email
-            if not recipient or not isinstance(recipient, str) or "@" not in recipient:
+            if not recipient or not isinstance(recipient, str) or not is_valid_email(recipient):
                 raise InvalidToolArgumentsError(
-                    "Action 'send_email' requires a valid recipient email address."
+                    "Action 'send_email' requires a valid recipient email address and cannot use fallback/placeholder emails."
                 )
 
         # 2. Calendar Safety Validation

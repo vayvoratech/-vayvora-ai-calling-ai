@@ -30,11 +30,19 @@ async def health_check(
     if hasattr(runtime_mode, "value"):
         runtime_mode = runtime_mode.value
 
+    postgres_healthy = False
+    try:
+        from src.database.connection import check_postgres_health
+        postgres_healthy = await asyncio.wait_for(check_postgres_health(), timeout=1.5)
+    except Exception:
+        postgres_healthy = False
+
     subsystems = {
         "runtime_mode": str(runtime_mode),
         "llm_provider": type(service.llm_provider).__name__,
         "knowledge_provider": type(service.knowledge_provider).__name__,
         "redis_connected": redis_healthy,
+        "postgres_connected": postgres_healthy,
         "tool_provider": type(service.tool_provider).__name__,
         "vad_provider": type(service.vad_provider).__name__,
         "stt_provider": type(service.stt_provider).__name__,
@@ -45,6 +53,7 @@ async def health_check(
         "engine": "ConversationEngine",
         "state_manager": "ConversationStateManager",
         "redis": redis_healthy,
+        "postgres": postgres_healthy,
         "llm": type(service.llm_provider).__name__,
         "rag": type(service.knowledge_provider).__name__,
         "vad": type(service.vad_provider).__name__,

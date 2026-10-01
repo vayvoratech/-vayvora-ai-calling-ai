@@ -77,6 +77,8 @@ class CreateSessionRequest(BaseModel):
     direction: str = Field(default="inbound", description="Call direction: 'inbound' or 'outbound'")
     domain: str = Field(default="vayvora", description="Domain: 'vayvora' or 'edusaas'")
     caller_name: Optional[str] = Field(default=None, description="Caller/Customer name")
+    contact_name: Optional[str] = Field(default=None, description="Contact/lead name being called (outbound)")
+    agent_name: Optional[str] = Field(default=None, description="Configured agent name (outbound)")
     caller_phone: Optional[str] = Field(default=None, description="Caller phone number")
     caller_email: Optional[str] = Field(default=None, description="Caller email")
     caller_company: Optional[str] = Field(default=None, description="Caller company")
@@ -185,6 +187,8 @@ async def create_session(req: CreateSessionRequest) -> Dict[str, Any]:
             caller_email=req.caller_email,
             company=req.caller_company,
             known_purpose=req.known_purpose,
+            agent_name=req.agent_name,
+            contact_name=req.contact_name or req.caller_name,
         )
         if service.last_turn_result:
             opening_message = service.last_turn_result.response_text

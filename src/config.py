@@ -61,6 +61,11 @@ class Settings(BaseSettings):
         alias="LOG_LEVEL",
         description="Standard logging severity level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
     )
+    agent_name: Optional[str] = Field(
+        default=None,
+        alias="AGENT_NAME",
+        description="Configured name/identity of the AI agent (e.g. 'Sarah')",
+    )
 
     # Gemini LLM Settings (Phase 3)
     gemini_api_key: Optional[SecretStr] = Field(
@@ -550,6 +555,40 @@ class Settings(BaseSettings):
     )
 
 
+    # PostgreSQL Database Configuration
+    postgres_host: str = Field(
+        default="localhost",
+        alias="POSTGRES_HOST",
+        description="Host for PostgreSQL database",
+    )
+    postgres_port: int = Field(
+        default=5434,
+        ge=1,
+        le=65535,
+        alias="POSTGRES_PORT",
+        description="TCP port for PostgreSQL database",
+    )
+    postgres_db: str = Field(
+        default="aicall",
+        alias="POSTGRES_DB",
+        description="Database name for PostgreSQL",
+    )
+    postgres_user: str = Field(
+        default="postgres",
+        alias="POSTGRES_USER",
+        description="Username for PostgreSQL database",
+    )
+    postgres_password: Optional[SecretStr] = Field(
+        default=None,
+        alias="POSTGRES_PASSWORD",
+        description="Password for PostgreSQL database",
+    )
+    database_url: Optional[str] = Field(
+        default=None,
+        alias="DATABASE_URL",
+        description="Full connection URL for PostgreSQL database",
+    )
+
     @property
     def redis_url(self) -> str:
         """Construct full Redis connection URI."""
@@ -559,6 +598,26 @@ class Settings(BaseSettings):
             else ""
         )
         return f"redis://{password}{self.redis_host}:{self.redis_port}/{self.redis_db}"
+
+    @property
+    def resolved_database_url(self) -> str:
+        """Construct or return full PostgreSQL connection URI."""
+        if self.database_url:
+            return self.database_url
+        pwd = (
+            f":{self.postgres_password.get_secret_value()}"
+            if self.postgres_password
+            else ""
+        )
+        return f"postgresql+asyncpg://{self.postgres_user}{pwd}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+
+    @property
+    def asyncpg_dsn(self) -> str:
+        """Construct raw asyncpg-compatible DSN."""
+        url = self.resolved_database_url
+        if url.startswith("postgresql+asyncpg://"):
+            return "postgresql://" + url[len("postgresql+asyncpg://"):]
+        return url
 
 
 @lru_cache()

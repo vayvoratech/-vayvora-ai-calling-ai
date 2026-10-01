@@ -8,6 +8,7 @@ from src.domains.edusaas import (
 )
 from src.domains.registry import (
     GENERAL_DOMAIN_CONFIG,
+    UNKNOWN_DOMAIN_CONFIG,
     DomainRegistry,
     get_domain_registry,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "VAYVORA_INTENTS",
     "VAYVORA_SLOTS",
     "GENERAL_DOMAIN_CONFIG",
+    "UNKNOWN_DOMAIN_CONFIG",
     "DomainRegistry",
     "get_domain_registry",
 ]

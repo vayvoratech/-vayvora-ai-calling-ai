@@ -54,6 +54,15 @@ class CallerProfile(BaseModel):
         """Return True if phone or email is available."""
         return bool(self.phone or self.email)
 
+    @property
+    def contact_name(self) -> Optional[str]:
+        """Name of the contact/lead being called (distinct from agent_name)."""
+        return self.name
+
+    @contact_name.setter
+    def contact_name(self, val: Optional[str]) -> None:
+        self.name = val
+
 
 # Explicit phrases that signal the caller wishes to conclude the session
 EXPLICIT_TERMINATION_PHRASES = [
@@ -82,6 +91,14 @@ class ConversationState(BaseModel):
     metadata: CallMetadata = Field(..., description="Underlying call session metadata")
     current_domain: DomainType = Field(..., description="Currently active business domain")
     primary_domain: DomainType = Field(..., description="Initial domain assigned to call")
+    domain_locked: bool = Field(
+        default=False,
+        description="True if business domain is locked and cannot be switched without explicit caller correction",
+    )
+    agent_name: Optional[str] = Field(
+        default=None,
+        description="Configured identity/name of the AI agent (e.g. 'Sarah'), strictly distinct from contact_name",
+    )
 
     # Intent Stack & Preemption
     current_intent: Optional[str] = Field(default=None, description="Currently active user intent")
@@ -175,10 +192,50 @@ class ConversationState(BaseModel):
         if clear_pending_question:
             self.pending_question = None
 
-    def switch_domain(self, new_domain: DomainType) -> None:
-        """Dynamically switch current active business domain while retaining all session context."""
+    @property
+    def domain(self) -> DomainType:
+        """Alias for current_domain to match domain state convention."""
+        return self.current_domain
+
+    @domain.setter
+    def domain(self, val: DomainType) -> None:
+        self.current_domain = val
+
+    @property
+    def contact_name(self) -> Optional[str]:
+        """Name of the contact/lead being called (distinct from agent_name)."""
+        return self.caller.name
+
+    @contact_name.setter
+    def contact_name(self, val: Optional[str]) -> None:
+        self.caller.name = val
+        self.metadata.caller_name = val
+
+    @property
+    def campaign_context(self) -> Optional[str]:
+        """Campaign objective or context for outbound outreach."""
+        return self.metadata.outbound_objective or self.caller.campaign_objective
+
+    def lock_domain(self, domain: DomainType) -> None:
+        """Lock the conversation to a specific business domain."""
+        self.current_domain = domain
+        self.domain_locked = True
+
+    def unlock_domain(self) -> None:
+        """Unlock the domain to allow re-routing."""
+        self.domain_locked = False
+
+    def switch_domain(self, new_domain: DomainType, force: bool = False) -> bool:
+        """Dynamically switch current active business domain while retaining all session context.
+        
+        If domain_locked is True and force is False, switching is rejected.
+        Returns True if domain was updated, False otherwise.
+        """
+        if self.domain_locked and not force:
+            return False
         if self.current_domain != new_domain:
             self.current_domain = new_domain
+        return True
 
     def set_stage(self, new_stage: ConversationStage) -> None:
         """Advance or update the conversational stage."""
@@ -208,9 +265,11 @@ class ConversationState(BaseModel):
         if not sync_caller:
             return
 
-        if clean_key in ("student_name", "contact_name", "name", "caller_name"):
+        if clean_key in ("student_name", "contact_name", "lead_name", "name", "caller_name"):
             self.caller.name = str_val
             self.metadata.caller_name = str_val
+        elif clean_key == "agent_name":
+            self.agent_name = str_val
         elif clean_key in ("email", "caller_email", "student_email", "recipient"):
             self.caller.email = str_val
         elif clean_key in ("phone", "caller_phone"):

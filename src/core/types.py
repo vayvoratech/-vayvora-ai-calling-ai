@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class DomainType(str, Enum):
     """Business domains supported by the unified agent."""
 
+    UNKNOWN = "unknown"
     EDUSAAS = "edusaas"
     VAYVORA = "vayvora"
     GENERAL = "general"

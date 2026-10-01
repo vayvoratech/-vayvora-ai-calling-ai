@@ -13,7 +13,7 @@ from src.telephony.models import (
     TelephonyEvent,
     TelephonyEventType,
 )
-from src.telephony.repository import MockCallSessionRepository
+from src.telephony.repository import MockCallSessionRepository, PostgresCallSessionRepository
 from src.telephony.transport import (
     GenericWebSocketTelephonyTransport,
     MockTelephonyTransport,
@@ -35,6 +35,7 @@ __all__ = [
     "GenericWebSocketTelephonyTransport",
     # Repositories
     "MockCallSessionRepository",
+    "PostgresCallSessionRepository",
     # Adapter
     "TelephonyVoiceAdapter",
 ]

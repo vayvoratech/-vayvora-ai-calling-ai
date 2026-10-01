@@ -6,7 +6,7 @@ and provides session persistence adhering to the MemoryProvider contract.
 
 import time
 from typing import Dict, List, Optional
-
+from src.config import Settings
 from src.core.interfaces import MemoryProvider
 from src.core.types import (
     CallDirection,
@@ -41,7 +41,8 @@ def sanitize_caller_value(val: Optional[str]) -> Optional[str]:
 class ConversationStateManager(MemoryProvider):
     """Factory and repository for conversation sessions with trusted caller profile lookup."""
 
-    def __init__(self) -> None:
+    def __init__(self, settings: Optional[Settings] = None) -> None:
+        self.settings = settings
         self._sessions: Dict[str, ConversationState] = {}
         self._trusted_profiles: Dict[str, CallerProfile] = {}
 
@@ -70,14 +71,16 @@ class ConversationStateManager(MemoryProvider):
         self,
         call_id: str,
         caller_phone: Optional[str] = None,
-        domain: DomainType = DomainType.EDUSAAS,
+        domain: DomainType = DomainType.UNKNOWN,
         caller_name: Optional[str] = None,
         caller_email: Optional[str] = None,
         caller_company: Optional[str] = None,
+        domain_locked: bool = False,
     ) -> ConversationState:
         """Create a fresh conversation state for an incoming call.
 
         Rules:
+        - Domain starts as UNKNOWN with domain_locked=False by default.
         - The only caller identity guaranteed at initialization is caller_phone.
         - Never silently invent or populate placeholder names or emails.
         - If a trusted caller profile exists for caller_phone, populate from it.
@@ -127,6 +130,7 @@ class ConversationStateManager(MemoryProvider):
             metadata=metadata,
             current_domain=domain,
             primary_domain=domain,
+            domain_locked=domain_locked,
             stage=ConversationStage.GREETING,
             caller=caller,
             business_status="new",
@@ -147,12 +151,18 @@ class ConversationStateManager(MemoryProvider):
         caller_email: Optional[str] = None,
         company: Optional[str] = None,
         known_purpose: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        contact_name: Optional[str] = None,
+        contact_email: Optional[str] = None,
     ) -> ConversationState:
         """Create an enriched conversation state for an outbound outreach call."""
+        final_contact = contact_name or caller_name
+        final_email = contact_email or caller_email
         clean_phone = sanitize_caller_value(caller_phone)
-        clean_name = sanitize_caller_value(caller_name)
-        clean_email = sanitize_caller_value(caller_email)
+        clean_name = sanitize_caller_value(final_contact)
+        clean_email = sanitize_caller_value(final_email)
         clean_company = sanitize_caller_value(company)
+        resolved_agent_name = agent_name or (self.settings.agent_name if self.settings else None)
 
         metadata = CallMetadata(
             call_id=call_id,
@@ -180,6 +190,8 @@ class ConversationStateManager(MemoryProvider):
             metadata=metadata,
             current_domain=domain,
             primary_domain=domain,
+            domain_locked=True,
+            agent_name=resolved_agent_name,
             stage=ConversationStage.GREETING,
             caller=caller,
             business_status="outreach_initiated",
@@ -200,28 +212,37 @@ class ConversationStateManager(MemoryProvider):
     def create_session(
         self,
         session_id: str,
-        domain: DomainType = DomainType.EDUSAAS,
+        domain: DomainType = DomainType.UNKNOWN,
         direction: CallDirection = CallDirection.INBOUND,
         caller_profile: Optional[CallerProfile] = None,
+        agent_name: Optional[str] = None,
+        contact_name: Optional[str] = None,
     ) -> ConversationState:
-        """Create or initialize a session respecting inbound/outbound identity rules."""
+        """Create or initialize a session respecting inbound/outbound identity rules.
+        
+        For inbound calls, frontend/API-provided domain must NOT override dynamic routing.
+        Initial domain is always UNKNOWN and domain_locked is False.
+        For outbound calls, campaign domain context is preserved.
+        """
         if direction == CallDirection.OUTBOUND:
             return self.create_outbound_state(
                 call_id=session_id,
                 caller_phone=caller_profile.phone if caller_profile else None,
-                domain=domain,
+                domain=domain if domain != DomainType.UNKNOWN else DomainType.VAYVORA,
                 caller_name=caller_profile.name if caller_profile else None,
                 campaign_id=caller_profile.campaign if caller_profile else None,
                 campaign_objective=caller_profile.campaign_objective if caller_profile else None,
                 caller_email=caller_profile.email if caller_profile else None,
                 company=caller_profile.company if caller_profile else None,
                 known_purpose=caller_profile.known_purpose if caller_profile else None,
+                agent_name=agent_name,
+                contact_name=contact_name or (caller_profile.name if caller_profile else None),
             )
         else:
             return self.create_inbound_state(
                 call_id=session_id,
                 caller_phone=caller_profile.phone if caller_profile else None,
-                domain=domain,
+                domain=DomainType.UNKNOWN,
                 caller_name=caller_profile.name if caller_profile else None,
                 caller_email=caller_profile.email if caller_profile else None,
                 caller_company=caller_profile.company if caller_profile else None,

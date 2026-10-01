@@ -19,6 +19,7 @@ import uuid
 from pydantic import BaseModel, ConfigDict, Field
 
 from src.config import Settings, get_settings
+from src.core.decision import is_valid_email
 from src.logging import get_logger
 
 logger = get_logger("tools.email_provider")
@@ -120,6 +121,14 @@ class SMTPEmailProvider(EmailProvider):
         sender: Optional[str] = None,
     ) -> EmailSendResult:
         """Synchronous SMTP worker invoked within asyncio.to_thread."""
+        if not recipient or not is_valid_email(recipient):
+            logger.error("Attempted to dispatch email to invalid or prohibited recipient: %s", recipient)
+            return EmailSendResult(
+                success=False,
+                error="Invalid, missing, or prohibited recipient email address",
+                status="failed",
+            )
+
         from_addr = sender or self.from_email
         msg_id_domain = from_addr.split("@")[-1] if "@" in from_addr else "vayvora.com"
         message_id = f"<{uuid.uuid4().hex[:16]}.{int(time.time())}@{msg_id_domain}>"
@@ -369,6 +378,13 @@ class MockEmailProvider(EmailProvider):
         sender: Optional[str] = None,
     ) -> EmailSendResult:
         """Simulate email sending."""
+        if not recipient or not is_valid_email(recipient):
+            return EmailSendResult(
+                success=False,
+                error="Invalid, missing, or prohibited recipient email address",
+                status="failed",
+            )
+
         if self.force_auth_failure:
             return EmailSendResult(
                 success=False,

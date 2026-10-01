@@ -1,4 +1,4 @@
-An action requested by the caller was successfully executed and verified.
+An action requested by the caller was successfully EXECUTED and VERIFIED.
 
 Caller: "{caller_message}"
 Action: {tool_name}

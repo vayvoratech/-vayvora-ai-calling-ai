@@ -13,6 +13,7 @@ from src.core.decision import (
     ConversationalDecision,
     ProposedAction,
     extract_datetime_preference,
+    extract_email_address,
 )
 from src.core.engine import ConversationEngine
 from src.core.interfaces import KnowledgeProvider, LLMProvider, ToolProvider
@@ -53,10 +54,17 @@ class InteractiveMockLLMProvider(MockLLMProvider):
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> str:
         if "initiating an OUTBOUND phone call" in prompt:
+            import re
+            m = re.search(r"Agent Identity:\s*([A-Za-z0-9_-]+)\s+representing", prompt)
+            agent_str = f"I'm {m.group(1)} from" if m else "I'm calling from"
+
+            mc = re.search(r"Contact Name:\s*([A-Za-z0-9 _-]+)\s+\(NOTE:", prompt)
+            contact_str = f"Hi {mc.group(1).strip()}, " if mc else "Hello, "
+
             if "EduSaaS" in prompt:
-                return "Hi, this is the EduSaaS team. I'm reaching out because you had shown interest in our courses. Is this a good time to speak for a couple of minutes?"
+                return f"{contact_str}{agent_str} EduSaaS Academic Admissions & Guidance. I'm reaching out because you had shown interest in our courses. Is this a good time to speak for a couple of minutes?"
             else:
-                return "Hi, this is the Vayvora team. I'm reaching out to understand whether your organization is currently exploring AI or automation solutions. Is this a good time for a quick conversation?"
+                return f"{contact_str}{agent_str} Vayvora Technologies. I'm reaching out to understand whether your organization is currently exploring AI or automation solutions. Is this a good time for a quick conversation?"
         return await super().generate_response(prompt, system_instruction, tools)
 
     async def generate_decision(
@@ -166,8 +174,21 @@ class InteractiveMockLLMProvider(MockLLMProvider):
 
         # (D) Brochure / Email Information
         if any(w in clean_user_text for w in ["email", "brochure", "send me", "syllabus pdf", "mail me"]):
+            from src.domains.edusaas.email import is_vague_email_request
+            if is_vague_email_request(clean_user_text):
+                decision = ConversationalDecision(
+                    detected_domain=DomainType.EDUSAAS if "edusaas" in prompt.lower() or "course" in clean_user_text else DomainType.VAYVORA,
+                    detected_intent="clarify_request",
+                    proposed_stage=ConversationStage.INFORMATION,
+                    action_proposed=False,
+                    needs_clarification=True,
+                    clarification_question="Absolutely. What information would you like me to send you?",
+                    user_facing_response="Absolutely. What information would you like me to send you?",
+                )
+                return self.validator.validate_and_filter(decision)
+
             decision = ConversationalDecision(
-                detected_domain=DomainType.EDUSAAS if "course" in clean_user_text or "edusaas" in clean_user_text else DomainType.VAYVORA,
+                detected_domain=DomainType.EDUSAAS if "course" in clean_user_text or "edusaas" in clean_user_text or "edusaas" in prompt.lower() else DomainType.VAYVORA,
                 detected_intent="request_brochure",
                 proposed_stage=ConversationStage.ACTION_CONFIRMATION,
                 action_proposed=True,
@@ -176,6 +197,27 @@ class InteractiveMockLLMProvider(MockLLMProvider):
                     arguments={"subject": "Detailed Information & Curriculum"},
                 ),
                 user_facing_response="I will send over the detailed syllabus and documentation right away.",
+            )
+            return self.validator.validate_and_filter(decision)
+
+        # (D2) Explicit Email Provision
+        extracted_email = extract_email_address(clean_user_text)
+        if extracted_email:
+            dom = DomainType.EDUSAAS if "edusaas" in prompt.lower() else DomainType.VAYVORA
+            decision = ConversationalDecision(
+                detected_domain=dom,
+                detected_intent="provide_email",
+                extracted_slots={"email": extracted_email},
+                proposed_stage=ConversationStage.ACTION_CONFIRMATION,
+                action_proposed=True,
+                proposed_action=ProposedAction(
+                    tool_name="send_email",
+                    arguments={
+                        "recipient": extracted_email,
+                        "subject": "Course Details & Curriculum" if dom == DomainType.EDUSAAS else "Detailed Information",
+                    },
+                ),
+                user_facing_response="Thank you for providing your email address.",
             )
             return self.validator.validate_and_filter(decision)
 
@@ -231,7 +273,7 @@ class InteractiveMockLLMProvider(MockLLMProvider):
 
         # (I) Pure Greetings & Initial Openings
         if any(w in clean_user_text for w in ["hello", "hi", "hey", "good morning", "good afternoon"]):
-            detected_dom = DomainType.EDUSAAS if "edusaas" in prompt.lower() else DomainType.VAYVORA
+            detected_dom = DomainType.UNKNOWN if "unknown" in prompt.lower() else (DomainType.EDUSAAS if "edusaas" in prompt.lower() else DomainType.VAYVORA)
             decision = ConversationalDecision(
                 detected_domain=detected_dom,
                 detected_intent="greeting",
@@ -240,8 +282,39 @@ class InteractiveMockLLMProvider(MockLLMProvider):
             )
             return self.validator.validate_and_filter(decision)
 
-        # (J) Default Fallback (Conversational continuity, NEVER reset to greeting)
-        detected_dom = DomainType.EDUSAAS if "edusaas" in prompt.lower() else DomainType.VAYVORA
+        # (J) Ambiguous Purpose Inquiries
+        if any(w in clean_user_text for w in ["need some information", "want some information", "need information", "some information", "tell me about your services", "what do you do", "can you help me"]):
+            decision = ConversationalDecision(
+                detected_domain=DomainType.UNKNOWN,
+                detected_intent="purpose_discovery",
+                proposed_stage=ConversationStage.PURPOSE_DISCOVERY,
+                user_facing_response="Sure. Are you calling about our software and AI solutions, or our education services?",
+                needs_clarification=True,
+                clarification_question="Are you calling about our software and AI solutions, or our education services?",
+            )
+            return self.validator.validate_and_filter(decision)
+
+        # (K) Explicit Domain Corrections
+        if any(w in clean_user_text for w in ["actually", "i meant", "meant", "wrong company", "not vayvora", "not edusaas"]):
+            if any(w in clean_user_text for w in ["edusaas", "education", "courses", "course"]):
+                decision = ConversationalDecision(
+                    detected_domain=DomainType.EDUSAAS,
+                    detected_intent="course_information",
+                    proposed_stage=ConversationStage.INFORMATION,
+                    user_facing_response="Understood! Switching to EduSaaS. How can I assist you with our education platform or courses?",
+                )
+                return self.validator.validate_and_filter(decision)
+            elif any(w in clean_user_text for w in ["vayvora", "software", "ai"]):
+                decision = ConversationalDecision(
+                    detected_domain=DomainType.VAYVORA,
+                    detected_intent="solutions_inquiry",
+                    proposed_stage=ConversationStage.INFORMATION,
+                    user_facing_response="Understood! Switching to Vayvora. How can I assist you with our AI and software engineering solutions?",
+                )
+                return self.validator.validate_and_filter(decision)
+
+        # (L) Default Fallback (Conversational continuity, NEVER reset to greeting)
+        detected_dom = DomainType.UNKNOWN if "unknown" in prompt.lower() else (DomainType.EDUSAAS if "edusaas" in prompt.lower() else DomainType.VAYVORA)
         decision = ConversationalDecision(
             detected_domain=detected_dom,
             detected_intent="general_inquiry",

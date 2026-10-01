@@ -54,11 +54,12 @@ async def voice_media_stream(
     manager: VoiceSessionManager = Depends(get_voice_session_manager),
 ):
     """Real-time bidirectional media stream WebSocket endpoint."""
-    raw_domain = (domain or "edusaas").lower()
-    dom = DomainType.VAYVORA if raw_domain == "vayvora" else DomainType.EDUSAAS
-
     raw_dir = (direction or "inbound").lower()
     call_dir = CallDirection.OUTBOUND if raw_dir == "outbound" else CallDirection.INBOUND
+
+    raw_domain = (domain or "edusaas").lower()
+    dom = DomainType.VAYVORA if raw_domain == "vayvora" else DomainType.EDUSAAS
+    initial_domain = DomainType.UNKNOWN if call_dir == CallDirection.INBOUND else dom
 
     # Strict caller identity rule: If inbound, caller name cannot be a placeholder
     valid_name = caller_name if (call_dir == CallDirection.OUTBOUND or caller_name) else None
@@ -68,7 +69,7 @@ async def voice_media_stream(
     await manager.handle_media_stream(
         websocket=websocket,
         session_id=session_id,
-        domain=dom,
+        domain=initial_domain,
         direction=call_dir,
         caller_phone=caller_phone,
         caller_name=valid_name,
@@ -82,9 +83,10 @@ async def start_session(
     state_manager: ConversationStateManager = Depends(get_state_manager),
 ) -> SessionResponse:
     """Explicitly initialize an inbound or outbound voice session."""
+    direction = CallDirection.OUTBOUND if payload.direction.lower() == "outbound" else CallDirection.INBOUND
     raw_domain = payload.domain.lower()
     domain = DomainType.VAYVORA if raw_domain == "vayvora" else DomainType.EDUSAAS
-    direction = CallDirection.OUTBOUND if payload.direction.lower() == "outbound" else CallDirection.INBOUND
+    initial_domain = DomainType.UNKNOWN if direction == CallDirection.INBOUND else domain
 
     session_id = payload.session_id or f"session_{direction.value}_{int(time.time())}"
 
@@ -102,7 +104,7 @@ async def start_session(
 
     state = state_manager.create_session(
         session_id=session_id,
-        domain=domain,
+        domain=initial_domain,
         direction=direction,
         caller_profile=profile,
     )
@@ -114,7 +116,7 @@ async def start_session(
 
     return SessionResponse(
         session_id=session_id,
-        domain=domain.value,
+        domain=state.current_domain.value,
         direction=direction.value,
         conversation_active=state.conversation_active,
         current_stage=state.stage.value,

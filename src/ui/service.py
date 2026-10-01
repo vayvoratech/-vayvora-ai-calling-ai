@@ -75,23 +75,52 @@ class ServiceComponents:
 class WorkbenchService:
     """Application facade mediating between Streamlit and the core ConversationEngine."""
 
-    def __init__(self, components: ServiceComponents) -> None:
-        self.engine = components.engine
-        self.state_manager = components.state_manager
-        self.llm_provider = components.llm_provider
-        self.knowledge_provider = components.knowledge_provider
-        self.tool_provider = components.tool_provider
-        self.vad_provider = components.vad_provider
-        self.stt_provider = components.stt_provider
-        self.tts_provider = components.tts_provider
-        self.llm_mode = components.llm_mode
-        self.rag_mode = components.rag_mode
-        self.tool_mode = components.tool_mode
-        self.vad_mode = components.vad_mode
-        self.stt_mode = components.stt_mode
-        self.tts_mode = components.tts_mode
-        self.overall_mode = components.overall_mode
-        self.initialization_notes = components.initialization_notes
+    def __init__(
+        self,
+        components: Optional[ServiceComponents] = None,
+        *,
+        engine: Optional[ConversationEngine] = None,
+        state_manager: Optional[ConversationStateManager] = None,
+        llm_provider: Optional[Any] = None,
+        knowledge_provider: Optional[Any] = None,
+        tool_provider: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> None:
+        if components is not None:
+            self.engine = components.engine
+            self.state_manager = components.state_manager
+            self.llm_provider = components.llm_provider
+            self.knowledge_provider = components.knowledge_provider
+            self.tool_provider = components.tool_provider
+            self.vad_provider = components.vad_provider
+            self.stt_provider = components.stt_provider
+            self.tts_provider = components.tts_provider
+            self.llm_mode = components.llm_mode
+            self.rag_mode = components.rag_mode
+            self.tool_mode = components.tool_mode
+            self.vad_mode = components.vad_mode
+            self.stt_mode = components.stt_mode
+            self.tts_mode = components.tts_mode
+            self.overall_mode = components.overall_mode
+            self.initialization_notes = components.initialization_notes
+        else:
+            self.engine = engine
+            self.state_manager = state_manager or ConversationStateManager()
+            self.llm_provider = llm_provider
+            self.knowledge_provider = knowledge_provider
+            self.tool_provider = tool_provider
+            self.vad_provider = kwargs.get("vad_provider")
+            self.stt_provider = kwargs.get("stt_provider")
+            self.tts_provider = kwargs.get("tts_provider")
+            self.llm_mode = kwargs.get("llm_mode", "MOCK")
+            self.rag_mode = kwargs.get("rag_mode", "MOCK")
+            self.tool_mode = kwargs.get("tool_mode", "MOCK")
+            self.vad_mode = kwargs.get("vad_mode", "MOCK")
+            self.stt_mode = kwargs.get("stt_mode", "MOCK")
+            self.tts_mode = kwargs.get("tts_mode", "MOCK")
+            self.overall_mode = kwargs.get("overall_mode", RuntimeMode.MOCK)
+            self.initialization_notes = kwargs.get("initialization_notes", [])
+
         self.last_error: Optional[str] = None
         self.last_turn_result: Optional[EngineTurnResult] = None
         self.active_voice_session: Optional[Any] = None
@@ -109,7 +138,7 @@ class WorkbenchService:
         self,
         call_id: str,
         caller_phone: Optional[str] = None,
-        domain: DomainType = DomainType.EDUSAAS,
+        domain: DomainType = DomainType.UNKNOWN,
         caller_name: Optional[str] = None,
         caller_email: Optional[str] = None,
         caller_company: Optional[str] = None,
@@ -120,7 +149,7 @@ class WorkbenchService:
         return self.state_manager.create_inbound_state(
             call_id=call_id,
             caller_phone=caller_phone,
-            domain=domain,
+            domain=DomainType.UNKNOWN,
             caller_name=caller_name,
             caller_email=caller_email,
             caller_company=caller_company,
@@ -137,6 +166,8 @@ class WorkbenchService:
         caller_email: Optional[str] = None,
         company: Optional[str] = None,
         known_purpose: Optional[str] = None,
+        agent_name: Optional[str] = None,
+        contact_name: Optional[str] = None,
     ) -> ConversationState:
         """Create a fresh enriched outbound session in ConversationStateManager."""
         self.last_error = None
@@ -150,6 +181,8 @@ class WorkbenchService:
             caller_email=caller_email,
             company=company,
             known_purpose=known_purpose,
+            agent_name=agent_name,
+            contact_name=contact_name,
         )
         try:
             opening_turn = run_sync(self.engine.start_outbound_conversation(state))

@@ -5,13 +5,17 @@ domain metadata, caller memory, persistent slot memory, intent preemption,
 calendar continuity, and strict grounding rules.
 """
 
-from typing import List, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, List, Optional
 
 from src.core.types import CallDirection, DomainType
-from src.domains.base import DomainConfig
-from src.domains.registry import DomainRegistry, get_domain_registry
 from src.prompts import load_prompt, render_prompt
 from src.state.models import ConversationState
+
+if TYPE_CHECKING:
+    from src.domains.base import DomainConfig
+    from src.domains.registry import DomainRegistry
 
 
 # -----------------------------------------------------------------------------
@@ -39,7 +43,10 @@ class PromptSynthesizer:
         self,
         registry: Optional[DomainRegistry] = None,
     ) -> None:
-        self.registry = registry or get_domain_registry()
+        if registry is None:
+            from src.domains.registry import get_domain_registry
+            registry = get_domain_registry()
+        self.registry = registry
 
     # -------------------------------------------------------------------------
     # System Prompt
@@ -96,34 +103,40 @@ class PromptSynthesizer:
 
         known_details: List[str] = []
 
-        if caller.name:
-            known_details.append(f"Name: {caller.name}")
+        if is_outbound:
+            agent_name = state.agent_name
+            if agent_name:
+                known_details.append(f"Agent Identity: {agent_name} representing {domain_config.name}")
+            else:
+                known_details.append(f"Agent Identity: Representative of {domain_config.name} (No personal agent name configured; DO NOT invent one)")
 
-        if caller.phone:
-            known_details.append(f"Phone: {caller.phone}")
-
-        if caller.email:
-            known_details.append(f"Email: {caller.email}")
-
-        if caller.company:
-            known_details.append(
-                f"Company/Institution: {caller.company}"
-            )
-
-        if caller.campaign_objective:
-            known_details.append(
-                f"Campaign Objective: {caller.campaign_objective}"
-            )
-
-        if caller.known_purpose:
-            known_details.append(
-                f"Known Purpose: {caller.known_purpose}"
-            )
-
-        if not caller.name and not caller.email:
-            known_details.append(
-                "Identity status: Anonymous / Not yet identified"
-            )
+            if caller.name:
+                known_details.append(f"Contact Name: {caller.name} (NOTE: THIS IS THE PERSON BEING CALLED - NOT YOUR NAME)")
+            if caller.phone:
+                known_details.append(f"Contact Phone: {caller.phone}")
+            if caller.email:
+                known_details.append(f"Contact Email: {caller.email}")
+            if caller.company:
+                known_details.append(f"Contact Company/Institution: {caller.company}")
+            if caller.campaign_objective:
+                known_details.append(f"Campaign Objective: {caller.campaign_objective}")
+            if caller.known_purpose:
+                known_details.append(f"Known Purpose: {caller.known_purpose}")
+        else:
+            if caller.name:
+                known_details.append(f"Name: {caller.name}")
+            if caller.phone:
+                known_details.append(f"Phone: {caller.phone}")
+            if caller.email:
+                known_details.append(f"Email: {caller.email}")
+            if caller.company:
+                known_details.append(f"Company/Institution: {caller.company}")
+            if caller.campaign_objective:
+                known_details.append(f"Campaign Objective: {caller.campaign_objective}")
+            if caller.known_purpose:
+                known_details.append(f"Known Purpose: {caller.known_purpose}")
+            if not caller.name and not caller.email:
+                known_details.append("Identity status: Anonymous / Not yet identified")
 
         known_str = (
             "\n".join(f"- {detail}" for detail in known_details)
@@ -167,6 +180,7 @@ class PromptSynthesizer:
             current_sub_intent=state.current_sub_intent or "None",
             primary_domain=state.primary_domain.value,
             current_domain=state.current_domain.value,
+            domain_locked=str(state.domain_locked).lower(),
             business_status=state.business_status,
             conversation_active=state.conversation_active,
             known_caller_profile=known_str,
@@ -351,51 +365,48 @@ Pending action: {state.pending_action or "None"}"""
         """Compose prompt specifically for the initial outbound opening."""
 
         caller = state.caller
+        contact_name = caller.name or state.contact_name
+        agent_name = state.agent_name
 
-        name_str = (
-            f"Caller Name: {caller.name}"
-            if caller.name
-            else "Caller Name: Not provided"
-        )
+        if agent_name:
+            agent_identity_block = (
+                f"- Agent Name: {agent_name}\n"
+                f"- Organization: {domain_config.name}\n"
+                f"- Role: Voice Representative for {domain_config.name}"
+            )
+        else:
+            agent_identity_block = (
+                f"- Agent Name: None configured (DO NOT invent an agent name; state you are calling from {domain_config.name})\n"
+                f"- Organization: {domain_config.name}\n"
+                f"- Role: Voice Representative for {domain_config.name}"
+            )
 
-        comp_str = (
-            f"Company/Institution: {caller.company}"
-            if caller.company
-            else ""
-        )
+        contact_lines: List[str] = []
+        if contact_name:
+            contact_lines.append(f"Contact Name: {contact_name} (NOTE: This is the person you are calling, NOT your name)")
+        else:
+            contact_lines.append("Contact Name: Not provided")
 
-        obj_str = (
-            f"Campaign Objective: {caller.campaign_objective}"
-            if caller.campaign_objective
-            else ""
-        )
+        if caller.phone:
+            contact_lines.append(f"Contact Phone: {caller.phone}")
+        if caller.email:
+            contact_lines.append(f"Contact Email: {caller.email}")
+        if caller.company:
+            contact_lines.append(f"Company/Institution: {caller.company}")
+        if caller.campaign_objective:
+            contact_lines.append(f"Campaign Objective: {caller.campaign_objective}")
+        if caller.known_purpose:
+            contact_lines.append(f"Known Purpose: {caller.known_purpose}")
 
-        purp_str = (
-            f"Known Purpose: {caller.known_purpose}"
-            if caller.known_purpose
-            else ""
-        )
-
-        ctx_lines = [
-            line
-            for line in [
-                name_str,
-                comp_str,
-                obj_str,
-                purp_str,
-            ]
-            if line
-        ]
-
-        ctx_block = (
-            "\n".join(f"- {line}" for line in ctx_lines)
-            if ctx_lines
-            else "- General outreach"
-        )
+        contact_block = "\n".join(f"- {line}" for line in contact_lines)
 
         return render_prompt(
             "conversation/outbound_opening.txt",
             domain_name=domain_config.name,
             domain_value=domain_config.domain.value,
-            context_block=ctx_block,
+            agent_identity_block=agent_identity_block,
+            contact_block=contact_block,
+            context_block=contact_block,
+            contact_name=contact_name or "there",
+            agent_name=agent_name or "",
         ).strip()

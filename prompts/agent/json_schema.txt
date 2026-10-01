@@ -3,7 +3,7 @@
 Return ONLY one valid JSON object. No markdown, comments, or text outside JSON.
 
 {
-  "detected_domain": "edusaas" | "vayvora" | "general",
+  "detected_domain": "unknown" | "edusaas" | "vayvora" | "general",
   "detected_intent": "<intent_name>",
   "detected_sub_intent": "<sub_intent_or_null>",
   "extracted_slots": {

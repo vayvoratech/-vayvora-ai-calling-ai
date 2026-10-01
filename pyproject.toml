@@ -37,6 +37,11 @@ dependencies = [
     "scipy>=1.12.0",
     "soundfile>=0.12.0",
     "onnxruntime>=1.17.0",
+
+    # Relational Database Persistence (PostgreSQL)
+    "asyncpg>=0.29.0",
+    "sqlalchemy>=2.0.0",
+    "greenlet>=3.0.0",
 ]
 
 [project.optional-dependencies]
