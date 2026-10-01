@@ -3,7 +3,7 @@
 Defines validated configuration models supporting environment variables
 and .env files for future components without connecting to external services.
 """
-
+import os
 from functools import lru_cache
 from typing import Any, Dict, Optional
 from pydantic import Field, SecretStr, model_validator
@@ -334,17 +334,27 @@ class Settings(BaseSettings):
         alias="VAD_THRESHOLD",
         description="Speech detection probability threshold",
     )
-    vad_min_speech_duration: float = Field(
-        default=0.25,
-        ge=0.0,
-        alias="VAD_MIN_SPEECH_DURATION",
-        description="Minimum duration in seconds to consider speech started",
+    # Locate these VAD fields in Settings inside src/config.py and update defaults:
+    vad_min_speech_duration_ms: int = Field(
+        default=120,  # Reduced from 160ms
+        ge=32,
+        le=2000,
+        alias="VAD_MIN_SPEECH_DURATION_MS",
+        description="Minimum consecutive speech duration in milliseconds to trigger speech start",
     )
-    vad_min_silence_duration: float = Field(
-        default=0.5,
-        ge=0.0,
-        alias="VAD_MIN_SILENCE_DURATION",
-        description="Silence duration in seconds required to trigger speech end",
+    vad_min_silence_duration_ms: int = Field(
+        default=200,  # Reduced from 400ms (saves 200ms dead air immediately)
+        ge=64,
+        le=2000,
+        alias="VAD_MIN_SILENCE_DURATION_MS",
+        description="Silence duration in milliseconds required to trigger speech end",
+    )
+    vad_pre_roll_ms: int = Field(
+        default=160,  # Reduced from 300ms
+        ge=0,
+        le=1000,
+        alias="VAD_PRE_ROLL_MS",
+        description="Pre-roll buffer duration in milliseconds to preserve initial speech consonants",
     )
 
     # Noise Suppression & Real-Time Acoustic Hygiene Settings
@@ -591,13 +601,16 @@ class Settings(BaseSettings):
 
     @property
     def redis_url(self) -> str:
-        """Construct full Redis connection URI."""
-        password = (
-            f":{self.redis_password.get_secret_value()}@"
-            if self.redis_password
-            else ""
-        )
-        return f"redis://{password}{self.redis_host}:{self.redis_port}/{self.redis_db}"
+        # Check environment variable first
+        env_url = os.getenv("REDIS_URL")
+        if env_url:
+            return env_url
+
+        # Always include username (defaults to "default" for Redis ACL / Redis Cloud)
+        username = getattr(self, "redis_username", None) or os.getenv("REDIS_USERNAME") or "default"
+        if self.redis_password:
+            return f"redis://{username}:{self.redis_password}@{self.redis_host}:{self.redis_port}/{self.redis_db}"
+        return f"redis://{self.redis_host}:{self.redis_port}/{self.redis_db}"
 
     @property
     def resolved_database_url(self) -> str:

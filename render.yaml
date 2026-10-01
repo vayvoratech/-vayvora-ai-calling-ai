@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: vayvora-voice-agent
+    runtime: docker
+    plan: starter  # 512MB-1GB RAM avoids OOM during embedding operations and prevents spin-down drops
+    region: oregon  # Match AWS us-west for low-latency calls to Redis Cloud
+    dockerfilePath: ./Dockerfile
+    autoDeploy: true
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: INFO
+      - key: REDIS_URL
+        sync: false  # You will supply this in the Render Dashboard
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: DEEPGRAM_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: VAD_MIN_SILENCE_DURATION_MS
+        value: "200"
+      - key: VAD_MIN_SPEECH_DURATION_MS
+        value: "120"
+      - key: VAD_PRE_ROLL_MS
+        value: "160"
+      - key: RAG_TOP_K
+        value: "3"
+      - key: RAG_RELEVANCE_THRESHOLD
+        value: "0.40"

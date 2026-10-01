@@ -36,9 +36,11 @@ class RedisVectorStore:
         if self._client is None:
             self._client = redis.from_url(
                 self.redis_url,
-                decode_responses=False,  # Keep binary support for float32 vector blobs
-                socket_connect_timeout=1.0,
-                socket_timeout=1.0,
+                decode_responses=False,
+                socket_connect_timeout=5.0,  # Increased from 1.0s
+                socket_timeout=5.0,          # Increased from 1.0s
+                socket_keepalive=True,
+                retry_on_timeout=True,
             )
         return self._client
 
@@ -52,10 +54,10 @@ class RedisVectorStore:
         """Check if Redis server is reachable."""
         try:
             client = await self.get_client()
-            res = await asyncio.wait_for(client.ping(), timeout=1.0)
+            res = await asyncio.wait_for(client.ping(), timeout=5.0)  # Increased from 1.0s
             return bool(res)
         except Exception as exc:
-            logger.debug("Redis health check failed: %s", exc)
+            logger.warning("Redis health check failed: %s", exc)
             return False
 
     def get_index_name(self, domain: DomainType) -> str:

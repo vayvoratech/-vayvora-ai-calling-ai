@@ -1,5 +1,31 @@
-numpy
-pandas
-scikit-learn
-requests
-python-dotenv
+# Core API & Web Server
+fastapi>=0.110.0,<1.0.0
+uvicorn[standard]>=0.28.0,<1.0.0
+websockets>=12.0,<17.0
+jinja2>=3.1.0,<4.0.0
+python-multipart>=0.0.9
+pywebrtc-audio>=0.1.0
+
+# Real-Time Cloud Voice Engines & LLM
+groq>=0.9.0,<2.0.0
+openai>=1.0.0
+
+# Core State, Schemas & Networking
+pydantic>=2.7.0,<3.0.0
+pydantic-settings>=2.2.0,<3.0.0
+httpx>=0.27.0,<1.0.0
+
+# RAG Vector Storage & Retrieval
+redis>=5.0.0,<9.0.0
+fastembed>=0.8.0,<1.0.0
+
+# Audio Processing & Signal Engineering
+numpy>=1.26.0
+scipy>=1.12.0
+soundfile>=0.12.0
+onnxruntime>=1.17.0
+
+# Relational Database Persistence (PostgreSQL)
+asyncpg>=0.29.0
+sqlalchemy>=2.0.0
+greenlet>=3.0.0
