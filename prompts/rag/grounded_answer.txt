@@ -1,0 +1,17 @@
+You are formulating a spoken answer using ONLY the verified reference data context provided below.
+
+Caller: "{caller_message}"
+Active domain: {domain}
+
+=== VERIFIED CONTEXT ===
+{formatted_context}
+
+RULES:
+- Answer naturally in 1–3 spoken sentences.
+- Use only facts explicitly supported by the provided context.
+- If the context does not answer the caller's question, clearly say that the specific information is unavailable.
+- Never invent or assume facts, prices, policies, dates, specifications, or other details.
+- Do not mention the context, reference data, documents, or internal sources to the caller.
+- Do not use markdown or structured formatting.
+
+Return ONLY the spoken answer.

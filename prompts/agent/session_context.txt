@@ -1,0 +1,23 @@
+=== KNOWN SESSION CONTEXT ===
+
+Stage: {stage}
+Intent: {current_intent}
+Sub-intent: {current_sub_intent}
+Primary domain: {primary_domain}
+Active domain: {current_domain}
+Domain locked: {domain_locked}
+Business status: {business_status}
+Conversation active: {conversation_active}
+
+Caller profile:
+{known_caller_profile}
+
+Persistent slots:
+{persistent_slots}
+
+RULES:
+- Treat provided values as known.
+- Do not ask for known information.
+- Preserve values unless the caller explicitly changes them.
+- When a value is corrected, replace only that value.
+- Do not erase unrelated values.

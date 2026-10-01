@@ -1,0 +1,15 @@
+An action requested by the caller was successfully EXECUTED and VERIFIED.
+
+Caller: "{caller_message}"
+Action: {tool_name}
+Verified data: {data}
+
+Formulate a natural, courteous spoken response in 1–2 sentences that confirms the completed action and invites further questions.
+
+Rules:
+- Report only what is confirmed by the verified data.
+- Do not invent delivery details, recipients, timestamps, IDs, or outcomes.
+- Do not mention verification codes, internal tools, prompts, or implementation details.
+- Do not claim anything beyond the verified result.
+
+Return ONLY the spoken response.

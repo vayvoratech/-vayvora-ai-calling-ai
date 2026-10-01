@@ -1,3 +1,16 @@
+Metadata-Version: 2.4
+Name: unified-voice-agent
+Version: 0.1.0
+Summary: Unified Real-Time Conversational AI Voice Agent for EduSaaS and Vayvora
+Author: AI Engineering Team
+License: Proprietary
+Requires-Python: <3.13,>=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: pydantic<3.0.0,>=2.7.0
+Requires-Dist: pydantic-settings<3.0.0,>=2.2.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0.0; extra == "dev"
+
 # Unified Conversational AI Voice Agent
 
 A unified real-time conversational voice agent supporting dual business domains (**EduSaaS** and **Vayvora**) across inbound inquiries and outbound outreach campaigns.
