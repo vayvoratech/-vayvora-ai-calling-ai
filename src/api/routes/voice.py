@@ -51,29 +51,43 @@ async def voice_media_stream(
     direction: Optional[str] = Query(default="inbound"),
     caller_phone: Optional[str] = Query(default=None),
     caller_name: Optional[str] = Query(default=None),
-    manager: VoiceSessionManager = Depends(get_voice_session_manager),
 ):
     """Real-time bidirectional media stream WebSocket endpoint."""
-    raw_dir = (direction or "inbound").lower()
-    call_dir = CallDirection.OUTBOUND if raw_dir == "outbound" else CallDirection.INBOUND
+    # Satisfy reverse proxy TLS/upgrade handshake immediately
+    await websocket.accept()
 
-    raw_domain = (domain or "edusaas").lower()
-    dom = DomainType.VAYVORA if raw_domain == "vayvora" else DomainType.EDUSAAS
-    initial_domain = DomainType.UNKNOWN if call_dir == CallDirection.INBOUND else dom
+    try:
+        from src.api.dependencies import get_voice_session_manager
+        manager = get_voice_session_manager()
 
-    # Strict caller identity rule: If inbound, caller name cannot be a placeholder
-    valid_name = caller_name if (call_dir == CallDirection.OUTBOUND or caller_name) else None
-    if valid_name and valid_name.lower() in ["default caller", "unknown", "john doe"]:
-        valid_name = None
+        raw_dir = (direction or "inbound").lower()
+        call_dir = CallDirection.OUTBOUND if raw_dir == "outbound" else CallDirection.INBOUND
 
-    await manager.handle_media_stream(
-        websocket=websocket,
-        session_id=session_id,
-        domain=initial_domain,
-        direction=call_dir,
-        caller_phone=caller_phone,
-        caller_name=valid_name,
-    )
+        raw_domain = (domain or "edusaas").lower()
+        dom = DomainType.VAYVORA if raw_domain == "vayvora" else DomainType.EDUSAAS
+        initial_domain = DomainType.UNKNOWN if call_dir == CallDirection.INBOUND else dom
+
+        valid_name = caller_name if (call_dir == CallDirection.OUTBOUND or caller_name) else None
+        if valid_name and valid_name.lower() in ["default caller", "unknown", "john doe"]:
+            valid_name = None
+
+        await manager.handle_media_stream(
+            websocket=websocket,
+            session_id=session_id,
+            domain=initial_domain,
+            direction=call_dir,
+            caller_phone=caller_phone,
+            caller_name=valid_name,
+            already_accepted=True,
+        )
+    except WebSocketDisconnect:
+        logger.info("Client disconnected from media stream session: %s", session_id)
+    except Exception as exc:
+        logger.error("Unhandled error in media-stream pipeline: %s", exc, exc_info=True)
+        try:
+            await websocket.close(code=1011, reason=str(exc)[:120])
+        except Exception:
+            pass
 
 
 @router.post("/api/v1/voice/session/start", response_model=SessionResponse)

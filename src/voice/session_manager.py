@@ -101,10 +101,11 @@ class VoiceSessionManager:
         direction: CallDirection = CallDirection.INBOUND,
         caller_phone: Optional[str] = None,
         caller_name: Optional[str] = None,
+        already_accepted: bool = False,
     ) -> None:
         """Handle full real-time WebSocket voice media stream for a connection."""
-        await websocket.accept()
-
+        if not already_accepted and getattr(websocket.client_state, "name", "") != "CONNECTED":
+            await websocket.accept()
         session_id = session_id or f"voice_session_{int(time.time())}"
         domain = domain or self.default_domain
         connection_alive = True
