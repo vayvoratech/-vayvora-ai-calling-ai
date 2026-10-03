@@ -43,9 +43,9 @@ class VADService:
         sample_rate: int = 16000,
         start_threshold: float = 0.45,
         end_threshold: float = 0.20,
-        min_speech_duration_ms: int = 160,
-        min_silence_duration_ms: int = 400,
-        pre_roll_duration_ms: int = 300,
+        min_speech_duration_ms: int = 120,
+        min_silence_duration_ms: int = 250,
+        pre_roll_duration_ms: int = 160,
     ):
         self.sample_rate = sample_rate
         self.start_threshold = start_threshold

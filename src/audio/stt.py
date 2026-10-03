@@ -299,7 +299,7 @@ class GroqWhisperSTTProvider(BaseSTTProvider):
             raise InvalidAudioDataError(f"Insufficient audio data: {len(raw_bytes)} bytes.")
 
         t0 = time.perf_counter()
-        text = self.service.transcribe_pcm16(raw_bytes)
+        text = await self.service.transcribe_pcm16_async(raw_bytes)
         elapsed = time.perf_counter() - t0
 
         return STTResult(

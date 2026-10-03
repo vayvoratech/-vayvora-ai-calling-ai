@@ -69,9 +69,32 @@ class DeepgramFluxTTS(TTSProvider):
         self.first_audio_event_reported = False
         self._accumulated_text: list[str] = []
 
+    def is_open(self) -> bool:
+        """Version-agnostic check if WebSocket connection is open and active."""
+        if self._mock_mode:
+            return self.connected
+        if not self.websocket or not self.connected:
+            return False
+        # 1. Closed attribute
+        if hasattr(self.websocket, "closed") and self.websocket.closed:
+            return False
+        # 2. Open attribute
+        if hasattr(self.websocket, "open") and not self.websocket.open:
+            return False
+        # 3. Close code attribute
+        if hasattr(self.websocket, "close_code") and self.websocket.close_code is not None:
+            return False
+        # 4. State enum attribute (websockets library)
+        if hasattr(self.websocket, "state"):
+            st = getattr(self.websocket, "state", None)
+            st_name = getattr(st, "name", "")
+            if st_name and st_name != "OPEN":
+                return False
+        return self.connected
+
     async def connect(self) -> None:
         """Establish WebSocket connection with Deepgram TTS endpoint or initialize fallback."""
-        if self.connected:
+        if self.is_open():
             return
 
         if not self.api_key:
@@ -102,8 +125,8 @@ class DeepgramFluxTTS(TTSProvider):
             self.websocket = await websockets.connect(
                 url,
                 additional_headers={"Authorization": f"Token {self.api_key}"},
-                ping_interval=20,
-                ping_timeout=20,
+                ping_interval=5,
+                ping_timeout=5,
                 max_size=None,
             )
             self.connected = True
@@ -299,43 +322,90 @@ class DeepgramFluxTTS(TTSProvider):
         text_stream: AsyncIterator[str],
         voice_id: Optional[str] = None,
     ) -> AsyncIterator[bytes]:
-        """Synthesize text chunks incrementally into streaming audio chunks."""
-        chunks: list[bytes] = []
-        old_cb = self.audio_callback
+        """Synthesize text chunks incrementally into streaming audio chunks without buffering delays."""
+        queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue()
+        old_audio_cb = self.audio_callback
+        old_event_cb = self.event_callback
 
-        def on_audio(chunk: bytes):
-            chunks.append(chunk)
+        async def on_audio(chunk: bytes):
+            await queue.put(chunk)
+            if old_audio_cb:
+                res = old_audio_cb(chunk)
+                if asyncio.iscoroutine(res):
+                    await res
+
+        async def on_event(event: dict):
+            event_type = event.get("type")
+            if event_type in ["SpeechMetadata", "Flushed", "Cleared", "SpeechInterrupted"]:
+                await queue.put(None)
+            if old_event_cb:
+                res = old_event_cb(event)
+                if asyncio.iscoroutine(res):
+                    await res
 
         self.audio_callback = on_audio
+        self.event_callback = on_event
+
+        async def feed_text():
+            try:
+                async for text in text_stream:
+                    await self.send_text(text)
+                await self.flush()
+            except Exception as exc:
+                logger.warning("Error feeding text to Deepgram: %s", exc)
+                await queue.put(None)
+
+        feed_task = asyncio.create_task(feed_text())
         try:
             await self.connect()
-            async for text in text_stream:
-                await self.send_text(text)
-                while chunks:
-                    yield chunks.pop(0)
-            await self.flush()
-            while chunks:
-                yield chunks.pop(0)
+            while True:
+                chunk = await queue.get()
+                if chunk is None:
+                    break
+                yield chunk
+            await feed_task
         finally:
-            self.audio_callback = old_cb
+            self.audio_callback = old_audio_cb
+            self.event_callback = old_event_cb
+            if not feed_task.done():
+                feed_task.cancel()
 
     async def synthesize_stream(self, text: str) -> AsyncIterator[bytes]:
-        """Streaming synthesis async generator yielding audio chunks."""
-        chunks: list[bytes] = []
-        old_cb = self.audio_callback
+        """Streaming synthesis async generator yielding audio chunks immediately upon arrival."""
+        queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue()
+        old_audio_cb = self.audio_callback
+        old_event_cb = self.event_callback
 
-        def on_audio(chunk: bytes):
-            chunks.append(chunk)
+        async def on_audio(chunk: bytes):
+            await queue.put(chunk)
+            if old_audio_cb:
+                res = old_audio_cb(chunk)
+                if asyncio.iscoroutine(res):
+                    await res
+
+        async def on_event(event: dict):
+            event_type = event.get("type")
+            if event_type in ["SpeechMetadata", "Flushed", "Cleared", "SpeechInterrupted"]:
+                await queue.put(None)
+            if old_event_cb:
+                res = old_event_cb(event)
+                if asyncio.iscoroutine(res):
+                    await res
 
         self.audio_callback = on_audio
+        self.event_callback = on_event
         try:
             await self.connect()
             await self.send_text(text)
             await self.flush()
-            for c in chunks:
-                yield c
+            while True:
+                chunk = await queue.get()
+                if chunk is None:
+                    break
+                yield chunk
         finally:
-            self.audio_callback = old_cb
+            self.audio_callback = old_audio_cb
+            self.event_callback = old_event_cb
 
 
 # Canonical Alias for backward compatibility

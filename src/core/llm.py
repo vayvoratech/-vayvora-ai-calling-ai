@@ -68,10 +68,23 @@ class GeminiLLMProvider(LLMProvider):
     def _get_base_url(self) -> str:
         return f"https://generativelanguage.googleapis.com/v1beta/models/{self.model}"
 
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get or initialize persistent AsyncClient with HTTP connection pooling."""
+        if self._client is None or self._client.is_closed:
+            limits = httpx.Limits(max_keepalive_connections=20, max_connections=50, keepalive_expiry=30.0)
+            self._client = httpx.AsyncClient(timeout=self.timeout, limits=limits)
+        return self._client
+
+    async def aclose(self) -> None:
+        """Close persistent HTTP client session cleanly."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
+
     async def _send_request(
         self, payload: Dict[str, Any], stream: bool = False
     ) -> httpx.Response:
-        """Internal helper to dispatch HTTP requests with standardized error handling."""
+        """Internal helper to dispatch HTTP requests with standardized error handling and connection reuse."""
         action = "streamGenerateContent?alt=sse" if stream else "generateContent"
         url = f"{self._get_base_url()}:{action}"
         headers = {
@@ -83,8 +96,8 @@ class GeminiLLMProvider(LLMProvider):
         logger.debug("Dispatching request to Gemini model: %s", self.model)
 
         max_attempts = 4
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            for attempt in range(max_attempts):
+        client = await self._get_client()
+        for attempt in range(max_attempts):
                 try:
                     response = await client.post(url, json=payload, headers=headers)
                 except httpx.TimeoutException as exc:
@@ -184,28 +197,28 @@ class GeminiLLMProvider(LLMProvider):
             "Content-Type": "application/json",
         }
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
-            try:
-                async with client.stream("POST", url, json=payload, headers=headers) as response:
-                    if response.status_code != 200:
-                        content = await response.aread()
-                        raise LLMError(f"Streaming error HTTP {response.status_code}: {content.decode('utf-8')}")
+        client = await self._get_client()
+        try:
+            async with client.stream("POST", url, json=payload, headers=headers) as response:
+                if response.status_code != 200:
+                    content = await response.aread()
+                    raise LLMError(f"Streaming error HTTP {response.status_code}: {content.decode('utf-8')}")
 
-                    async for line in response.aiter_lines():
-                        if line.startswith("data: "):
-                            raw_json = line[6:].strip()
-                            if raw_json == "[DONE]":
-                                break
-                            try:
-                                chunk_data = json.loads(raw_json)
-                                candidates = chunk_data.get("candidates", [])
-                                if candidates and "content" in candidates[0]:
-                                    part = candidates[0]["content"]["parts"][0]["text"]
-                                    yield part
-                            except Exception:
-                                continue
-            except httpx.TimeoutException as exc:
-                raise LLMTimeoutError("Gemini streaming request timed out.") from exc
+                async for line in response.aiter_lines():
+                    if line.startswith("data: "):
+                        raw_json = line[6:].strip()
+                        if raw_json == "[DONE]":
+                            break
+                        try:
+                            chunk_data = json.loads(raw_json)
+                            candidates = chunk_data.get("candidates", [])
+                            if candidates and "content" in candidates[0]:
+                                part = candidates[0]["content"]["parts"][0]["text"]
+                                yield part
+                        except Exception:
+                            continue
+        except httpx.TimeoutException as exc:
+            raise LLMTimeoutError("Gemini streaming request timed out.") from exc
 
     async def generate_decision(
         self,

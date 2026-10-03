@@ -620,6 +620,7 @@ class TestRaceConditions:
             min_speech_duration=0.2,
             min_silence_duration=0.2,
         )
+        session.conversation_state.caller.email = "caller@example.com"
         session.start()
         await session.process_audio_chunk(make_speech_chunk(duration=0.2))
         await session.process_audio_chunk(make_silence_chunk(duration=0.2))

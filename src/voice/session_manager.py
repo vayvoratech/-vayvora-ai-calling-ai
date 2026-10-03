@@ -25,6 +25,7 @@ from src.logging import get_logger
 from src.state.manager import ConversationStateManager
 from src.state.models import CallerProfile, ConversationState
 from src.voice.audio_services.audio_processor import AudioProcessor
+from src.voice.latency_tracker import TurnLatencyTracker
 from src.voice.stt.stt_service import STTService
 from src.voice.tts.deepgram_tts_service import DeepgramFluxTTS
 
@@ -160,6 +161,8 @@ class VoiceSessionManager:
 
         llm_task: Optional[asyncio.Task] = None
         speech_end_at: Optional[float] = None
+        turn_counter: int = 0
+        current_tracker: Optional[TurnLatencyTracker] = None
 
         # Track active session
         self._active_sessions[session_id] = {
@@ -173,11 +176,15 @@ class VoiceSessionManager:
         async def deepgram_audio_callback(audio_bytes: bytes):
             if not connection_alive:
                 return
+            if current_tracker and current_tracker.t13_first_audio_sent is None:
+                current_tracker.mark_first_audio_sent()
             await safe_send_bytes(websocket, ws_lock, audio_bytes)
 
         async def deepgram_event_callback(event: dict):
             event_type = event.get("type")
             if event_type == "FirstAudio":
+                if current_tracker and current_tracker.t12_tts_first_audio is None:
+                    current_tracker.mark_tts_first_audio()
                 await safe_send(websocket, ws_lock, {"type": "tts_first_audio"})
             elif event_type == "SpeechStarted":
                 await safe_send(websocket, ws_lock, {"type": "tts_started"})
@@ -267,6 +274,14 @@ class VoiceSessionManager:
 
                 # 1. Instant Barge-In
                 if vad_result.get("speech_started"):
+                    turn_counter += 1
+                    current_tracker = TurnLatencyTracker(
+                        turn_id=turn_counter,
+                        session_id=session_id,
+                        domain=state.current_domain.value,
+                    )
+                    current_tracker.mark_speech_start()
+
                     if llm_task is not None and not llm_task.done():
                         llm_task.cancel()
                         llm_task = None
@@ -281,16 +296,28 @@ class VoiceSessionManager:
                     continue
 
                 speech_end_at = time.perf_counter()
+                if current_tracker is None:
+                    turn_counter += 1
+                    current_tracker = TurnLatencyTracker(
+                        turn_id=turn_counter,
+                        session_id=session_id,
+                        domain=state.current_domain.value,
+                    )
+                current_tracker.mark_speech_end(speech_end_at)
+                current_tracker.mark_stt_start()
+
                 speech_audio = vad_result.get("speech_audio")
                 if not speech_audio:
                     continue
 
-                # 3. Speech-to-Text
+                # 3. Speech-to-Text (Non-blocking async transcription)
                 try:
-                    transcript = self.stt_service.transcribe_pcm16(speech_audio).strip()
+                    transcript = (await self.stt_service.transcribe_pcm16_async(speech_audio)).strip()
                 except Exception as e:
                     logger.warning("[STT] Transcription error: %s", e)
                     continue
+
+                current_tracker.mark_stt_end()
 
                 if not transcript:
                     continue
@@ -306,6 +333,7 @@ class VoiceSessionManager:
                         transcript=transcript,
                         deepgram_tts=deepgram_tts,
                         connection_alive=lambda: connection_alive,
+                        tracker=current_tracker,
                     )
                 )
 
@@ -335,6 +363,7 @@ class VoiceSessionManager:
         transcript: str,
         deepgram_tts: DeepgramFluxTTS,
         connection_alive: Callable[[], bool],
+        tracker: Optional[TurnLatencyTracker] = None,
     ) -> None:
         """Process an agent turn and stream response speech to TTS and WebSocket."""
         deepgram_tts.reset_turn()
@@ -346,6 +375,7 @@ class VoiceSessionManager:
             turn_result: EngineTurnResult = await self.engine.process_user_turn(
                 state=state,
                 user_message=transcript,
+                tracker=tracker,
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
 
@@ -356,8 +386,12 @@ class VoiceSessionManager:
             if not connection_alive():
                 return
 
+            if tracker:
+                tracker.domain = state.current_domain.value
+                tracker.intent = turn_result.decision.detected_intent or ""
+
             # Send telemetry to client
-            await safe_send(websocket, ws_lock, {
+            telemetry_data = {
                 "type": "agent_telemetry",
                 "route": turn_result.decision.detected_intent or "general",
                 "confidence": 1.0,
@@ -367,11 +401,17 @@ class VoiceSessionManager:
                 "tool_result": turn_result.tool_result.data if turn_result.tool_result else None,
                 "citations": turn_result.grounded_citations,
                 "latency_ms": round(elapsed_ms, 2),
-            })
+            }
+            if tracker:
+                telemetry_data["latency_metrics"] = tracker.to_dict()
+
+            await safe_send(websocket, ws_lock, telemetry_data)
 
             # Stream words to Deepgram TTS with 3-word instant burst for minimal latency
             words = response_text.split()
             if words:
+                if tracker:
+                    tracker.mark_tts_start()
                 first_burst = " ".join(words[:3]) + " "
                 await deepgram_tts.send_text(first_burst)
                 await safe_send(websocket, ws_lock, {"type": "llm_chunk", "text": first_burst})
@@ -387,6 +427,9 @@ class VoiceSessionManager:
                 await deepgram_tts.flush()
 
             await safe_send(websocket, ws_lock, {"type": "llm_complete", "text": response_text})
+
+            if tracker:
+                tracker.log_summary()
 
             # Check if conversation was closed by caller or agent
             if not state.conversation_active:

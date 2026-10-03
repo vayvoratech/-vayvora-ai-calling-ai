@@ -63,6 +63,109 @@ class EngineTurnResult(BaseModel):
     raw_llm_response: Optional[str] = Field(default=None, description="Raw LLM provider response")
 
 
+def is_reusable_first_response(
+    response: Optional[str],
+    user_query: str,
+    formatted_context: str,
+    requires_action: bool = False,
+) -> bool:
+    """Determine whether decision.user_facing_response can be safely reused without a second LLM synthesis.
+
+    Validates all 8 criteria:
+    1. Actually user-facing content (non-empty, non-trivial, natural speech).
+    2. Sufficiently complete (not a placeholder, stalling, or deferral phrase).
+    3. Consistent with the latest caller request.
+    4. Grounded in verified RAG result (key facts align, no ungrounded claims).
+    5. Does not require waiting for external tool execution results.
+    6. Does not contain unresolved templates/placeholders ({name}, [slot], etc.).
+    7. Does not leak internal system prompts, JSON, schemas, or tool states.
+    8. Satisfies spoken conversation rules (concise, conversational, clear).
+    """
+    if not response or not isinstance(response, str):
+        return False
+
+    resp = response.strip()
+
+    # Rule 1 & 8: Must be user-facing, conversational, reasonable length (>15 and <800 chars)
+    if len(resp) < 15 or len(resp) > 800:
+        return False
+
+    # Rule 5: Cannot reuse if awaiting tool execution
+    if requires_action:
+        return False
+
+    resp_lower = resp.lower()
+
+    # Rule 2: Not a stalling / deferral / empty placeholder phrase
+    deferral_phrases = [
+        "i'll check that for you",
+        "i will check that for you",
+        "let me check that",
+        "let me look into that",
+        "let me check our",
+        "one moment please",
+        "please hold",
+        "i am checking",
+        "hold on a second",
+        "give me a moment",
+        "i'll look that up",
+        "let me verify that",
+        "checking that for you",
+        "i'm checking",
+        "let me check",
+        "checking now",
+    ]
+    for phrase in deferral_phrases:
+        if phrase in resp_lower:
+            return False
+
+    # Rule 6: No unresolved placeholders
+    placeholder_patterns = [
+        "{", "}", "[name]", "[date]", "[time]", "[course]", "[email]",
+        "<slot>", "<name>", "<email>", "todo", "tbd", "null", "undefined",
+    ]
+    for p in placeholder_patterns:
+        if p in resp_lower:
+            return False
+
+    # Rule 7: No internal system/tool/prompt leakage
+    leak_terms = [
+        "json", "conversationaldecision", "system_instruction", "tool_name",
+        "proposed_action", "redis", "database query", "api response", "user_facing_response",
+    ]
+    for leak in leak_terms:
+        if leak in resp_lower:
+            return False
+
+    # Rule 4: Grounding check against formatted_context
+    if formatted_context:
+        ctx_lower = formatted_context.lower()
+        stop_words = {
+            "this", "that", "with", "from", "have", "were", "what", "when",
+            "where", "which", "your", "about", "there", "their", "would",
+            "could", "should", "shall", "these", "those", "also", "into",
+            "some", "such", "than", "then", "them", "they", "will", "more",
+            "most", "other", "very", "just", "well", "been", "only", "even",
+        }
+        resp_words = [
+            w.strip(".,!?:;\"'()[]")
+            for w in resp_lower.split()
+            if len(w.strip(".,!?:;\"'()[]")) >= 4 and w.strip(".,!?:;\"'()[]") not in stop_words
+        ]
+
+        if not resp_words:
+            return False
+
+        matches = sum(1 for w in resp_words if w in ctx_lower)
+        overlap_ratio = matches / len(resp_words) if resp_words else 0.0
+
+        # At least 2 key terms or 25% of content terms should be confirmed in context
+        if matches < 2 and overlap_ratio < 0.25:
+            return False
+
+    return True
+
+
 class ConversationEngine:
     """Core runtime engine processing turns for the Unified Voice Agent."""
 
@@ -255,7 +358,7 @@ class ConversationEngine:
             return f"{greeting_contact}{intro} I'm reaching out to understand whether {target_org} is currently exploring AI or automation solutions. Is this a good time for a quick conversation?"
 
     async def process_user_turn(
-        self, state: ConversationState, user_message: str
+        self, state: ConversationState, user_message: str, tracker: Optional[Any] = None
     ) -> EngineTurnResult:
         """Process an incoming caller utterance and advance conversation state."""
         cleaned_msg = user_message.strip()
@@ -394,6 +497,8 @@ class ConversationEngine:
 
         # 8. Generate structured decision from LLM
         t_llm = time.perf_counter()
+        if tracker:
+            tracker.mark_decision_start()
         raw_llm_text: Optional[str] = None
         if hasattr(self.llm, "generate_decision"):
             decision: ConversationalDecision = await self.llm.generate_decision(
@@ -408,6 +513,8 @@ class ConversationEngine:
             data = json.loads(extract_json_block(raw_response))
             decision = ConversationalDecision.model_validate(data)
             decision = self.validator.validate_and_filter(decision)
+        if tracker:
+            tracker.mark_decision_end()
         timing["llm_decision_ms"] = round((time.perf_counter() - t_llm) * 1000, 2)
 
         # 9. Domain Lock Enforcement (Post-LLM):
@@ -614,7 +721,10 @@ class ConversationEngine:
 
             # Detect requested topic from caller message (latest request wins)
             topic_k, topic_name = detect_requested_topic(cleaned_msg, state.history, state.get_slot("target_course"))
-            if topic_name and (is_explicit_email_request(cleaned_msg) or is_asking_for_topic or any(w in cleaned_msg.lower() for w in ["ai", "data science", "full stack", "cloud", "cyber", "dsa", "pricing", "admission", "fee", "course"])):
+            if topic_name and (
+                ((is_explicit_email_request(cleaned_msg) or is_asking_for_topic) and not decision.extracted_slots.get("target_course"))
+                or (not decision.extracted_slots.get("target_course") and any(w in cleaned_msg.lower() for w in ["ai", "data science", "full stack", "cloud", "cyber", "dsa", "pricing", "admission", "fee", "course"]))
+            ):
                 state.update_slot("target_course", topic_name, sync_caller=True)
                 decision.extracted_slots["target_course"] = topic_name
 
@@ -660,8 +770,20 @@ class ConversationEngine:
             decision.knowledge_required = False
             decision.knowledge_query = None
 
+        # Simple conversational acknowledgments do not require factual RAG retrieval
+        simple_acks = {
+            "hello", "hi", "hey", "yes", "yeah", "yep", "sure", "okay", "ok",
+            "thanks", "thank you", "great", "fine", "alright", "bye", "goodbye",
+            "sounds good", "perfect", "no problem", "correct",
+        }
+        if cleaned_msg.lower().strip() in simple_acks:
+            decision.knowledge_required = False
+            decision.knowledge_query = None
+
         if decision.knowledge_required and self.knowledge_provider:
             t_rag = time.perf_counter()
+            if tracker:
+                tracker.mark_rag_start()
             query_text = decision.knowledge_query or decision.detected_intent or cleaned_msg
             rag_query = RAGQuery(
                 domain=state.current_domain,
@@ -684,6 +806,8 @@ class ConversationEngine:
                         formatted_context="\n".join(c.content for c in chunks),
                     )
                 timing["rag_retrieval_ms"] = round((time.perf_counter() - t_rag) * 1000, 2)
+                if tracker:
+                    tracker.mark_rag_end()
 
                 if grounded_res.service_unavailable:
                     logger.warning("RAG service unavailable for domain %s", decision.detected_domain.value)
@@ -702,23 +826,39 @@ class ConversationEngine:
                 else:
                     # Chunks found and passed relevance threshold
                     grounded_citations = [c.doc_id for c in grounded_res.chunks]
-                    grounding_prompt = render_prompt(
-                        "rag/grounded_answer.txt",
-                        caller_message=cleaned_msg,
-                        domain=decision.detected_domain.value,
-                        formatted_context=grounded_res.formatted_context,
-                    ).strip()
 
-                    t_ground = time.perf_counter()
-                    grounded_speech = await self.llm.generate_response(
-                        prompt=grounding_prompt,
-                        system_instruction=load_prompt("rag/system.txt").strip(),
-                    )
-                    timing["grounded_llm_ms"] = round((time.perf_counter() - t_ground) * 1000, 2)
-                    final_response_text = grounded_speech.strip()
-                    decision.user_facing_response = final_response_text
+                    # PHASE 5: Check whether decision.user_facing_response can be safely reused
+                    # to skip the redundant second Gemini round-trip!
+                    if is_reusable_first_response(
+                        response=decision.user_facing_response,
+                        user_query=cleaned_msg,
+                        formatted_context=grounded_res.formatted_context,
+                        requires_action=bool(action_proposed and decision.proposed_action),
+                    ):
+                        logger.info("Phase 5: Reusing grounded first LLM response, avoiding second Gemini call.")
+                        final_response_text = decision.user_facing_response.strip()
+                        if tracker:
+                            tracker.reused_first_response = True
+                    else:
+                        grounding_prompt = render_prompt(
+                            "rag/grounded_answer.txt",
+                            caller_message=cleaned_msg,
+                            domain=decision.detected_domain.value,
+                            formatted_context=grounded_res.formatted_context,
+                        ).strip()
+
+                        t_ground = time.perf_counter()
+                        grounded_speech = await self.llm.generate_response(
+                            prompt=grounding_prompt,
+                            system_instruction=load_prompt("rag/system.txt").strip(),
+                        )
+                        timing["grounded_llm_ms"] = round((time.perf_counter() - t_ground) * 1000, 2)
+                        final_response_text = grounded_speech.strip()
+                        decision.user_facing_response = final_response_text
             except Exception as rag_err:
                 timing["rag_retrieval_ms"] = round((time.perf_counter() - t_rag) * 1000, 2)
+                if tracker:
+                    tracker.mark_rag_end()
                 logger.error("RAG retrieval failed: %s", rag_err)
                 final_response_text = (
                     "Our knowledge base is currently undergoing maintenance, so I don't have those specific details on hand right now. "
@@ -899,8 +1039,12 @@ class ConversationEngine:
                     call_id=state.metadata.call_id,
                 )
                 t_tool = time.perf_counter()
+                if tracker:
+                    tracker.mark_tool_start()
                 tool_exec_result = await self.tool_provider.execute_tool(tool_call_req)
                 timing["tool_execution_ms"] = round((time.perf_counter() - t_tool) * 1000, 2)
+                if tracker:
+                    tracker.mark_tool_end()
 
                 if tool_exec_result.success:
                     # Verified Success: update state
@@ -1068,6 +1212,9 @@ class ConversationEngine:
             total_turn_ms,
             timing,
         )
+
+        if tracker:
+            tracker.mark_response_ready()
 
         return EngineTurnResult(
             response_text=final_response_text,

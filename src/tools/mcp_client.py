@@ -349,6 +349,20 @@ class HttpMCPToolProvider(BaseMCPClient):
     ) -> None:
         super().__init__(settings=settings, email_provider=email_provider)
         self.endpoint = self.settings.mcp_server_url
+        self._client: Optional[httpx.AsyncClient] = None
+
+    async def _get_client(self, timeout: float) -> httpx.AsyncClient:
+        """Get or initialize persistent AsyncClient with HTTP connection pooling."""
+        if self._client is None or self._client.is_closed:
+            limits = httpx.Limits(max_keepalive_connections=10, max_connections=20, keepalive_expiry=30.0)
+            self._client = httpx.AsyncClient(timeout=timeout, limits=limits)
+        return self._client
+
+    async def aclose(self) -> None:
+        """Close persistent HTTP client session."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
 
     async def _dispatch(self, request: ValidatedToolRequest) -> ToolResult:
         if request.action_name == "send_email" and self.email_provider:
@@ -409,76 +423,76 @@ class HttpMCPToolProvider(BaseMCPClient):
         }
 
         timeout = getattr(self.settings, "mcp_timeout_seconds", 15.0)
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            try:
-                resp = await client.post(self.endpoint, json=payload)
-                if resp.status_code == 401 or resp.status_code == 403:
-                    return ToolResult(
-                        action_name=request.action_name,
-                        requested=True,
-                        failed=True,
-                        error=f"MCP authentication error HTTP {resp.status_code}",
-                    )
-                if resp.status_code != 200:
-                    return ToolResult(
-                        action_name=request.action_name,
-                        requested=True,
-                        failed=True,
-                        error=f"MCP server error HTTP {resp.status_code}: {resp.text}",
-                    )
-
-                body = resp.json()
-                if "error" in body:
-                    return ToolResult(
-                        action_name=request.action_name,
-                        requested=True,
-                        failed=True,
-                        error=str(body["error"]),
-                    )
-
-                res_data = body.get("result", {})
-                if res_data.get("isError"):
-                    return ToolResult(
-                        action_name=request.action_name,
-                        requested=True,
-                        started=True,
-                        succeeded=False,
-                        failed=True,
-                        error=res_data.get("error") or "Tool execution reported error",
-                        data=res_data,
-                    )
-
-                ext_ref = (
-                    res_data.get("external_reference")
-                    or res_data.get("id")
-                    or res_data.get("message_id")
-                    or res_data.get("event_id")
-                    or res_data.get("lead_id")
-                    or res_data.get("ticket_id")
+        client = await self._get_client(timeout)
+        try:
+            resp = await client.post(self.endpoint, json=payload)
+            if resp.status_code == 401 or resp.status_code == 403:
+                return ToolResult(
+                    action_name=request.action_name,
+                    requested=True,
+                    failed=True,
+                    error=f"MCP authentication error HTTP {resp.status_code}",
                 )
+            if resp.status_code != 200:
+                return ToolResult(
+                    action_name=request.action_name,
+                    requested=True,
+                    failed=True,
+                    error=f"MCP server error HTTP {resp.status_code}: {resp.text}",
+                )
+
+            body = resp.json()
+            if "error" in body:
+                return ToolResult(
+                    action_name=request.action_name,
+                    requested=True,
+                    failed=True,
+                    error=str(body["error"]),
+                )
+
+            res_data = body.get("result", {})
+            if res_data.get("isError"):
                 return ToolResult(
                     action_name=request.action_name,
                     requested=True,
                     started=True,
-                    succeeded=True,
+                    succeeded=False,
+                    failed=True,
+                    error=res_data.get("error") or "Tool execution reported error",
                     data=res_data,
-                    external_reference=ext_ref,
                 )
-            except httpx.TimeoutException:
-                return ToolResult(
-                    action_name=request.action_name,
-                    requested=True,
-                    started=True,
-                    failed=True,
-                    error=f"MCP tool request timed out after {timeout}s.",
-                )
-            except Exception as exc:
-                return ToolResult(
-                    action_name=request.action_name,
-                    requested=True,
-                    failed=True,
-                    error=f"Network error contacting MCP server: {exc}",
-                )
+
+            ext_ref = (
+                res_data.get("external_reference")
+                or res_data.get("id")
+                or res_data.get("message_id")
+                or res_data.get("event_id")
+                or res_data.get("lead_id")
+                or res_data.get("ticket_id")
+            )
+            return ToolResult(
+                action_name=request.action_name,
+                requested=True,
+                started=True,
+                succeeded=True,
+                data=res_data,
+                external_reference=ext_ref,
+            )
+        except httpx.TimeoutException:
+            return ToolResult(
+                action_name=request.action_name,
+                requested=True,
+                started=True,
+                failed=True,
+                error=f"MCP tool request timed out after {timeout}s.",
+            )
+        except Exception as exc:
+            return ToolResult(
+                action_name=request.action_name,
+                requested=True,
+                failed=True,
+                error=f"Network error contacting MCP server: {exc}",
+            )
 
     def list_tools(self) -> List[Dict[str, Any]]:
         return [{"name": a} for a in [

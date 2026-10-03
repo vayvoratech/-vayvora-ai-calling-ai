@@ -390,28 +390,28 @@ class Settings(BaseSettings):
         description="Silero VAD speech termination threshold",
     )
     vad_min_speech_duration_ms: int = Field(
-        default=160,
+        default=120,
         ge=32,
         le=2000,
         alias="VAD_MIN_SPEECH_DURATION_MS",
         description="Minimum consecutive speech duration in milliseconds to trigger speech start",
     )
     vad_min_silence_duration_ms: int = Field(
-        default=400,
+        default=250,
         ge=64,
         le=2000,
         alias="VAD_MIN_SILENCE_DURATION_MS",
         description="Silence duration in milliseconds required to trigger speech end",
     )
     vad_pre_roll_ms: int = Field(
-        default=300,
+        default=160,
         ge=0,
         le=1000,
         alias="VAD_PRE_ROLL_MS",
         description="Pre-roll buffer duration in milliseconds to preserve initial speech consonants",
     )
     pre_stt_min_duration_ms: int = Field(
-        default=200,
+        default=150,
         ge=50,
         le=2000,
         alias="PRE_STT_MIN_DURATION_MS",
