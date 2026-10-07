@@ -6,6 +6,7 @@ Description:
 Persona:
 {persona_guidelines}
 
+
 Supported intents:
 {supported_intents}
 

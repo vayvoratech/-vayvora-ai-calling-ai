@@ -1,0 +1,41 @@
+# ==============================================================================
+# Unified Real-Time Conversational AI Voice Agent Dependencies
+# Python: >=3.11, <3.13
+# ==============================================================================
+
+# Core API, Web Server & WebSocket Streaming
+fastapi>=0.110.0,<1.0.0
+uvicorn[standard]>=0.28.0,<1.0.0
+websockets>=12.0,<17.0
+jinja2>=3.1.0,<4.0.0
+python-multipart>=0.0.9
+
+# Environment & Configuration Management
+python-dotenv>=1.0.0
+pydantic>=2.7.0,<3.0.0
+pydantic-settings>=2.2.0,<3.0.0
+
+# HTTP & AI Client Libraries
+httpx>=0.27.0,<1.0.0
+openai>=1.0.0
+groq>=0.9.0,<2.0.0
+
+# Audio Processing, Signal Engineering & VAD
+numpy>=1.26.0
+scipy>=1.12.0
+soundfile>=0.12.0
+onnxruntime>=1.17.0
+pywebrtc-audio>=0.1.0
+
+# RAG, Vector Search & Embeddings
+redis>=5.0.0,<9.0.0
+fastembed>=0.8.0,<1.0.0
+
+# Relational Database Persistence (PostgreSQL)
+asyncpg>=0.29.0
+sqlalchemy>=2.0.0
+greenlet>=3.0.0
+
+# Testing & Development
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
