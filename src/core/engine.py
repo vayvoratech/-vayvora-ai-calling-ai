@@ -246,10 +246,22 @@ class ConversationEngine:
         ):
             opening_text = self._generate_deterministic_outbound_opening(state, domain_config)
 
-        # 4. Construct initial ConversationalDecision
+        # 4. Outbound identity-first opening. Do not discuss the campaign purpose until
+        # the person on the line has been identified/verified.
+        contact_name = (state.caller.name or state.contact_name or "").strip()
+        if contact_name:
+            opening_text = f"Hi, I'm calling from {domain_config.name}. Am I speaking with {contact_name}?"
+            pending_q = f"Am I speaking with {contact_name}?"
+        else:
+            opening_text = f"Hi, I'm calling from {domain_config.name}. May I know who I'm speaking with?"
+            pending_q = "May I know who I'm speaking with?"
+            state.update_slot("outbound_identity_name_pending", True)
+
+        state.update_slot("outbound_identity_verified", False)
+
         decision = ConversationalDecision(
             detected_domain=state.current_domain,
-            detected_intent="outbound_greeting",
+            detected_intent="identity_verification",
             proposed_stage=ConversationStage.GREETING,
             user_facing_response=opening_text,
             action_proposed=False,
@@ -258,12 +270,7 @@ class ConversationEngine:
 
         # 5. Update state
         state.set_stage(ConversationStage.GREETING)
-        state.set_intent("outbound_greeting", clear_pending_question=False)
-        pending_q = (
-            "Is this a good time for a quick conversation?"
-            if state.current_domain == DomainType.VAYVORA
-            else "Is this a good time to speak for a couple of minutes?"
-        )
+        state.set_intent("identity_verification", clear_pending_question=False)
         state.set_pending_question(pending_q)
         state.conversation_active = True
 
@@ -357,11 +364,197 @@ class ConversationEngine:
                 return f"{greeting_contact}{intro} I'm reaching out to understand whether {target_org} is currently exploring {r_clean}. Is this a good time for a quick conversation?"
             return f"{greeting_contact}{intro} I'm reaching out to understand whether {target_org} is currently exploring AI or automation solutions. Is this a good time for a quick conversation?"
 
+    @staticmethod
+    def _voice_spell_email(email: str) -> str:
+        """Render an email address in a voice-friendly confirmation format."""
+        email = (email or "").strip()
+        if "@" not in email:
+            return email
+        local, domain = email.rsplit("@", 1)
+        if "." in domain:
+            host, tld = domain.rsplit(".", 1)
+            domain_text = f"{host} dot {tld}"
+        else:
+            domain_text = domain
+        return f"{'-'.join(local)} at {domain_text}"
+
+    @staticmethod
+    def _extract_spoken_name(message: str) -> Optional[str]:
+        """Extract a caller-provided name from common natural voice responses."""
+        text = (message or "").strip()
+        if not text:
+            return None
+        patterns = [
+            r"^(?:i am|i'm|im|this is|it's|it is)\s+([A-Za-z][A-Za-z .'-]{0,60})[.!?]?$",
+        ]
+        for pattern in patterns:
+            m = re.match(pattern, text, flags=re.IGNORECASE)
+            if m:
+                value = (m.group(1) if m.lastindex else m.group(0)).strip(" .,!?")
+                if value and value.lower() not in {"here", "speaking"}:
+                    return value
+        # A short name-only response is acceptable, but do not treat acknowledgements as names.
+        if len(text.split()) <= 3 and re.fullmatch(r"[A-Za-z][A-Za-z .'-]{1,40}", text):
+            if text.lower() not in {"yes", "yeah", "yep", "sure", "okay", "ok", "no", "nope", "hello", "hi", "hey"}:
+                return text.strip(" .,!?")
+        return None
+
+    @staticmethod
+    def _is_identity_confirmation(message: str) -> bool:
+        text = (message or "").strip().lower()
+        return text in {
+            "yes", "yeah", "yep", "yes speaking", "speaking", "that's me", "that is me",
+            "this is me", "correct", "right", "yes this is me", "yes that's me",
+        }
+
+    @staticmethod
+    def _is_identity_denial(message: str) -> bool:
+        text = (message or "").strip().lower()
+        return text in {
+            "no", "nope", "not me", "wrong person", "you have the wrong person",
+        } or text.startswith("no ") or "wrong number" in text
+
+    @staticmethod
+    def _is_person_unavailable(message: str) -> bool:
+        text = (message or "").strip().lower()
+        return any(p in text for p in [
+            "not here", "isn't here", "is not here", "not available", "isn't available",
+            "is not available", "away", "out right now", "not around",
+        ])
+
+    @staticmethod
+    def _apply_partial_email_correction(current_email: str, message: str) -> Optional[str]:
+        """Apply a spoken local correction such as 'not powan, pawan' to the current email."""
+        if not current_email or not message:
+            return None
+        text = message.strip()
+        # Common STT forms: "not powan, pawan" / "not powan but pawan" / "it's pawan, not powan".
+        patterns = [
+            r"not\s+([a-z0-9._+-]+)\s*(?:,|but|rather|instead)\s*([a-z0-9._+-]+)",
+            r"([a-z0-9._+-]+)\s*(?:,|but)\s*not\s+([a-z0-9._+-]+)",
+        ]
+        for pattern in patterns:
+            m = re.search(pattern, text, flags=re.IGNORECASE)
+            if not m:
+                continue
+            if pattern.startswith("not"):
+                old, new = m.group(1), m.group(2)
+            else:
+                new, old = m.group(1), m.group(2)
+            local, sep, domain = current_email.partition("@")
+            if not sep or not old or not new:
+                continue
+            if old.lower() in local.lower():
+                corrected_local = re.sub(re.escape(old), new, local, count=1, flags=re.IGNORECASE)
+                candidate = f"{corrected_local}@{domain}"
+                return candidate if is_valid_email(candidate) else None
+        return None
+
+    async def _handle_outbound_identity_gate(
+        self, state: ConversationState, cleaned_msg: str
+    ) -> Optional[EngineTurnResult]:
+        """Gate outbound conversation until the intended person is identified."""
+        if state.metadata.direction != CallDirection.OUTBOUND:
+            return None
+
+        verified = state.get_slot("outbound_identity_verified")
+        if verified is True:
+            return None
+
+        designated_name = (state.caller.name or state.contact_name or "").strip()
+        waiting_for_handover = state.get_slot("outbound_handover_pending") is True
+        waiting_for_name = state.get_slot("outbound_identity_name_pending") is True
+
+        response: Optional[str] = None
+        should_end = False
+        identified_name: Optional[str] = None
+
+        if waiting_for_handover:
+            if self._is_person_unavailable(cleaned_msg):
+                response = "No problem. I'll call back another time. Thank you."
+                should_end = True
+            elif self._is_identity_confirmation(cleaned_msg) or (designated_name and designated_name.lower() in cleaned_msg.lower()):
+                state.update_slot("outbound_identity_verified", True)
+                state.update_slot("outbound_handover_pending", False)
+                response = "Thank you. Is this a good time to speak?"
+            else:
+                response = "Sure, could you please hand the phone to the person I was calling for?"
+
+        elif designated_name:
+            if self._is_identity_confirmation(cleaned_msg):
+                state.update_slot("outbound_identity_verified", True)
+                response = "Great. Is this a good time to speak?"
+            elif self._is_identity_denial(cleaned_msg):
+                response = f"Could you please hand the phone to {designated_name}?"
+                state.update_slot("outbound_handover_pending", True)
+            elif self._is_person_unavailable(cleaned_msg):
+                response = "No problem. I'll call back another time. Thank you."
+                should_end = True
+            else:
+                identified_name = self._extract_spoken_name(cleaned_msg)
+                if identified_name and identified_name.lower() != designated_name.lower():
+                    response = f"Could you please hand the phone to {designated_name}?"
+                    state.update_slot("outbound_handover_pending", True)
+                else:
+                    response = f"Am I speaking with {designated_name}?"
+
+        elif waiting_for_name:
+            identified_name = self._extract_spoken_name(cleaned_msg)
+            if identified_name:
+                state.caller.name = identified_name
+                state.update_slot("caller_name", identified_name, sync_caller=True)
+                state.update_slot("outbound_identity_verified", True)
+                state.update_slot("outbound_identity_name_pending", False)
+                response = f"Thanks, {identified_name}. Is this a good time to speak?"
+            elif self._is_person_unavailable(cleaned_msg):
+                response = "No problem. I'll call back another time. Thank you."
+                should_end = True
+            else:
+                response = "Sorry, may I know who I'm speaking with?"
+
+        else:
+            # No trusted/designated name: ask the person on the line to identify themselves.
+            state.update_slot("outbound_identity_name_pending", True)
+            response = "Hi, I'm calling from EduSaaS. May I know who I'm speaking with?" if state.current_domain == DomainType.EDUSAAS else "Hello, I'm calling from Vayvora Technologies. May I know who I'm speaking with?"
+
+        if response is None:
+            return None
+
+        decision = ConversationalDecision(
+            detected_domain=state.current_domain,
+            detected_intent="identity_verification",
+            proposed_stage=ConversationStage.GREETING if not should_end else ConversationStage.COMPLETED,
+            user_facing_response=response,
+            action_proposed=False,
+            knowledge_required=False,
+            suggested_termination=should_end,
+        )
+        state.record_turn(TurnRole.CALLER, cleaned_msg, intent="identity_verification")
+        state.record_turn(TurnRole.AGENT, response)
+        if should_end:
+            state.request_termination(reason="designated_person_unavailable")
+            state.conversation_active = False
+        else:
+            state.set_stage(ConversationStage.GREETING)
+            state.set_intent("identity_verification", clear_pending_question=False)
+            state.set_pending_question("Is this a good time to speak?")
+        return EngineTurnResult(
+            response_text=response,
+            decision=decision,
+            conversation_active=not should_end,
+            termination_occurred=should_end,
+        )
+
     async def process_user_turn(
         self, state: ConversationState, user_message: str, tracker: Optional[Any] = None
     ) -> EngineTurnResult:
         """Process an incoming caller utterance and advance conversation state."""
         cleaned_msg = user_message.strip()
+
+        # Outbound identity must be verified before any course, RAG, email, or action flow.
+        identity_result = await self._handle_outbound_identity_gate(state, cleaned_msg)
+        if identity_result is not None:
+            return identity_result
 
         # 1. Check for immediate explicit termination from user utterance
         if ConversationState.is_explicit_termination(cleaned_msg):
@@ -664,7 +857,7 @@ class ConversationEngine:
             action_proposed = True
 
         # Promote to email action if caller is requesting brochure/details or answering pending email request
-        target_email = explicit_email_corr or extracted_email or state.caller.email
+        target_email = explicit_email_corr or extracted_email
         is_email_request = any(
             phrase in cleaned_msg.lower()
             for phrase in [
@@ -760,6 +953,121 @@ class ConversationEngine:
 
         if action_proposed and decision.proposed_action:
             state.set_pending_action(decision.proposed_action.tool_name)
+
+        # Continue a pending email action after the caller confirms the address, even if
+        # the LLM's current turn does not independently propose the tool.
+        if (
+            not action_proposed
+            and prior_pending_action == "send_email"
+            and state.get_slot("email_confirmation_pending")
+            and cleaned_msg.lower().strip() in {"yes", "yeah", "yep", "correct", "that's correct", "that is correct", "yes that's correct", "yes that is correct"}
+        ):
+            confirmed = str(state.get_slot("email_confirmation_pending"))
+            decision.action_proposed = True
+            decision.proposed_action = ProposedAction(
+                tool_name="send_email",
+                arguments={"subject": "Course Details & Curriculum", "recipient": confirmed},
+            )
+            action_proposed = True
+
+        # Email safety gate: never send until the recipient has been explicitly confirmed.
+        if action_proposed and decision.proposed_action and decision.proposed_action.tool_name == "send_email":
+            candidate_email = (
+                explicit_email_corr
+                or extracted_email
+                or (state.caller.email if getattr(state, "contact_email", None) and state.caller.email else None)
+            )
+            confirmed_email = state.get_slot("email_confirmed")
+            pending_email = state.get_slot("email_confirmation_pending")
+
+            # A partial correction such as "not powan, pawan" updates the current candidate.
+            if pending_email:
+                corrected = self._apply_partial_email_correction(str(pending_email), cleaned_msg)
+                if corrected:
+                    candidate_email = corrected
+                    decision.proposed_action.arguments["recipient"] = corrected
+                    state.update_slot("email", corrected, sync_caller=True)
+                    state.caller.email = corrected
+                    state.update_slot("email_confirmed", False)
+                    state.update_slot("email_confirmation_pending", corrected)
+                    spell = self._voice_spell_email(corrected)
+                    response = f"Got it. Just to confirm, that's {spell}. Is that correct?"
+                    decision.user_facing_response = response
+                    decision.action_proposed = False
+                    decision.proposed_action = None
+                    action_proposed = False
+                    state.set_pending_action("send_email")
+                    state.set_pending_question("Is that email address correct?")
+                    state.record_turn(TurnRole.CALLER, cleaned_msg)
+                    state.record_turn(TurnRole.AGENT, response)
+                    return EngineTurnResult(
+                        response_text=response,
+                        decision=decision,
+                        action_proposed=False,
+                        proposed_action=None,
+                        conversation_active=True,
+                        termination_occurred=False,
+                    )
+
+                if self._is_identity_confirmation(cleaned_msg) or cleaned_msg.lower().strip() in {"yes", "correct", "that's correct", "that is correct"}:
+                    confirmed_email = str(pending_email)
+                    state.update_slot("email_confirmed", True)
+                    state.update_slot("email_confirmation_pending", None)
+                    candidate_email = confirmed_email
+                    decision.action_proposed = True
+                    decision.proposed_action = ProposedAction(
+                        tool_name="send_email",
+                        arguments={"subject": "Course Details & Curriculum", "recipient": confirmed_email},
+                    )
+                    action_proposed = True
+                elif cleaned_msg.lower().strip() in {"no", "nope", "not correct", "that's not correct", "that is not correct"}:
+                    state.update_slot("email_confirmed", False)
+                    response = "No problem. What email address should I use instead?"
+                    decision.user_facing_response = response
+                    decision.action_proposed = False
+                    decision.proposed_action = None
+                    action_proposed = False
+                    state.set_pending_action("send_email")
+                    state.set_pending_question("What email address should I use instead?")
+                    state.record_turn(TurnRole.CALLER, cleaned_msg)
+                    state.record_turn(TurnRole.AGENT, response)
+                    return EngineTurnResult(
+                        response_text=response,
+                        decision=decision,
+                        action_proposed=False,
+                        proposed_action=None,
+                        conversation_active=True,
+                        termination_occurred=False,
+                    )
+
+            # If no recipient exists, let the existing deterministic guard ask for it.
+            if candidate_email and is_valid_email(str(candidate_email)) and not state.get_slot("email_confirmed"):
+                candidate_email = str(candidate_email)
+                state.update_slot("email", candidate_email, sync_caller=True)
+                state.caller.email = candidate_email
+                state.update_slot("email_confirmation_pending", candidate_email)
+                state.update_slot("email_confirmed", False)
+                spell = self._voice_spell_email(candidate_email)
+                response = f"Just to confirm, that's {spell}. Is that correct?"
+                decision.user_facing_response = response
+                decision.action_proposed = False
+                decision.proposed_action = None
+                action_proposed = False
+                state.set_pending_action("send_email")
+                state.set_pending_question("Is that email address correct?")
+                state.record_turn(TurnRole.CALLER, cleaned_msg)
+                state.record_turn(TurnRole.AGENT, response)
+                return EngineTurnResult(
+                    response_text=response,
+                    decision=decision,
+                    action_proposed=False,
+                    proposed_action=None,
+                    conversation_active=True,
+                    termination_occurred=False,
+                )
+
+            if state.get_slot("email_confirmed") and confirmed_email:
+                decision.proposed_action.arguments["recipient"] = confirmed_email
 
         # 10. Handle Grounded Knowledge Retrieval (Phase 4)
         grounded_citations: List[str] = []
@@ -906,7 +1214,7 @@ class ConversationEngine:
                 tool_args["caller_email"] = state.caller.email
             if "email" not in tool_args and state.caller.email and state.caller.email.strip().lower() not in prohibited_vals:
                 tool_args["email"] = state.caller.email
-            if "recipient" not in tool_args and state.caller.email and state.caller.email.strip().lower() not in prohibited_vals:
+            if "recipient" not in tool_args and state.get_slot("email_confirmed") and state.caller.email and state.caller.email.strip().lower() not in prohibited_vals:
                 tool_args["recipient"] = state.caller.email
             if "caller_phone" not in tool_args and state.caller.phone and state.caller.phone.strip().lower() not in prohibited_vals:
                 tool_args["caller_phone"] = state.caller.phone
@@ -914,7 +1222,7 @@ class ConversationEngine:
                 tool_args["domain"] = state.current_domain.value
 
             # Guard 1: Deterministic Email Safety Guard
-            recipient = (tool_args.get("recipient") or tool_args.get("email") or state.caller.email or "").strip()
+            recipient = (tool_args.get("recipient") or tool_args.get("email") or (state.caller.email if state.get_slot("email_confirmed") else "") or "").strip()
             if recipient.lower() in prohibited_vals:
                 recipient = ""
 
@@ -1061,15 +1369,15 @@ class ConversationEngine:
                             topic_disp = (tool_args.get("topic_display") or "").lower()
                             msg_low = cleaned_msg.lower()
                             if "data science" in msg_low or "data science" in topic_disp:
-                                speech_confirmation = f"I've sent the Data Science course information to {recipient}."
+                                speech_confirmation = f"I've sent the complete course details and enrollment link to {recipient}."
                             elif bool(re.search(r"\b(ai|artificial intelligence|machine learning)\b", msg_low)) or "artificial intelligence" in topic_disp:
-                                speech_confirmation = f"I've sent the AI course information to {recipient}."
+                                speech_confirmation = f"I've sent the complete course details and enrollment link to {recipient}."
                             elif "admission" in msg_low or "admission" in topic_disp:
-                                speech_confirmation = f"I've sent the admission information to {recipient}."
+                                speech_confirmation = f"I've sent the complete course details and enrollment link to {recipient}."
                             elif "pricing" in msg_low or "fee" in msg_low or "pricing" in topic_disp:
-                                speech_confirmation = f"I've sent the tuition and pricing details to {recipient}."
+                                speech_confirmation = f"I've sent the complete course details and enrollment link to {recipient}."
                             else:
-                                speech_confirmation = f"I've sent the course details to {recipient}."
+                                speech_confirmation = f"I've sent the complete course details and enrollment link to {recipient}."
                         else:
                             speech_confirmation = f"I've sent the details to {recipient}."
 
