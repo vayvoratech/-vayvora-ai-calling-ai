@@ -261,7 +261,7 @@ class VoiceSessionManager:
                     continue
 
                 try:
-                    vad_result = audio_processor.process_with_vad(audio_bytes)
+                    vad_result = await asyncio.to_thread(audio_processor.process_with_vad, audio_bytes)
                 except Exception as vad_err:
                     logger.debug("VAD processing error: %s", vad_err)
                     continue
@@ -288,12 +288,10 @@ class VoiceSessionManager:
 
                 # 3. Speech-to-Text
                 try:
-                    transcript = self.stt_service.transcribe_pcm16(speech_audio).strip()
+                    raw_transcript = await asyncio.to_thread(self.stt_service.transcribe_pcm16, speech_audio)
+                    transcript = raw_transcript.strip()
                 except Exception as e:
                     logger.warning("[STT] Transcription error: %s", e)
-                    continue
-
-                if not transcript:
                     continue
 
                 await safe_send(websocket, ws_lock, {"type": "transcript", "text": transcript})
