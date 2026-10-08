@@ -463,8 +463,18 @@ def bootstrap_workbench(
         notes.append("Email: MockEmailProvider active")
 
     tool_mode = "MOCK"
-    can_use_live_mcp = not force_mock and (live_tools or is_mcp_available(cfg.mcp_server_url))
 
+    # MCP is explicitly enabled by the application.
+    # Do not depend on a network health probe to decide whether
+    # the HTTP MCP provider should be constructed.
+    can_use_live_mcp = (
+        not force_mock
+        and bool(cfg.mcp_server_url)
+        and (
+            live_tools
+            or is_mcp_available(cfg.mcp_server_url)
+        )
+    )
     if can_use_live_mcp:
         try:
             tool_provider: Optional[ToolProvider] = HttpMCPToolProvider(settings=cfg, email_provider=email_provider)

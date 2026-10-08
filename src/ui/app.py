@@ -64,7 +64,9 @@ def get_service() -> WorkbenchService:
     global _workbench_service
     if _workbench_service is None:
         logger.info("Bootstrapping WorkbenchService singleton...")
-        _workbench_service = bootstrap_workbench()
+        _workbench_service = bootstrap_workbench(
+            live_tools=True,
+        )
     return _workbench_service
 
 

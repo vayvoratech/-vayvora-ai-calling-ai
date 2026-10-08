@@ -400,8 +400,12 @@ class ConversationEngine:
         return None
 
     @staticmethod
+    def _normalize_confirmation_text(message: str) -> str:
+        return re.sub(r"[.!?,]+$", "", (message or "").strip().lower()).strip()
+
+    @staticmethod
     def _is_identity_confirmation(message: str) -> bool:
-        text = (message or "").strip().lower()
+        text = ConversationEngine._normalize_confirmation_text(message)
         return text in {
             "yes", "yeah", "yep", "yes speaking", "speaking", "that's me", "that is me",
             "this is me", "correct", "right", "yes this is me", "yes that's me",
@@ -762,9 +766,28 @@ class ConversationEngine:
         # Check for email extraction, explicit email correction, or unclear email attempts
         explicit_email_corr = detect_explicit_email_correction(cleaned_msg)
         extracted_email = extract_email_address(cleaned_msg)
+        email_confirmation_pending = state.get_slot("email_confirmation_pending")
+        is_confirming_email = bool(
+            email_confirmation_pending
+            and (
+                prior_pending_action == "send_email"
+                or state.pending_action == "send_email"
+            )
+        )
+
+        last_agent_text = ""
+        for t in reversed(state.history):
+            if t.role == TurnRole.AGENT:
+                last_agent_text = t.content
+                break
+
         is_asking_for_email_address = bool(
-            (prior_pending_question and any(w in prior_pending_question.lower() for w in ["email address", "what email", "share your email", "send the details to", "send the course details to", "send them to"]))
-            or (state.pending_question and any(w in state.pending_question.lower() for w in ["email address", "what email", "share your email", "send the details to", "send the course details to", "send them to"]))
+            not is_confirming_email
+            and (
+                (prior_pending_question and any(w in prior_pending_question.lower() for w in ["email address", "what email", "share your email", "send the details to", "send the course details to", "send them to"]))
+                or (state.pending_question and any(w in state.pending_question.lower() for w in ["email address", "what email", "share your email", "send the details to", "send the course details to", "send them to"]))
+                or (last_agent_text and any(w in last_agent_text.lower() for w in ["email address", "what email", "share your email", "send the details to", "send the course details to", "send them to"]))
+            )
         )
         is_asking_for_topic = bool(
             (prior_pending_question and any(w in prior_pending_question.lower() for w in ["what information", "what would you like me to send", "which course"]))
@@ -773,6 +796,44 @@ class ConversationEngine:
         is_email_context = is_asking_for_email_address or (
             (prior_pending_action == "send_email" or state.pending_action == "send_email") and not is_asking_for_topic
         )
+
+        # Handle accepting an email offer from the agent
+        is_accepting_email_offer = bool(
+            not is_confirming_email
+            and not extracted_email
+            and not explicit_email_corr
+            and not state.get_slot("email_confirmation_pending")
+            and last_agent_text
+            and any(w in last_agent_text.lower() for w in ["send", "email"])
+            and any(w in last_agent_text.lower() for w in ["would you like", "should i send", "to your email", "by email", "course details", "registration link", "registration information"])
+            and self._normalize_confirmation_text(cleaned_msg) in {"yes", "yeah", "yep", "sure", "ok", "okay", "certainly", "please", "yes please", "send it", "send them", "send details", "send me"}
+        )
+        if is_accepting_email_offer:
+            target_topic = state.get_slot("target_course")
+            if target_topic:
+                ask_email_resp = f"Sure. What email address should I send the {target_topic} details to?"
+            elif state.current_domain == DomainType.EDUSAAS or any(w in last_agent_text.lower() for w in ["course", "registration"]):
+                ask_email_resp = "Sure. What email address should I send the course details to?"
+            else:
+                ask_email_resp = "Sure. What email address should I send the details to?"
+            state.set_pending_action("send_email")
+            state.set_pending_question(ask_email_resp)
+            state.record_turn(TurnRole.CALLER, cleaned_msg)
+            state.record_turn(TurnRole.AGENT, ask_email_resp)
+            synthetic_decision = ConversationalDecision(
+                detected_domain=state.current_domain,
+                detected_intent="request_brochure",
+                proposed_stage=ConversationStage.ACTION_CONFIRMATION,
+                user_facing_response=ask_email_resp,
+                action_proposed=False,
+                proposed_action=None,
+            )
+            return EngineTurnResult(
+                response_text=ask_email_resp,
+                decision=synthetic_decision,
+                conversation_active=True,
+                termination_occurred=False,
+            )
 
         # Handle unclear or invalid email attempt
         if (is_asking_for_email_address or is_unclear_or_invalid_email_attempt(cleaned_msg)) and not extracted_email and not explicit_email_corr:
@@ -805,10 +866,9 @@ class ConversationEngine:
             state.update_slot("email", explicit_email_corr, sync_caller=True)
             state.caller.email = explicit_email_corr
         elif extracted_email:
-            if is_email_context or is_asking_for_email_address or not state.caller.email:
-                decision.extracted_slots["email"] = extracted_email
-                state.update_slot("email", extracted_email, sync_caller=True)
-                state.caller.email = extracted_email
+            decision.extracted_slots["email"] = extracted_email
+            state.update_slot("email", extracted_email, sync_caller=True)
+            state.caller.email = extracted_email
 
         # 7. Slot Updates
         for slot_key, slot_val in decision.extracted_slots.items():
@@ -923,16 +983,16 @@ class ConversationEngine:
 
             # Guard: If caller did not explicitly request email and is not answering email address/topic prompt,
             # DO NOT allow LLM to trigger automatic email sending (TEST 14)
-            if not is_explicit_email_request(cleaned_msg) and not is_asking_for_email_address and not is_asking_for_topic and not explicit_email_corr:
+            if not is_explicit_email_request(cleaned_msg) and not is_asking_for_email_address and not is_asking_for_topic and not explicit_email_corr and not (target_email and is_valid_email(target_email)):
                 if action_proposed and decision.proposed_action and decision.proposed_action.tool_name == "send_email":
                     decision.action_proposed = False
                     decision.proposed_action = None
                     action_proposed = False
                     decision.knowledge_required = True
 
-            is_email_act = is_explicit_email_request(cleaned_msg) or is_asking_for_email_address or is_asking_for_topic or bool(explicit_email_corr)
+            is_email_act = is_explicit_email_request(cleaned_msg) or is_asking_for_email_address or is_asking_for_topic or bool(target_email and is_valid_email(target_email))
         else:
-            is_email_act = is_email_context or is_email_request or bool(explicit_email_corr)
+            is_email_act = is_email_context or is_email_request or bool(target_email and is_valid_email(target_email))
 
         if not action_proposed and is_email_act:
             subj = (
@@ -960,7 +1020,7 @@ class ConversationEngine:
             not action_proposed
             and prior_pending_action == "send_email"
             and state.get_slot("email_confirmation_pending")
-            and cleaned_msg.lower().strip() in {"yes", "yeah", "yep", "correct", "that's correct", "that is correct", "yes that's correct", "yes that is correct"}
+            and self._normalize_confirmation_text(cleaned_msg) in {"yes", "yeah", "yep", "correct", "that's correct", "that is correct", "yes that's correct", "yes that is correct"}
         ):
             confirmed = str(state.get_slot("email_confirmation_pending"))
             decision.action_proposed = True
@@ -1009,7 +1069,7 @@ class ConversationEngine:
                         termination_occurred=False,
                     )
 
-                if self._is_identity_confirmation(cleaned_msg) or cleaned_msg.lower().strip() in {"yes", "correct", "that's correct", "that is correct"}:
+                if self._is_identity_confirmation(cleaned_msg) or self._normalize_confirmation_text(cleaned_msg) in {"yes", "correct", "that's correct", "that is correct"}:
                     confirmed_email = str(pending_email)
                     state.update_slot("email_confirmed", True)
                     state.update_slot("email_confirmation_pending", None)
@@ -1020,7 +1080,7 @@ class ConversationEngine:
                         arguments={"subject": "Course Details & Curriculum", "recipient": confirmed_email},
                     )
                     action_proposed = True
-                elif cleaned_msg.lower().strip() in {"no", "nope", "not correct", "that's not correct", "that is not correct"}:
+                elif self._normalize_confirmation_text(cleaned_msg) in {"no", "nope", "not correct", "that's not correct", "that is not correct"}:
                     state.update_slot("email_confirmed", False)
                     response = "No problem. What email address should I use instead?"
                     decision.user_facing_response = response

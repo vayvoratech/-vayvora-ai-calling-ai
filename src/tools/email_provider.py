@@ -168,9 +168,31 @@ class SMTPEmailProvider(EmailProvider):
                 if self.username and password:
                     server.login(self.username, password)
 
-                server.send_message(msg)
+                refused = server.send_message(msg)
 
-            logger.info("Email delivered via SMTP to %s (Message-ID: %s)", recipient, message_id)
+            # smtplib returns a dictionary of recipients rejected by the SMTP server.
+            # Treat any refusal as a failed dispatch instead of falsely reporting success.
+            if isinstance(refused, dict) and bool(refused):
+                refused_detail = "; ".join(
+                    f"{addr}: {detail!r}" for addr, detail in refused.items()
+                )
+                logger.error(
+                    "SMTP server refused recipient(s) for Message-ID %s: %s",
+                    message_id,
+                    refused_detail,
+                )
+                return EmailSendResult(
+                    success=False,
+                    message_id=message_id,
+                    error=f"SMTP recipient refused: {refused_detail}",
+                    status="failed",
+                )
+
+            logger.info(
+                "Email accepted by SMTP server for %s (Message-ID: %s)",
+                recipient,
+                message_id,
+            )
             return EmailSendResult(
                 success=True,
                 message_id=message_id,
