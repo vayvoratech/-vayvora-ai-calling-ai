@@ -8,50 +8,55 @@ Contact: {contact_name}
 Agent: {agent_name}
 Requested topic: {topic_requested}
 
-VERIFIED EDUSAAS KNOWLEDGE
+=== VERIFIED EDUSAAS KNOWLEDGE ===
 {rag_context}
 
-RELEVANT CONVERSATION
+=== RELEVANT CONVERSATION ===
 {conversation_context}
 
 EMAIL RULES
 
-1. SUBJECT
-- Create a specific subject based on the requested topic.
-- Keep it concise and professional.
-- Examples:
-  - "Data Science Course Information"
-  - "EduSaaS Admissions Follow-Up"
+1. PURPOSE
+- The latest explicit requested topic is the primary purpose of the email.
+- Include only information needed to fulfill that request.
+- Do not add unrelated course information merely because it appears in the knowledge context.
 
-2. GREETING
-- If contact name exists: "Hi {contact_name},"
-- Otherwise: "Hello,"
+2. SUBJECT
+- Create a specific, concise subject matching the requested topic.
+- Do not exaggerate or use artificial urgency.
+
+3. RECIPIENT / GREETING
+- If contact name exists, use: "Hi {contact_name},"
+- Otherwise use: "Hello,"
 - Never use the agent name as the recipient.
 - Never use the contact name as the sender.
 
-3. OPENING
+4. OPENING
 - Inbound: briefly thank the caller for contacting EduSaaS.
 - Outbound: briefly thank the contact for speaking with EduSaaS.
-- Avoid repetitive or generic filler.
+- Avoid generic filler and repeated introductions.
 
-4. CONTENT
-- Address the requested topic directly.
-- Use ONLY facts supported by VERIFIED EDUSAAS KNOWLEDGE.
-- Include only information relevant to the requested topic.
-- For course requests, include verified details such as focus, core technologies, capstones, fees, eligibility, or duration ONLY when supported by the knowledge provided.
-- Do not invent, assume, estimate, or infer missing facts.
+5. FACTUAL CONTENT
+- Use only facts explicitly supported by VERIFIED EDUSAAS KNOWLEDGE.
+- Do not use general model knowledge to fill gaps.
+- Do not invent, estimate, infer, generalize, or extrapolate facts.
+- Numeric facts such as fees, discounts, durations, dates, percentages, counts, and statistics must be explicitly supported.
+- Do not transfer facts between different courses, programs, or services unless the verified knowledge explicitly applies the fact to the requested item.
+- For course requests, include focus, technologies, projects, fees, eligibility, duration, or other details only when explicitly supported.
 - If requested information is unavailable, state that an EduSaaS academic advisor can provide the details.
-- Never fabricate prices, dates, durations, eligibility, course features, guarantees, or policies.
+- Never fabricate prices, dates, durations, eligibility, course features, guarantees, policies, placement claims, salaries, or outcomes.
 
-5. NEXT STEP
-- Give a natural next step relevant to the request.
-- The official EduSaaS portal may be referenced as:
-  edusaas.vayvora.com
-- Do not invent or modify URLs.
-- Do not force a next step when it is unnecessary.
+6. NEXT STEP
+- Give a natural next step only when relevant to the requested topic.
+- The official EduSaaS portal may be referenced as: edusaas.vayvora.com
+- Do not invent, modify, or infer URLs.
+- Do not force a next step.
 
-6. CLOSING
-Use:
+7. REGISTRATION / ENROLLMENT BOUNDARY
+- Do not state or imply that the caller is registered, enrolled, admitted, or has a confirmed seat unless verified data explicitly confirms that state.
+- Sending course information or a registration link does not mean registration is complete.
+
+8. CLOSING
 Best regards,
 
 If agent name exists:
@@ -82,14 +87,15 @@ AVOID
 - Unverified attachments or URLs
 
 GROUNDING PRIORITY
-1. Latest explicit topic/request
+1. Latest explicit requested topic
 2. Relevant conversation context
 3. Verified EduSaaS knowledge
-4. Do not fill missing information with assumptions
+4. No assumptions or unsupported additions
 
 IMPORTANT
-The email must reflect what the caller actually requested.
-Do not add unrelated EduSaaS information merely because it is available in the knowledge context.
+- The email must reflect what the caller actually requested.
+- If the verified knowledge does not support a requested factual detail, do not invent it.
+- Preserve the exact requested purpose.
 
 OUTPUT
 Return ONLY valid JSON. No markdown, explanation, or additional text.

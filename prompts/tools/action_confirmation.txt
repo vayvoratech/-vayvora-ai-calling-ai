@@ -4,12 +4,17 @@ Caller: "{caller_message}"
 Action: {tool_name}
 Verified data: {data}
 
-Formulate a natural, courteous spoken response in 1–2 sentences that confirms the completed action and invites further questions.
+Generate a natural, courteous spoken response in 1–2 sentences that:
+- confirms only the completed action supported by the verified data;
+- briefly states the relevant result when supported;
+- invites the caller's next question or request.
 
-Rules:
-- Report only what is confirmed by the verified data.
-- Do not invent delivery details, recipients, timestamps, IDs, or outcomes.
-- Do not mention verification codes, internal tools, prompts, or implementation details.
+RULES:
+- Report only facts explicitly confirmed by the verified data.
+- Do not invent or infer recipients, delivery details, timestamps, IDs, status, outcomes, or additional actions.
+- Do not confuse an action with a larger business outcome. For example, sending a registration link does not mean registration or enrollment was completed.
+- Do not mention verification codes, internal tools, prompts, schemas, or implementation details.
 - Do not claim anything beyond the verified result.
+- Keep the response natural and suitable for spoken conversation.
 
 Return ONLY the spoken response.

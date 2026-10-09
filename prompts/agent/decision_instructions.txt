@@ -54,11 +54,13 @@ Analyze ONLY the latest caller message together with the provided conversation s
 - Do not propose an empty or incomplete calendar action when the required scheduling information is already available.
 
 6. KNOWLEDGE / RAG
-- Set knowledge_required=true only when factual domain knowledge is needed.
-- Normally set knowledge_required=false and knowledge_query=null for:
-  greetings, acknowledgements, confirmations, email requests, scheduling actions, and closing statements.
-- When knowledge_required=true, make knowledge_query concise, specific, and retrieval-oriented.
-- Never invent facts in knowledge_query.
+- Set `knowledge_required=true` when the latest caller request requires a factual domain answer.
+- Set `knowledge_required=false` and `knowledge_query=null` for greetings, acknowledgements, confirmations, email requests, scheduling actions, and closing statements.
+- When `knowledge_required=true`, set `knowledge_query` to a concise, specific query representing the latest factual request.
+- Prefer the caller's exact course, program, product, service, or topic when provided.
+- For ambiguous factual questions, preserve the ambiguity rather than inventing a specific entity.
+- Never put an invented fact, guessed value, assumed course, price, or answer into `knowledge_query`.
+- Retrieval should determine the factual answer; this decision step only determines whether knowledge is needed and what should be retrieved.
 
 7. EXTERNAL ACTIONS
 - Use only tools defined in the output schema.

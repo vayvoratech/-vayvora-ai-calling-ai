@@ -380,23 +380,63 @@ class ConversationEngine:
 
     @staticmethod
     def _extract_spoken_name(message: str) -> Optional[str]:
-        """Extract a caller-provided name from common natural voice responses."""
-        text = (message or "").strip()
+        """Extract a caller-provided name without including correction wording."""
+        text = re.sub(r"\s+", " ", (message or "").strip())
         if not text:
             return None
+
+        # Explicit self-identification. Stop before correction clauses or trailing punctuation.
         patterns = [
-            r"^(?:i am|i'm|im|this is|it's|it is)\s+([A-Za-z][A-Za-z .'-]{0,60})[.!?]?$",
+            r"^(?:my name is|name is|call me)\s+(.+?)"
+            r"(?:\s+(?:not|but)\s+.+)?[.!?]?$",
+            r"^(?:i am|i'm|im|this is|it's|it is)\s+(.+?)"
+            r"(?:\s+(?:not|but)\s+.+)?[.!?]?$",
         ]
         for pattern in patterns:
             m = re.match(pattern, text, flags=re.IGNORECASE)
             if m:
-                value = (m.group(1) if m.lastindex else m.group(0)).strip(" .,!?")
-                if value and value.lower() not in {"here", "speaking"}:
+                value = re.sub(r"[.!?,]+$", "", m.group(1)).strip()
+                if value and value.lower() not in {"here", "speaking", "not", "correct"}:
                     return value
-        # A short name-only response is acceptable, but do not treat acknowledgements as names.
+
+        # A short name-only response is acceptable, but not an acknowledgement.
         if len(text.split()) <= 3 and re.fullmatch(r"[A-Za-z][A-Za-z .'-]{1,40}", text):
-            if text.lower() not in {"yes", "yeah", "yep", "sure", "okay", "ok", "no", "nope", "hello", "hi", "hey"}:
+            if text.lower() not in {
+                "yes", "yeah", "yep", "sure", "okay", "ok", "no", "nope",
+                "hello", "hi", "hey", "correct", "that's right",
+            }:
                 return text.strip(" .,!?")
+        return None
+
+    @staticmethod
+    def _apply_partial_name_correction(current_name: str, message: str) -> Optional[str]:
+        """Correct a name when the caller says, for example, 'Pawan, not Powan'."""
+        if not current_name or not message:
+            return None
+
+        text = re.sub(r"[.!?]+", " ", message.strip())
+        text = re.sub(r"\s+", " ", text).strip()
+        patterns = [
+            r"(?:my name is|name is|call me|it is|it's|its|i am|i'm|im)\s+([A-Za-z][A-Za-z .'-]{0,40}?)\s+not\s+([A-Za-z][A-Za-z .'-]{0,40})$",
+            r"([A-Za-z][A-Za-z'-]*)\s+not\s+([A-Za-z][A-Za-z'-]*)$",
+            r"not\s+([A-Za-z][A-Za-z'-]*)\s*(?:,|but|rather|instead)\s*([A-Za-z][A-Za-z'-]*)$",
+        ]
+        for index, pattern in enumerate(patterns):
+            match = re.search(pattern, text, flags=re.IGNORECASE)
+            if not match:
+                continue
+            if index in (0, 1):
+                new_part, old_part = match.group(1).strip(), match.group(2).strip()
+            else:
+                old_part, new_part = match.group(1).strip(), match.group(2).strip()
+
+            if old_part.lower() not in current_name.lower():
+                continue
+            corrected = re.sub(
+                re.escape(old_part), new_part, current_name, count=1, flags=re.IGNORECASE
+            )
+            if corrected.strip() and corrected.lower() != current_name.lower():
+                return corrected.strip()
         return None
 
     @staticmethod
@@ -428,30 +468,48 @@ class ConversationEngine:
 
     @staticmethod
     def _apply_partial_email_correction(current_email: str, message: str) -> Optional[str]:
-        """Apply a spoken local correction such as 'not powan, pawan' to the current email."""
+        """Apply spoken local-part corrections while an email confirmation is pending."""
         if not current_email or not message:
             return None
-        text = message.strip()
-        # Common STT forms: "not powan, pawan" / "not powan but pawan" / "it's pawan, not powan".
+
+        text = re.sub(r"[.!?]+", " ", message.strip().lower())
+        text = re.sub(r"\s+", " ", text).strip()
+        local, sep, domain = current_email.partition("@")
+        if not sep or not local or not domain:
+            return None
+
+        # Handle explicit correction forms, including natural STT variants:
+        # "it is pawan not powan", "it's pawan not powan",
+        # "pawan not powan", "not powan, pawan", etc.
         patterns = [
+            r"(?:it is|it's|its)\s+([a-z0-9._+-]+)\s+not\s+([a-z0-9._+-]+)",
+            r"([a-z0-9._+-]+)\s+not\s+([a-z0-9._+-]+)",
             r"not\s+([a-z0-9._+-]+)\s*(?:,|but|rather|instead)\s*([a-z0-9._+-]+)",
             r"([a-z0-9._+-]+)\s*(?:,|but)\s*not\s+([a-z0-9._+-]+)",
         ]
-        for pattern in patterns:
+
+        for index, pattern in enumerate(patterns):
             m = re.search(pattern, text, flags=re.IGNORECASE)
             if not m:
                 continue
-            if pattern.startswith("not"):
+
+            if index in (0, 1):
+                new, old = m.group(1), m.group(2)
+            elif index == 2:
                 old, new = m.group(1), m.group(2)
             else:
                 new, old = m.group(1), m.group(2)
-            local, sep, domain = current_email.partition("@")
-            if not sep or not old or not new:
+
+            if old.lower() not in local.lower():
                 continue
-            if old.lower() in local.lower():
-                corrected_local = re.sub(re.escape(old), new, local, count=1, flags=re.IGNORECASE)
-                candidate = f"{corrected_local}@{domain}"
-                return candidate if is_valid_email(candidate) else None
+
+            corrected_local = re.sub(
+                re.escape(old), new, local, count=1, flags=re.IGNORECASE
+            )
+            candidate = f"{corrected_local}@{domain}"
+            if is_valid_email(candidate) and candidate.lower() != current_email.lower():
+                return candidate
+
         return None
 
     async def _handle_outbound_identity_gate(
@@ -767,6 +825,37 @@ class ConversationEngine:
         explicit_email_corr = detect_explicit_email_correction(cleaned_msg)
         extracted_email = extract_email_address(cleaned_msg)
         email_confirmation_pending = state.get_slot("email_confirmation_pending")
+
+        # Deterministically handle a spoken correction BEFORE LLM intent handling can
+        # overwrite the pending email state. This is critical for turns such as
+        # "it is pawan not powan" followed by "in email".
+        if email_confirmation_pending and not extracted_email and not explicit_email_corr:
+            corrected_pending_email = self._apply_partial_email_correction(
+                str(email_confirmation_pending), cleaned_msg
+            )
+            if corrected_pending_email:
+                state.update_slot("email", corrected_pending_email, sync_caller=True)
+                state.caller.email = corrected_pending_email
+                state.update_slot("email_confirmed", False)
+                state.update_slot("email_confirmation_pending", corrected_pending_email)
+                state.set_pending_action("send_email")
+                state.set_pending_question("Is that email address correct?")
+                spell = self._voice_spell_email(corrected_pending_email)
+                response = f"Got it. Just to confirm, that's {spell}. Is that correct?"
+                decision.user_facing_response = response
+                decision.action_proposed = False
+                decision.proposed_action = None
+                state.record_turn(TurnRole.CALLER, cleaned_msg)
+                state.record_turn(TurnRole.AGENT, response)
+                return EngineTurnResult(
+                    response_text=response,
+                    decision=decision,
+                    action_proposed=False,
+                    proposed_action=None,
+                    conversation_active=True,
+                    termination_occurred=False,
+                )
+
         is_confirming_email = bool(
             email_confirmation_pending
             and (
@@ -780,6 +869,34 @@ class ConversationEngine:
             if t.role == TurnRole.AGENT:
                 last_agent_text = t.content
                 break
+
+        # Keep the caller's name in the canonical profile slot. The LLM may emit
+        # "name" or "contact_name" instead of "caller_name", so normalize aliases.
+        existing_name = (state.caller.name or state.get_slot("caller_name") or "").strip()
+        corrected_name = self._apply_partial_name_correction(existing_name, cleaned_msg) if existing_name else None
+        name_prompt_pending = any(
+            "name" in (question or "").lower()
+            for question in (prior_pending_question, state.pending_question, last_agent_text)
+        )
+        extracted_spoken_name = None
+        if corrected_name:
+            extracted_spoken_name = corrected_name
+        elif name_prompt_pending or re.match(
+            r"^(?:my name is|name is|call me|i am|i'm|im|this is|it's|it is)\\b",
+            cleaned_msg,
+            flags=re.IGNORECASE,
+        ):
+            extracted_spoken_name = self._extract_spoken_name(cleaned_msg)
+
+        if extracted_spoken_name:
+            state.caller.name = extracted_spoken_name
+            state.update_slot("caller_name", extracted_spoken_name, sync_caller=True)
+            # Keep legacy aliases synchronized if they were produced by the LLM.
+            for alias in ("name", "contact_name"):
+                if alias in decision.extracted_slots:
+                    decision.extracted_slots[alias] = extracted_spoken_name
+            decision.extracted_slots["caller_name"] = extracted_spoken_name
+            logger.info("Updated caller name from caller utterance: %s", extracted_spoken_name)
 
         is_asking_for_email_address = bool(
             not is_confirming_email

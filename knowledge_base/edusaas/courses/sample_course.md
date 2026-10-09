@@ -1,24 +1,18 @@
-# EduSaaS — Course Curriculum Structure
-
-> [!NOTE]
-> This document contains sample curriculum information for RAG testing. Replace sample details with officially verified EduSaaS course information before production use.
-
-## Program Structure
-
+EduSaaS — Curriculum Structure Reference
+Document Authority
+- Domain: EduSaaS
+- Document type: General curriculum structure reference
+- Purpose: Retrieve curriculum-phase, learning-format, mentorship, practical-learning, and progression information.
+- This document is a general curriculum reference. It is not the authoritative source for course-specific names, fees, eligibility, duration, schedules, or enrollment status.
+- For course-specific facts, prefer the official EduSaaS course catalog.
+Program Structure
 EduSaaS technical programs are organized into three primary phases:
-
 1. Foundations
 2. Core Specialization
 3. Capstone Projects
-
----
-
-## Phase 1 — Foundations
-
-The Foundations phase introduces learners to the fundamental concepts required for technical learning.
-
-### Topics
-
+Phase 1 — Foundations
+The Foundations phase introduces learners to fundamental concepts required for technical learning.
+Topics
 - Programming fundamentals
 - Python programming
 - Basic algorithms
@@ -27,21 +21,12 @@ The Foundations phase introduces learners to the fundamental concepts required f
 - Problem-solving fundamentals
 - Basic debugging
 - Programming best practices
-
-### Learning Objective
-
+Learning Objective
 Learners should develop a basic programming foundation and become comfortable working with data and solving fundamental programming problems.
-
----
-
-## Phase 2 — Core Specialization
-
-The Core Specialization phase focuses on the technical concepts required for the learner's selected specialization.
-
-### Machine Learning
-
+Phase 2 — Core Specialization
+The Core Specialization phase focuses on technical concepts required for the learner's selected specialization.
+Machine Learning
 Topics may include:
-
 - Machine learning fundamentals
 - Data preprocessing
 - Feature engineering
@@ -49,22 +34,16 @@ Topics may include:
 - Unsupervised learning
 - Model evaluation
 - Model optimization
-
-### Deep Learning
-
+Deep Learning
 Topics may include:
-
 - Neural network fundamentals
 - Neural network architectures
 - Training and validation
 - Model evaluation
 - Transfer learning
 - Deep learning applications
-
-### API Development
-
+API Development
 Topics may include:
-
 - API fundamentals
 - REST APIs
 - Request and response handling
@@ -72,28 +51,18 @@ Topics may include:
 - Database integration
 - API testing
 - Application integration
-
----
-
-## Phase 3 — Capstone Projects
-
-The Capstone phase focuses on applying the concepts learned during the program to practical projects.
-
-### Capstone Areas
-
+Phase 3 — Capstone Projects
+The Capstone phase focuses on applying concepts learned during the program to practical projects.
+Capstone Areas
 Projects may include:
-
 - End-to-end application development
 - Machine learning applications
 - AI applications
 - API-based applications
 - Data-driven applications
 - Production-oriented projects
-
-### Deployment Topics
-
+Deployment Topics
 The capstone phase may cover:
-
 - Application deployment
 - Production configuration
 - Containerization
@@ -101,70 +70,46 @@ The capstone phase may cover:
 - Model deployment
 - Performance evaluation
 - Evaluation benchmarking
-
----
-
-## Learning Formats
-
+Learning Formats
 EduSaaS programs may be offered in different learning formats.
-
-### Weekend Batch
-
-Weekend programs may be conducted on:
-
+Weekend Batch
 - Saturday
 - Sunday
-
-The exact schedule depends on the applicable batch.
-
-### Self-Paced Learning
-
+- Exact schedule depends on the applicable batch.
+Self-Paced Learning
 Self-paced programs allow learners to progress through course material according to their own schedule.
-
 Self-paced learners may have access to mentor office hours where applicable.
-
----
-
-## Mentorship
-
+Mentorship
 Mentor support may include:
-
 - Clarifying technical concepts
 - Helping with course-related questions
 - Providing guidance on projects
 - Discussing learning progress
 - Supporting learners during practical work
-
 The availability and schedule of mentor support depend on the specific program.
-
----
-
-## Practical Learning
-
+Practical Learning
 EduSaaS programs may include practical exercises and projects to help learners apply theoretical concepts.
-
 Practical activities may include:
-
 - Programming exercises
 - Machine learning experiments
 - API development
 - Project assignments
 - Capstone projects
 - Deployment exercises
-
----
-
-## Course Progression
-
+Course Progression
 A typical learner progression is:
-
-```text
 Foundations
-    ↓
+↓
 Core Specialization
-    ↓
+↓
 Practical Projects
-    ↓
+↓
 Capstone Project
-    ↓
+↓
 Deployment / Evaluation
+Retrieval Rules
+- Use this document for questions about the general curriculum structure and progression.
+- Use the Machine Learning and Deep Learning sections for curriculum-topic questions when the requested information is not course-specific.
+- Do not use this document as the source for the AI/ML course fee.
+- Do not use this document to invent course-specific duration, eligibility, schedule, certification, placement, salary, or enrollment information.
+- When a query asks "which EduSaaS course" or asks for a specific course's fee, identity, stack, focus, or capstone, prefer the official course catalog.
