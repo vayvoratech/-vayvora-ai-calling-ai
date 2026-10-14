@@ -1,0 +1,171 @@
+                 RAG KNOWLEDGE
+                      │
+        ┌─────────────┴─────────────┐
+        │                           │
+   STATIC DATA                 DYNAMIC DATA
+        │                           │
+ Company information          Price
+ Project details              Availability
+ Amenities                    Offers
+ Approvals                    Plot inventory
+ Location                     Booking status
+ FAQs                         Site visit
+        │                           │
+ Vector DB                    SQL/Postgres
+
+-------------------------------------------------------------
+
+ https://jbinfraprojects.in/
+        │
+        ├── /about-us/
+        ├── /features-projects/
+        ├── /plot-availability/
+        ├── /contact/
+        │
+        ├── /jbs-pristine-city/
+        ├── /jb-nature-valley/
+        ├── /jbs-serene-city/
+        ├── /jbs-serene-county/
+        ├── /jb-hill-side-county/
+        ├── /jbs-pride/
+        └── ...
+------------------------------------------------------------
+
+
+knowledge_base/
+│
+├── company/
+│   ├── about.md
+│   ├── history.md
+│   ├── vision_mission.md
+│   ├── leadership.md
+│   ├── contact.md
+│   ├── offices.md
+│   ├── faq.md
+│   └── policies.md
+│
+├── projects/
+│   │
+│   ├── pristine_city/
+│   │   ├── overview.md
+│   │   ├── location.md
+│   │   ├── amenities.md
+│   │   ├── approvals.md
+│   │   ├── pricing.md
+│   │   ├── availability.md
+│   │   ├── specifications.md
+│   │   ├── payment_plan.md
+│   │   └── faq.md
+│   │
+│   ├── nature_valley/
+│   │   ├── overview.md
+│   │   ├── location.md
+│   │   ├── amenities.md
+│   │   ├── approvals.md
+│   │   ├── pricing.md
+│   │   ├── availability.md
+│   │   └── faq.md
+│   │
+│   ├── serene_city/
+│   ├── hillside_county/
+│   ├── serene_villas/
+│   ├── serene_county/
+│   ├── serene_resort/
+│   └── jb_pride/
+│
+├── sales/
+│   ├── qualification.md
+│   ├── objections.md
+│   ├── buying_process.md
+│   ├── site_visit.md
+│   ├── payment.md
+│   └── follow_up.md
+│
+├── legal/
+│   ├── rera.md
+│   ├── hmda.md
+│   ├── dtcp.md
+│   ├── documentation.md
+│   └── disclaimers.md
+│
+├── locations/
+│   ├── hyderabad.md
+│   ├── orr.md
+│   ├── airport.md
+│   ├── future_city.md
+│   └── growth_corridors.md
+│
+└── metadata/
+    ├── sources.json
+    ├── projects.json
+    └── knowledge_version.json
+
+
+    --------------------------------------------------------------
+
+    JB Infra Website
+       +
+JB Infra PDFs
+       +
+JB Infra Internal Data
+       +
+JB Infra Sales Information
+       ↓
+   Data Ingestion
+       ↓
+   Normalization
+       ↓
+   Validation
+       ↓
+knowledge_base/
+       ↓
+   Chunking
+       ↓
+  Embeddings
+       ↓
+ Vector Database
+       ↓
+ JB Infra RAG
+       ↓
+ Conversation Agent
+       ↓
+ Guardrails
+       ↓
+ Voice Pipeline
+       ↓
+ Customer
+
+ -------------------------------------------------------------------
+
+                  JB INFRA WEBSITE
+                        │
+                        ↓
+                  URL SEED
+                        │
+                        ↓
+                 ┌─────────────┐
+                 │   CRAWLER   │
+                 └──────┬──────┘
+                        │
+              ┌─────────┴─────────┐
+              ↓                   ↓
+         HTML pages             PDFs
+              │                   │
+              ↓                   ↓
+       HTML extractor        PDF extractor
+              │                   │
+              └─────────┬─────────┘
+                        ↓
+                  TEXT CLEANER
+                        ↓
+                DATA NORMALIZER
+                        ↓
+              STRUCTURED DOCUMENTS
+                        ↓
+                   CHUNKING
+                        ↓
+                  EMBEDDINGS
+                        ↓
+                  VECTOR DB
+                        ↓
+                      RAG

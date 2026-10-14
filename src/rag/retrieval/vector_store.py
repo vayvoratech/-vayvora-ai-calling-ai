@@ -1,240 +1,246 @@
-"""Vector store with NumPy cosine similarity acceleration and Redis integration."""
+"""Vector storage and similarity search for the JB Infra RAG MVP."""
 
 from __future__ import annotations
 
-import json
-import os
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
+
 import numpy as np
 
-from src.logging import get_logger
 from src.rag.config import rag_config
 from src.rag.models import DocumentChunk
-from src.rag.schemas import RetrievalResult
-
-logger = get_logger("rag.vector_store")
 
 
 class RAGVectorStore:
-    """
-    High-performance vector store with local in-memory NumPy acceleration
-    and optional Redis synchronization for sub-millisecond voice latency.
+    """Lightweight vector store for the JB Infra demo.
+
+    The MVP keeps vectors in memory for fast local testing. Redis support
+    can be enabled later without changing the retrieval interface.
     """
 
-    def __init__(self, tenant_id: str = "default"):
+    def __init__(
+        self,
+        tenant_id: str = "default",
+    ) -> None:
         self.tenant_id = tenant_id
-        self.vector_set_name = rag_config.redis_index_name
-        self.metadata_prefix = f"{rag_config.redis_key_prefix}meta:"
-        self._memory_chunks: List[DocumentChunk] = []
-        self._memory_vectors: Optional[np.ndarray] = None
-        self._use_redis = os.getenv("RAG_USE_REDIS", "false").lower() == "true"
-        self._redis_client = None
+        self.vector_dimension = rag_config.embedding_dimension
 
-    def _get_sync_redis(self):
-        if self._redis_client is None:
-            try:
-                import redis
-                self._redis_client = redis.from_url(
-                    rag_config.redis_url,
-                    decode_responses=False,
-                )
-            except Exception as e:
-                logger.debug("Redis sync client init failed: %s", e)
-                self._redis_client = False
-        return self._redis_client if self._redis_client is not False else None
-
-    def _metadata_key(self, chunk_id: str) -> str:
-        return f"{self.metadata_prefix}{chunk_id}"
-
-    def _normalize_vector(self, vector) -> List[float]:
-        array = np.asarray(vector, dtype=np.float32)
-        if array.ndim != 1:
-            raise ValueError("Embedding vector must be one-dimensional.")
-        if len(array) != rag_config.embedding_dimension:
-            raise ValueError(
-                f"Dimension mismatch: expected {rag_config.embedding_dimension}, got {len(array)}"
-            )
-
-        norm = np.linalg.norm(array)
-        if norm == 0:
-            raise ValueError("Cannot search or store a zero vector.")
-        return (array / norm).tolist()
-
-    def create_index(self) -> bool:
-        return True
+        self._vectors: Dict[str, np.ndarray] = {}
+        self._chunks: Dict[str, DocumentChunk] = {}
 
     def add_chunks(
         self,
         chunks: List[DocumentChunk],
         vectors: List[List[float]],
     ) -> int:
+        """Add document chunks and their embeddings."""
+
         if len(chunks) != len(vectors):
-            raise ValueError("Number of chunks and vectors must match.")
+            raise ValueError(
+                "chunks and vectors must have the same length"
+            )
 
-        inserted = 0
-        new_vecs = []
-        for chunk, vector in zip(chunks, vectors):
-            normalized_vector = self._normalize_vector(vector)
-            new_vecs.append(normalized_vector)
+        added = 0
 
-            client = self._get_sync_redis()
-            if self._use_redis and client:
-                try:
-                    metadata = {
-                        "chunk_id": chunk.chunk_id,
-                        "document_id": chunk.document_id,
-                        "tenant_id": chunk.tenant_id,
-                        "text": chunk.text,
-                        "source": chunk.source,
-                        "category": chunk.category,
-                        "section": chunk.section or "",
-                        "version": chunk.version,
-                        "metadata": chunk.metadata,
-                    }
-                    client.set(
-                        self._metadata_key(chunk.chunk_id),
-                        json.dumps(metadata, ensure_ascii=False),
-                    )
-                    inserted += 1
-                except Exception as exc:
-                    logger.debug("Redis chunk sync failed: %s", exc)
-            else:
-                inserted += 1
+        for chunk, vector in zip(
+            chunks,
+            vectors,
+        ):
+            if chunk.tenant_id != self.tenant_id:
+                continue
 
-        # Synchronize to local in-memory NumPy matrix
-        if new_vecs:
-            arr_new = np.array(new_vecs, dtype=np.float32)
-            if self._memory_vectors is not None and len(self._memory_chunks) > 0:
-                self._memory_vectors = np.vstack([self._memory_vectors, arr_new])
-                self._memory_chunks.extend(chunks)
-            else:
-                self._memory_vectors = arr_new
-                self._memory_chunks = list(chunks)
+            normalized = self._normalize_vector(
+                vector
+            )
 
-        return inserted
+            self._vectors[chunk.chunk_id] = normalized
+            self._chunks[chunk.chunk_id] = chunk
+
+            added += 1
+
+        return added
+
+    def add_chunk(
+        self,
+        chunk: DocumentChunk,
+        vector: List[float],
+    ) -> bool:
+        """Add a single chunk and embedding."""
+
+        return (
+            self.add_chunks(
+                chunks=[chunk],
+                vectors=[vector],
+            )
+            == 1
+        )
 
     def search(
         self,
         query_vector: List[float],
-        top_k: Optional[int] = None,
+        top_k: int = 5,
         tenant_id: Optional[str] = None,
-    ) -> List[RetrievalResult]:
-        normalized_vector = self._normalize_vector(query_vector)
-        count = top_k or rag_config.top_k
-        search_count = count * 3 if tenant_id else count
+    ) -> List[tuple[DocumentChunk, float]]:
+        """Return the most similar chunks using cosine similarity."""
 
-        # In-memory NumPy cosine similarity (ultra-fast, <0.05ms)
-        if self._memory_vectors is not None and len(self._memory_chunks) > 0:
-            q_arr = np.asarray(normalized_vector, dtype=np.float32)
-            sims = np.dot(self._memory_vectors, q_arr)
-            top_indices = np.argsort(-sims)[:search_count]
+        if not self._vectors:
+            return []
 
-            results: List[RetrievalResult] = []
-            for idx in top_indices:
-                chunk = self._memory_chunks[idx]
-                if tenant_id and tenant_id not in ("default", "all") and chunk.tenant_id != tenant_id:
-                    continue
+        query = self._normalize_vector(
+            query_vector
+        )
 
-                score = float(sims[idx])
-                results.append(
-                    RetrievalResult(
-                        chunk_id=chunk.chunk_id,
-                        text=chunk.text,
-                        score=score,
-                        source=chunk.source,
-                        category=chunk.category,
-                        section=chunk.section,
-                        metadata={
-                            "document_id": chunk.document_id,
-                            "tenant_id": chunk.tenant_id,
-                            "version": chunk.version,
-                            "cosine_score": score,
-                            **chunk.metadata,
-                        },
-                    )
+        target_tenant = (
+            tenant_id
+            if tenant_id is not None
+            else self.tenant_id
+        )
+
+        scored = []
+
+        for chunk_id, vector in self._vectors.items():
+            chunk = self._chunks.get(chunk_id)
+
+            if chunk is None:
+                continue
+
+            if chunk.tenant_id != target_tenant:
+                continue
+
+            score = float(
+                np.dot(
+                    query,
+                    vector,
                 )
-                if len(results) >= count:
-                    break
+            )
 
-            return results
+            scored.append(
+                (
+                    chunk,
+                    score,
+                )
+            )
 
-        return []
+        scored.sort(
+            key=lambda item: item[1],
+            reverse=True,
+        )
 
-    def delete_chunk(self, chunk_id: str) -> bool:
-        client = self._get_sync_redis()
-        m_del = client.delete(self._metadata_key(chunk_id)) if client else 0
+        return scored[:top_k]
 
-        # Purge from memory
-        new_chunks = []
-        keep_indices = []
-        for idx, chunk in enumerate(self._memory_chunks):
-            if chunk.chunk_id != chunk_id:
-                new_chunks.append(chunk)
-                keep_indices.append(idx)
+    def get_chunk(
+        self,
+        chunk_id: str,
+    ) -> Optional[DocumentChunk]:
+        """Return a stored chunk by ID."""
 
-        self._memory_chunks = new_chunks
-        if self._memory_vectors is not None:
-            if keep_indices:
-                self._memory_vectors = self._memory_vectors[keep_indices]
-            else:
-                self._memory_vectors = None
+        return self._chunks.get(chunk_id)
 
-        return bool(m_del or (len(self._memory_chunks) != len(new_chunks)))
+    def delete_chunk(
+        self,
+        chunk_id: str,
+    ) -> bool:
+        """Delete one chunk."""
 
-    def delete_document(self, document_id: str, tenant_id: str = "default") -> int:
-        deleted = 0
-        client = self._get_sync_redis()
-        if client:
-            keys = client.scan_iter(match=f"{self.metadata_prefix}*")
-            for key in keys:
-                raw = client.get(key)
-                if not raw:
-                    continue
-                if isinstance(raw, bytes):
-                    raw = raw.decode("utf-8")
-                try:
-                    meta = json.loads(raw)
-                    if meta.get("document_id") == document_id and (
-                        tenant_id in ("default", "all") or meta.get("tenant_id") == tenant_id
-                    ):
-                        client.delete(key)
-                        deleted += 1
-                except Exception:
-                    continue
+        existed = (
+            chunk_id in self._chunks
+            or chunk_id in self._vectors
+        )
 
-        # Purge from memory
-        if self._memory_chunks:
-            new_chunks = []
-            keep_indices = []
-            for idx, c in enumerate(self._memory_chunks):
-                match_doc = (c.document_id == document_id or c.source == document_id)
-                match_tenant = (tenant_id in ("default", "all") or c.tenant_id == tenant_id)
-                if match_doc and match_tenant:
-                    deleted += 1
-                else:
-                    new_chunks.append(c)
-                    keep_indices.append(idx)
+        self._chunks.pop(
+            chunk_id,
+            None,
+        )
 
-            self._memory_chunks = new_chunks
-            if self._memory_vectors is not None:
-                if keep_indices:
-                    self._memory_vectors = self._memory_vectors[keep_indices]
-                else:
-                    self._memory_vectors = None
+        self._vectors.pop(
+            chunk_id,
+            None,
+        )
 
-        return deleted
+        return existed
 
-    def delete_all(self, tenant_id: Optional[str] = None) -> Dict[str, Any]:
-        deleted_meta = 0
-        client = self._get_sync_redis()
-        if client:
-            keys = client.scan_iter(match=f"{self.metadata_prefix}*")
-            for k in keys:
-                deleted_meta += client.delete(k)
-            v_del = client.delete(self.vector_set_name)
-        else:
-            v_del = 1
+    def delete_document(
+        self,
+        document_id: str,
+    ) -> int:
+        """Delete all chunks belonging to a document."""
 
-        self._memory_chunks = []
-        self._memory_vectors = None
-        return {"vector_set_deleted": bool(v_del), "metadata_deleted": deleted_meta}
+        chunk_ids = [
+            chunk_id
+            for chunk_id, chunk in self._chunks.items()
+            if (
+                chunk.document_id
+                == document_id
+            )
+            and (
+                chunk.tenant_id
+                == self.tenant_id
+            )
+        ]
+
+        for chunk_id in chunk_ids:
+            self.delete_chunk(chunk_id)
+
+        return len(chunk_ids)
+
+    def delete_all(self) -> int:
+        """Delete all vectors for this tenant."""
+
+        chunk_ids = [
+            chunk_id
+            for chunk_id, chunk in self._chunks.items()
+            if chunk.tenant_id == self.tenant_id
+        ]
+
+        for chunk_id in chunk_ids:
+            self.delete_chunk(chunk_id)
+
+        return len(chunk_ids)
+
+    def count(self) -> int:
+        """Return the number of stored chunks."""
+
+        return sum(
+            1
+            for chunk in self._chunks.values()
+            if chunk.tenant_id == self.tenant_id
+        )
+
+    def health_check(self) -> bool:
+        """Return whether the local vector store is available."""
+
+        return True
+
+    @staticmethod
+    def _normalize_vector(
+        vector: List[float],
+    ) -> np.ndarray:
+        """Validate and L2-normalize a vector."""
+
+        array = np.asarray(
+            vector,
+            dtype=np.float32,
+        )
+
+        if array.ndim != 1:
+            raise ValueError(
+                "Embedding vector must be one-dimensional"
+            )
+
+        if len(array) != rag_config.embedding_dimension:
+            raise ValueError(
+                "Embedding dimension mismatch: "
+                f"expected {rag_config.embedding_dimension}, "
+                f"received {len(array)}"
+            )
+
+        norm = np.linalg.norm(array)
+
+        if norm == 0:
+            return array
+
+        return array / norm
+
+
+__all__ = [
+    "RAGVectorStore",
+]

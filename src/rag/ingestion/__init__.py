@@ -1,18 +1,7 @@
-"""Ingestion package: loaders, chunkers, manifests, and pipelines."""
+"""JB Infra knowledge-base ingestion utilities."""
 
-from src.rag.ingestion.chunker import DocumentChunker, MarkdownChunker
-from src.rag.ingestion.incremental import IncrementalIngestionService
-from src.rag.ingestion.loader import MarkdownDocumentLoader
-from src.rag.ingestion.manifest import DocumentManifest, ManifestStore
-from src.rag.ingestion.pipeline import IngestionPipeline, KnowledgeIngestionPipeline
+from src.rag.ingestion.chunker import chunk_markdown
 
 __all__ = [
-    "DocumentChunker",
-    "MarkdownChunker",
-    "MarkdownDocumentLoader",
-    "DocumentManifest",
-    "ManifestStore",
-    "IncrementalIngestionService",
-    "IngestionPipeline",
-    "KnowledgeIngestionPipeline",
+    "chunk_markdown",
 ]

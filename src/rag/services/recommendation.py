@@ -1,158 +1,191 @@
-"""Course Recommendation Service for EduSaaS and Vayvora Tech.
+"""JB Infra recommendation service for the demo MVP.
 
-Provides tailored curricula recommendations and readiness scoring based on
-learner background, academic year, career goals, and technical domain interests.
+Provides simple project recommendations based on customer preferences.
+This is intentionally lightweight and deterministic for the MVP.
 """
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 
-class CourseRecommendationService:
-    """Intelligent recommendation service mapping learner profile attributes into tailored curricula."""
+PROJECTS = {
+    "pristine_city": {
+        "name": "Pristine City",
+        "keywords": [
+            "vikarabad",
+            "pristine",
+            "dtcp",
+            "rera",
+            "150 acres",
+            "rainwater harvesting",
+        ],
+    },
+    "nature_valley": {
+        "name": "Nature Valley",
+        "keywords": [
+            "nature valley",
+            "700 acres",
+            "cycling",
+            "green zone",
+            "6000 plots",
+        ],
+    },
+    "serene_city": {
+        "name": "Serene City",
+        "keywords": [
+            "ibrahimpatnam",
+            "serene city",
+            "hmda",
+            "villa",
+            "commercial",
+            "clubhouse",
+        ],
+    },
+    "jb_pride": {
+        "name": "JB Pride",
+        "keywords": [
+            "tandur",
+            "mominpet",
+            "jb pride",
+            "sports",
+            "cricket",
+            "amphitheatre",
+            "herbal garden",
+        ],
+    },
+}
+
+
+class ProjectRecommendationService:
+    """Recommend JB Infra projects from customer preferences."""
 
     @staticmethod
-    def get_recommendations(profile: Dict[str, Any]) -> Dict[str, Any]:
-        interests = [str(i).lower() for i in profile.get("interest", [])]
-        year = str(profile.get("year") or "").lower()
-        experience = str(profile.get("experience") or "beginner").lower()
+    def get_recommendations(
+        profile: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Return a small ranked list of relevant projects."""
 
-        has_ai = any("ai" in i or "machine learning" in i or "ml" in i for i in interests)
-        has_fs = any("full" in i or "stack" in i or "web" in i for i in interests)
-        has_ds = any("data" in i or "analytics" in i or "sql" in i for i in interests)
-        has_cloud = any("cloud" in i or "devops" in i or "aws" in i for i in interests)
-        has_cyber = any("cyber" in i or "security" in i or "hacking" in i for i in interests)
-        has_dsa = any("dsa" in i or "algorithm" in i or "system design" in i for i in interests)
+        interests = profile.get(
+            "interest",
+            profile.get("interests", []),
+        )
 
-        # Readiness score
-        readiness_score = 40
-        if "3rd" in year or "third" in year:
-            readiness_score += 2
-        elif "4th" in year or "final" in year:
-            readiness_score += 10
-        elif "2nd" in year or "second" in year:
-            readiness_score -= 2
+        if isinstance(interests, str):
+            interests = [interests]
 
-        if experience in ("intermediate", "moderate"):
-            readiness_score += 15
-        elif experience in ("advanced", "experienced"):
-            readiness_score += 25
+        location = str(
+            profile.get("location", "")
+        ).lower()
 
-        if has_ai and has_fs:
-            return {
-                "recommendedPath": "AI + Full Stack",
-                "courses": [
-                    "Python",
-                    "Machine Learning",
-                    "Generative AI",
-                    "Java/Spring Boot",
-                    "React",
-                ],
-                "readinessScore": readiness_score,
-                "summary": (
-                    "A dual-track combining Full-Stack Web Development fundamentals "
-                    "with Generative AI and intelligent agent architectures."
-                ),
-            }
+        budget = str(
+            profile.get("budget", "")
+        ).lower()
 
-        if has_fs:
-            return {
-                "recommendedPath": "Full-Stack Web Development",
-                "courses": [
-                    "React 19 & Next.js 15",
-                    "Node.js & TypeScript",
-                    "FastAPI & PostgreSQL",
-                    "Docker & Cloud Deployment",
-                    "Full-Stack Production Capstone",
-                ],
-                "readinessScore": readiness_score + 10,
-                "summary": "End-to-end modern web and distributed applications engineering.",
-            }
+        purpose = str(
+            profile.get("purpose", "")
+        ).lower()
 
-        if has_ai:
-            return {
-                "recommendedPath": "AI & Machine Learning",
-                "courses": [
-                    "Python & Numerical Computing",
-                    "Supervised & Unsupervised Machine Learning",
-                    "Deep Learning & PyTorch",
-                    "Generative AI & LLMs",
-                    "Production AI Agent Capstones",
-                ],
-                "readinessScore": readiness_score + 8,
-                "summary": "Deep foundations in modern predictive models and generative AI systems.",
-            }
+        preferences = " ".join(
+            [
+                str(item).lower()
+                for item in interests
+            ]
+        )
 
-        if has_ds:
-            return {
-                "recommendedPath": "Data Science & Analytics",
-                "courses": [
-                    "Python & Pandas",
-                    "Advanced SQL",
-                    "Tableau & Power BI",
-                    "Predictive Modeling",
-                    "Financial Fraud Detection Capstone",
-                ],
-                "readinessScore": readiness_score + 6,
-                "summary": "Data extraction, business intelligence, and predictive statistical analytics.",
-            }
+        preferences = " ".join(
+            [
+                preferences,
+                location,
+                budget,
+                purpose,
+            ]
+        )
 
-        if has_cloud:
-            return {
-                "recommendedPath": "Cloud & DevOps Engineering",
-                "courses": [
-                    "AWS Core Cloud Architecture",
-                    "Docker Containerization",
-                    "Kubernetes Orchestration",
-                    "Terraform Infrastructure as Code",
-                    "CI/CD Production Deployment Capstone",
-                ],
-                "readinessScore": readiness_score + 12,
-                "summary": "Automated cloud infrastructure, container orchestration, and reliability engineering.",
-            }
+        scored_projects: List[Dict[str, Any]] = []
 
-        if has_cyber:
-            return {
-                "recommendedPath": "Cybersecurity & Ethical Hacking",
-                "courses": [
-                    "Kali Linux & Network Security",
-                    "OWASP Top 10 Web Security",
-                    "Penetration Testing & Metasploit",
-                    "SIEM & SOC Incident Response",
-                    "Enterprise Security Audit Capstone",
-                ],
-                "readinessScore": readiness_score + 5,
-                "summary": "Defensive security, ethical penetration testing, and enterprise vulnerability management.",
-            }
+        for project_id, project in PROJECTS.items():
+            score = 0
+            matched_keywords: List[str] = []
 
-        if has_dsa:
-            return {
-                "recommendedPath": "DSA & System Design Masterclass",
-                "courses": [
-                    "250+ LeetCode Patterns",
-                    "Advanced Dynamic Programming & Graphs",
-                    "Low-Level Design (SOLID & Design Patterns)",
-                    "High-Level Distributed Systems Design",
-                    "FAANG-style AI Mock Technical Interviews",
-                ],
-                "readinessScore": readiness_score + 15,
-                "summary": "Competitive algorithmic problem solving and scalable distributed system design.",
-            }
+            for keyword in project["keywords"]:
+                if keyword.lower() in preferences:
+                    score += 1
+                    matched_keywords.append(keyword)
+
+            scored_projects.append(
+                {
+                    "projectId": project_id,
+                    "projectName": project["name"],
+                    "score": score,
+                    "matchedKeywords": matched_keywords,
+                }
+            )
+
+        scored_projects.sort(
+            key=lambda item: item["score"],
+            reverse=True,
+        )
+
+        recommended = [
+            project
+            for project in scored_projects
+            if project["score"] > 0
+        ][:3]
+
+        # If the customer has not supplied enough information,
+        # return the portfolio rather than inventing a preference.
+        if not recommended:
+            recommended = [
+                {
+                    "projectId": project_id,
+                    "projectName": project["name"],
+                    "score": 0,
+                    "matchedKeywords": [],
+                }
+                for project_id, project in list(
+                    PROJECTS.items()
+                )[:3]
+            ]
 
         return {
-            "recommendedPath": "AI + Full Stack",
-            "courses": [
-                "Python",
-                "Machine Learning",
-                "Generative AI",
-                "Java/Spring Boot",
-                "React",
-            ],
-            "readinessScore": readiness_score,
-            "summary": "Comprehensive foundation for software engineering and AI-driven applications.",
+            "recommendedProjects": recommended,
+            "recommendationCount": len(recommended),
+            "profile": profile,
+            "note": (
+                "Recommendations are based only on the supplied "
+                "customer preferences and the JB Infra demo "
+                "knowledge base."
+            ),
         }
 
 
-def get_course_recommendations(profile: Dict[str, Any]) -> Dict[str, Any]:
-    return CourseRecommendationService.get_recommendations(profile)
+def get_project_recommendations(
+    profile: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Compatibility wrapper for project recommendations."""
+
+    return ProjectRecommendationService.get_recommendations(
+        profile
+    )
+
+
+# Backward-compatible aliases for existing imports.
+CourseRecommendationService = ProjectRecommendationService
+
+
+def get_course_recommendations(
+    profile: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Compatibility wrapper retained for existing imports."""
+
+    return get_project_recommendations(profile)
+
+
+__all__ = [
+    "PROJECTS",
+    "ProjectRecommendationService",
+    "get_project_recommendations",
+    "CourseRecommendationService",
+    "get_course_recommendations",
+]
