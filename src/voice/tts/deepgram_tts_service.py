@@ -70,7 +70,10 @@ class DeepgramFluxTTS(TTSProvider):
 
     ):
 
-        self.api_key = api_key or os.getenv("DEEPGRAM_API_KEY")
+        if api_key is not None:
+            self.api_key = api_key if api_key.strip() else None
+        else:
+            self.api_key = os.getenv("DEEPGRAM_API_KEY")
 
 
 

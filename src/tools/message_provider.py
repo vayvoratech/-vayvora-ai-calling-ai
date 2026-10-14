@@ -6,10 +6,10 @@ phone normalization and REST dispatch from legacy MCP WhatsApp tools.
 """
 
 from abc import ABC, abstractmethod
-import asyncio
+import hashlib
 import re
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import uuid
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
@@ -20,17 +20,74 @@ from src.logging import get_logger
 logger = get_logger("tools.message_provider")
 
 
-def normalize_phone_number(raw_phone: str) -> str:
-    """Clean phone numbers into standard digits format (e.g. 919949350699).
+_idempotency_cache: Dict[str, Tuple[float, Any]] = {}
+IDEMPOTENCY_TTL_SECONDS: float = 60.0
 
+
+def _make_idempotency_key(scope: str, recipient: str, message: str) -> str:
+    """Build a stable key without storing message text in the cache key."""
+    digest = hashlib.sha256(message.strip().encode("utf-8")).hexdigest()
+    return f"{scope}:{recipient}:{digest}"
+
+
+def _get_cached_result(key: str, now: float) -> Optional[Any]:
+    """Return an unexpired result and opportunistically prune expired entries."""
+    for cached_key, (created_at, _) in list(_idempotency_cache.items()):
+        if now - created_at >= IDEMPOTENCY_TTL_SECONDS:
+            _idempotency_cache.pop(cached_key, None)
+    entry = _idempotency_cache.get(key)
+    if entry and now - entry[0] < IDEMPOTENCY_TTL_SECONDS:
+        return entry[1]
+    return None
+
+
+def validate_phone_number(raw_phone: str) -> Tuple[bool, str, Optional[str]]:
+    """Validate and normalize phone number into standard digits format.
+
+    Rejects dummy, placeholder, repeating, or sequential numbers.
     Prepends '91' country code if a 10-digit number is provided.
-    Handles numbers with leading 0 (11 digits).
+    Returns (is_valid, normalized_phone, error_message).
     """
+    if not raw_phone or not isinstance(raw_phone, str):
+        return False, "", "Phone number cannot be empty."
+
+    cleaned = re.sub(r"[^\d]", "", raw_phone.strip())
+    if not cleaned:
+        return False, "", "Phone number must contain digits."
+
+    # Handle leading zero for domestic 11-digit numbers
+    if cleaned.startswith("0") and len(cleaned) == 11:
+        cleaned = f"91{cleaned[1:]}"
+    elif len(cleaned) == 10:
+        cleaned = f"91{cleaned}"
+
+    # Verify standard international length (10 to 15 digits)
+    if len(cleaned) < 10 or len(cleaned) > 15:
+        return False, cleaned, f"Invalid phone number length ({len(cleaned)} digits). Expected 10-15 digits."
+
+    # Reject placeholder dummy numbers (all identical digits, e.g. 0000000000, 9999999999)
+    # Check core number (last 10 digits)
+    core = cleaned[-10:]
+    if len(set(core)) <= 1:
+        return False, cleaned, "Phone number is a dummy/placeholder with repeating identical digits."
+
+    # Reject sequential numbers (e.g. 1234567890, 9876543210)
+    sequences = ("1234567890", "0123456789", "9876543210", "0987654321")
+    if core in sequences:
+        return False, cleaned, "Phone number is a dummy sequential placeholder."
+
+    return True, cleaned, None
+
+
+def normalize_phone_number(raw_phone: str) -> str:
+    """Clean phone numbers into standard digits format (e.g. 919949350699)."""
+    valid, normalized, _ = validate_phone_number(raw_phone)
+    if valid:
+        return normalized
+    # Fallback to digit stripping
     cleaned = re.sub(r"[^\d]", "", raw_phone.strip())
     if len(cleaned) == 10:
-        cleaned = f"91{cleaned}"
-    elif cleaned.startswith("0") and len(cleaned) == 11:
-        cleaned = f"91{cleaned[1:]}"
+        return f"91{cleaned}"
     return cleaned
 
 
@@ -48,7 +105,7 @@ class MessageSendResult(BaseModel):
     error: Optional[str] = Field(default=None, description="Detailed error description if delivery failed")
     status: str = Field(
         default="pending",
-        description="Result classification: delivered, queued, auth_failed, connection_failed, timeout, failed, mock_sent",
+        description="Result classification: queued, accepted, sent, delivered, read, auth_failed, connection_failed, timeout, failed, mock_sent",
     )
 
 
@@ -77,7 +134,8 @@ class WhatsAppMessageProvider(MessageProvider):
         timeout: float = 10.0,
     ) -> None:
         self.settings = settings or get_settings()
-        self.base_url = (base_url or getattr(self.settings, "openwa_base_url", "http://localhost:2785")).rstrip("/")
+        configured_url = base_url or getattr(self.settings, "openwa_base_url", "http://localhost:2785")
+        self.base_url = (configured_url or "").rstrip("/")
         self._explicit_api_key = api_key
         self.session_id = session_id or getattr(self.settings, "whatsapp_session_id", "default")
         self.timeout = timeout
@@ -86,9 +144,10 @@ class WhatsAppMessageProvider(MessageProvider):
         if self._explicit_api_key:
             return self._explicit_api_key
         key = getattr(self.settings, "openwa_api_key", None)
-        if key:
-            return key.get_secret_value()
-        return None
+        if not key:
+            return None
+        getter = getattr(key, "get_secret_value", None)
+        return getter() if callable(getter) else str(key)
 
     async def send_message(
         self,
@@ -96,21 +155,44 @@ class WhatsAppMessageProvider(MessageProvider):
         message: str,
     ) -> MessageSendResult:
         """Dispatch WhatsApp text message via OpenWA session endpoint."""
-        clean_num = normalize_phone_number(recipient)
-        if not clean_num:
+        # 1. Phone number validation
+        is_valid, clean_num, err_msg = validate_phone_number(recipient)
+        if not is_valid:
+            logger.warning("WhatsApp recipient validation failed for '%s': %s", recipient, err_msg)
             return MessageSendResult(
                 success=False,
                 recipient=recipient,
-                error="Recipient phone number cannot be empty or invalid.",
+                error=err_msg or "Recipient phone number is invalid.",
                 status="failed",
             )
-        if not message or not message.strip():
+
+        if not isinstance(message, str) or not message.strip():
             return MessageSendResult(
                 success=False,
                 recipient=clean_num,
-                error="Message content cannot be empty.",
+                error="Message content must be a non-empty string.",
                 status="failed",
             )
+
+        # 2. Gateway configuration verification
+        if not self.base_url or self.base_url.lower() in ("none", "", "disabled"):
+            logger.error("WhatsApp gateway is unconfigured: base_url is empty.")
+            return MessageSendResult(
+                success=False,
+                recipient=clean_num,
+                error="WhatsApp gateway is not configured. Please set OPENWA_BASE_URL.",
+                status="failed",
+            )
+
+        # 3. Idempotency check: prevent duplicate dispatch within window
+        idempotency_key = _make_idempotency_key(
+            f"openwa:{self.base_url}:{self.session_id}", clean_num, message
+        )
+        now = time.time()
+        cached_result = _get_cached_result(idempotency_key, now)
+        if cached_result is not None:
+            logger.info("Idempotency guard: duplicate WhatsApp message to %s suppressed.", clean_num)
+            return cached_result
 
         chat_id = f"{clean_num}@c.us"
         headers: Dict[str, str] = {
@@ -122,7 +204,7 @@ class WhatsAppMessageProvider(MessageProvider):
 
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                # 1. Discover ready session ID if possible
+                # 4. Discover ready session ID if possible
                 effective_session = self.session_id
                 try:
                     sess_res = await client.get(
@@ -138,7 +220,7 @@ class WhatsAppMessageProvider(MessageProvider):
                 except Exception as sess_err:
                     logger.debug("Could not query OpenWA sessions list, using default session: %s", sess_err)
 
-                # 2. Dispatch text message
+                # 5. Dispatch text message
                 url = f"{self.base_url}/api/sessions/{effective_session}/messages/send-text"
                 payload = {
                     "chatId": chat_id,
@@ -150,14 +232,18 @@ class WhatsAppMessageProvider(MessageProvider):
 
                 if response.status_code in (200, 201):
                     resp_json = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
+                    if not isinstance(resp_json, dict):
+                        resp_json = {}
                     ext_id = resp_json.get("id") or resp_json.get("messageId") or f"msg_wa_{uuid.uuid4().hex[:12]}"
-                    logger.info("WhatsApp message successfully dispatched to %s (id: %s)", clean_num, ext_id)
-                    return MessageSendResult(
+                    logger.info("WhatsApp message successfully accepted by gateway for %s (id: %s)", clean_num, ext_id)
+                    res = MessageSendResult(
                         success=True,
                         message_id=ext_id,
                         recipient=clean_num,
-                        status="delivered",
+                        status="accepted",  # HTTP 200/201 proves gateway acceptance, not confirmed recipient delivery
                     )
+                    _idempotency_cache[idempotency_key] = (now, res)
+                    return res
                 elif response.status_code in (401, 403):
                     logger.error("OpenWA authentication failure HTTP %d", response.status_code)
                     return MessageSendResult(
@@ -222,14 +308,29 @@ class MockMessageProvider(MessageProvider):
         recipient: str,
         message: str,
     ) -> MessageSendResult:
-        clean_num = normalize_phone_number(recipient)
-        if not clean_num:
+        is_valid, clean_num, err_msg = validate_phone_number(recipient)
+        if not is_valid:
             return MessageSendResult(
                 success=False,
                 recipient=recipient,
-                error="Recipient phone number cannot be empty or invalid.",
+                error=err_msg or "Recipient phone number cannot be empty or invalid.",
                 status="failed",
             )
+
+        if not isinstance(message, str) or not message.strip():
+            return MessageSendResult(
+                success=False,
+                recipient=clean_num,
+                error="Message content must be a non-empty string.",
+                status="failed",
+            )
+
+        # Idempotency check for mock provider as well.
+        idempotency_key = _make_idempotency_key("mock", clean_num, message)
+        now = time.time()
+        cached_result = _get_cached_result(idempotency_key, now)
+        if cached_result is not None:
+            return cached_result
 
         if self.force_auth_failure:
             return MessageSendResult(
@@ -263,12 +364,14 @@ class MockMessageProvider(MessageProvider):
             }
             self.sent_messages.append(record)
             logger.info("MockMessageProvider recorded sent message to %s (id: %s)", clean_num, msg_id)
-            return MessageSendResult(
+            res = MessageSendResult(
                 success=True,
                 message_id=msg_id,
                 recipient=clean_num,
                 status="mock_sent",
             )
+            _idempotency_cache[idempotency_key] = (now, res)
+            return res
 
         return MessageSendResult(
             success=False,

@@ -30,6 +30,9 @@ class MarkdownDocumentLoader:
             if not path.is_file() or path.suffix.lower() not in (".md", ".txt"):
                 continue
 
+            if any(part.startswith(".") for part in path.parts):
+                continue
+
             try:
                 text = path.read_text(encoding="utf-8").strip()
             except Exception:
@@ -41,12 +44,11 @@ class MarkdownDocumentLoader:
             rel_path = path.relative_to(self.base_dir).as_posix()
             parts = rel_path.split("/")
 
-            # Determine tenant and category
-            if len(parts) >= 2 and parts[0] in ("edusaas", "vayvora"):
+            if len(parts) >= 2 and parts[0] == "infra_builder":
                 doc_tenant = parts[0]
                 category = parts[1] if len(parts) > 2 else "general"
             else:
-                doc_tenant = tenant_id or "default"
+                doc_tenant = tenant_id or "infra_builder"
                 category = path.parent.name if path.parent != self.base_dir else "general"
 
             if tenant_id and tenant_id not in ("default", "all") and doc_tenant != tenant_id:

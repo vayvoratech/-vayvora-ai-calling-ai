@@ -130,7 +130,7 @@ class SMTPEmailProvider(EmailProvider):
             )
 
         from_addr = sender or self.from_email
-        msg_id_domain = from_addr.split("@")[-1] if "@" in from_addr else "vayvora.com"
+        msg_id_domain = from_addr.split("@")[-1] if "@" in from_addr else "infrabuilder.com"
         message_id = f"<{uuid.uuid4().hex[:16]}.{int(time.time())}@{msg_id_domain}>"
 
         # Build MIME payload
@@ -387,8 +387,8 @@ class MockEmailProvider(EmailProvider):
         self.force_timeout = force_timeout
         self.sent_messages: List[Dict[str, Any]] = []
         self.mock_inbox: List[Dict[str, str]] = mock_inbox if mock_inbox is not None else [
-            {"from": "counseling@edusaas.com", "subject": "Enrollment Inquiry Followup", "date": "2026-09-28"},
-            {"from": "partners@vayvora.com", "subject": "Enterprise AI Voice Consultation", "date": "2026-09-29"},
+            {"from": "inquiries@infrabuilder.com", "subject": "Property Inquiry Followup", "date": "2026-09-28"},
+            {"from": "sales@infrabuilder.com", "subject": "Skyline Towers Site Visit Confirmation", "date": "2026-09-29"},
         ]
 
     async def send_email(
@@ -427,7 +427,7 @@ class MockEmailProvider(EmailProvider):
             )
 
         if self.force_success:
-            msg_id = f"<mock_{uuid.uuid4().hex[:12]}@vayvora.com>"
+            msg_id = f"<mock_{uuid.uuid4().hex[:12]}@infrabuilder.com>"
             record = {
                 "recipient": recipient,
                 "subject": subject,

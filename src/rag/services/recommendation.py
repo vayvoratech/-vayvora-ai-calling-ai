@@ -1,7 +1,7 @@
-"""Course Recommendation Service for EduSaaS and Vayvora Tech.
+"""Property Recommendation Service for Infra Builder Real Estate.
 
-Provides tailored curricula recommendations and readiness scoring based on
-learner background, academic year, career goals, and technical domain interests.
+Provides tailored residential recommendations and suitability scoring based on
+buyer requirements, preferred configuration, budget range, and location preference.
 """
 
 from __future__ import annotations
@@ -9,150 +9,54 @@ from __future__ import annotations
 from typing import Any, Dict
 
 
-class CourseRecommendationService:
-    """Intelligent recommendation service mapping learner profile attributes into tailored curricula."""
+class PropertyRecommendationService:
+    """Intelligent recommendation service mapping buyer requirements into suitable properties."""
 
     @staticmethod
     def get_recommendations(profile: Dict[str, Any]) -> Dict[str, Any]:
         interests = [str(i).lower() for i in profile.get("interest", [])]
-        year = str(profile.get("year") or "").lower()
-        experience = str(profile.get("experience") or "beginner").lower()
+        req_type = str(profile.get("property_type") or "").lower()
+        budget = str(profile.get("budget") or "").lower()
+        location = str(profile.get("location") or "").lower()
 
-        has_ai = any("ai" in i or "machine learning" in i or "ml" in i for i in interests)
-        has_fs = any("full" in i or "stack" in i or "web" in i for i in interests)
-        has_ds = any("data" in i or "analytics" in i or "sql" in i for i in interests)
-        has_cloud = any("cloud" in i or "devops" in i or "aws" in i for i in interests)
-        has_cyber = any("cyber" in i or "security" in i or "hacking" in i for i in interests)
-        has_dsa = any("dsa" in i or "algorithm" in i or "system design" in i for i in interests)
+        is_villa = "villa" in req_type or any("villa" in i for i in interests) or "sarjapur" in location
+        is_ready = "ready" in req_type or any("ready" in i for i in interests) or "electronic city" in location or "40" in budget or "50" in budget or "60" in budget
 
-        # Readiness score
-        readiness_score = 40
-        if "3rd" in year or "third" in year:
-            readiness_score += 2
-        elif "4th" in year or "final" in year:
-            readiness_score += 10
-        elif "2nd" in year or "second" in year:
-            readiness_score -= 2
-
-        if experience in ("intermediate", "moderate"):
-            readiness_score += 15
-        elif experience in ("advanced", "experienced"):
-            readiness_score += 25
-
-        if has_ai and has_fs:
+        if is_villa:
             return {
-                "recommendedPath": "AI + Full Stack",
-                "courses": [
-                    "Python",
-                    "Machine Learning",
-                    "Generative AI",
-                    "Java/Spring Boot",
-                    "React",
-                ],
-                "readinessScore": readiness_score,
-                "summary": (
-                    "A dual-track combining Full-Stack Web Development fundamentals "
-                    "with Generative AI and intelligent agent architectures."
-                ),
+                "recommendedProperty": "Green Valley Villas",
+                "location": "Sarjapur Road, Bangalore",
+                "configurations": ["4 BHK (3,200 sq.ft)", "5 BHK (4,500 sq.ft)"],
+                "priceRange": "₹2.5 Cr - ₹3.8 Cr",
+                "matchScore": 95,
+                "summary": "Luxury private villas with private gardens, swimming pool, and gated security.",
             }
 
-        if has_fs:
+        if is_ready:
             return {
-                "recommendedPath": "Full-Stack Web Development",
-                "courses": [
-                    "React 19 & Next.js 15",
-                    "Node.js & TypeScript",
-                    "FastAPI & PostgreSQL",
-                    "Docker & Cloud Deployment",
-                    "Full-Stack Production Capstone",
-                ],
-                "readinessScore": readiness_score + 10,
-                "summary": "End-to-end modern web and distributed applications engineering.",
+                "recommendedProperty": "Urban Heights",
+                "location": "Electronic City Phase 1, Bangalore",
+                "configurations": ["1 BHK (650 sq.ft)", "2 BHK (1,050 sq.ft)"],
+                "priceRange": "₹45 Lakhs - ₹68 Lakhs",
+                "matchScore": 90,
+                "summary": "Ready-to-move modern apartments adjacent to tech campuses and metro station.",
             }
 
-        if has_ai:
-            return {
-                "recommendedPath": "AI & Machine Learning",
-                "courses": [
-                    "Python & Numerical Computing",
-                    "Supervised & Unsupervised Machine Learning",
-                    "Deep Learning & PyTorch",
-                    "Generative AI & LLMs",
-                    "Production AI Agent Capstones",
-                ],
-                "readinessScore": readiness_score + 8,
-                "summary": "Deep foundations in modern predictive models and generative AI systems.",
-            }
-
-        if has_ds:
-            return {
-                "recommendedPath": "Data Science & Analytics",
-                "courses": [
-                    "Python & Pandas",
-                    "Advanced SQL",
-                    "Tableau & Power BI",
-                    "Predictive Modeling",
-                    "Financial Fraud Detection Capstone",
-                ],
-                "readinessScore": readiness_score + 6,
-                "summary": "Data extraction, business intelligence, and predictive statistical analytics.",
-            }
-
-        if has_cloud:
-            return {
-                "recommendedPath": "Cloud & DevOps Engineering",
-                "courses": [
-                    "AWS Core Cloud Architecture",
-                    "Docker Containerization",
-                    "Kubernetes Orchestration",
-                    "Terraform Infrastructure as Code",
-                    "CI/CD Production Deployment Capstone",
-                ],
-                "readinessScore": readiness_score + 12,
-                "summary": "Automated cloud infrastructure, container orchestration, and reliability engineering.",
-            }
-
-        if has_cyber:
-            return {
-                "recommendedPath": "Cybersecurity & Ethical Hacking",
-                "courses": [
-                    "Kali Linux & Network Security",
-                    "OWASP Top 10 Web Security",
-                    "Penetration Testing & Metasploit",
-                    "SIEM & SOC Incident Response",
-                    "Enterprise Security Audit Capstone",
-                ],
-                "readinessScore": readiness_score + 5,
-                "summary": "Defensive security, ethical penetration testing, and enterprise vulnerability management.",
-            }
-
-        if has_dsa:
-            return {
-                "recommendedPath": "DSA & System Design Masterclass",
-                "courses": [
-                    "250+ LeetCode Patterns",
-                    "Advanced Dynamic Programming & Graphs",
-                    "Low-Level Design (SOLID & Design Patterns)",
-                    "High-Level Distributed Systems Design",
-                    "FAANG-style AI Mock Technical Interviews",
-                ],
-                "readinessScore": readiness_score + 15,
-                "summary": "Competitive algorithmic problem solving and scalable distributed system design.",
-            }
-
+        # Default recommendation: Skyline Towers
         return {
-            "recommendedPath": "AI + Full Stack",
-            "courses": [
-                "Python",
-                "Machine Learning",
-                "Generative AI",
-                "Java/Spring Boot",
-                "React",
-            ],
-            "readinessScore": readiness_score,
-            "summary": "Comprehensive foundation for software engineering and AI-driven applications.",
+            "recommendedProperty": "Skyline Towers",
+            "location": "Whitefield, Bangalore",
+            "configurations": ["2 BHK (1,150 sq.ft)", "3 BHK (1,650 sq.ft)"],
+            "priceRange": "₹85 Lakhs - ₹1.42 Cr",
+            "matchScore": 92,
+            "summary": "Premium high-rise apartments with 40+ lifestyle amenities, near ITPL and metro.",
         }
 
 
-def get_course_recommendations(profile: Dict[str, Any]) -> Dict[str, Any]:
-    return CourseRecommendationService.get_recommendations(profile)
+def get_property_recommendations(profile: Dict[str, Any]) -> Dict[str, Any]:
+    return PropertyRecommendationService.get_recommendations(profile)
+
+
+# Backward compatibility aliases
+CourseRecommendationService = PropertyRecommendationService
+get_course_recommendations = get_property_recommendations

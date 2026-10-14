@@ -16,14 +16,14 @@
       <div class="logo-area">
         <span class="icon">🎙️</span>
         <div class="title-group">
-          <h1>Unified Voice Agent Workbench</h1>
-          <p class="subtitle">Real-time Conversational Inbound & Outbound Testing Console</p>
+          <h1>Infra Builder AI Calling Workbench</h1>
+          <p class="subtitle">Real Estate Conversational Inbound & Outbound Testing Console</p>
         </div>
       </div>
       <div class="header-badges">
         <span id="badge-llm" class="badge badge-llm">LLM: Gemini</span>
-        <span id="badge-rag" class="badge badge-rag">RAG: Hybrid</span>
-        <span id="badge-tool" class="badge badge-tool">MCP: Active</span>
+        <span id="badge-rag" class="badge badge-rag">RAG: Redis</span>
+        <span id="badge-tool" class="badge badge-tool">WhatsApp: Active</span>
         <span id="badge-status" class="badge badge-status">Ready</span>
       </div>
     </header>
@@ -46,11 +46,11 @@
           </div>
 
           <div class="form-group">
-            <label for="domain-select">Target Domain</label>
-            <select id="domain-select" class="form-select">
-              <option value="vayvora" selected>🏢 Vayvora (Enterprise AI & Software)</option>
-              <option value="edusaas">🎓 EduSaaS (AI & Data Science Courses)</option>
-            </select>
+            <label for="domain-select">Active Business</label>
+            <div class="business-badge-display">
+              <span class="badge badge-domain" style="font-size: 13px; font-weight: 600; padding: 6px 12px; background: #0284c7; color: #fff; border-radius: 6px; display: inline-block;">🏢 Infra Builder (Real Estate AI)</span>
+            </div>
+            <input type="hidden" id="domain-select" value="infra_builder">
           </div>
 
           <div class="section-divider"><span>Caller Profile</span></div>
@@ -62,17 +62,17 @@
 
           <div class="form-row">
             <div class="form-group">
-              <label for="caller-phone">Phone</label>
-              <input type="text" id="caller-phone" class="form-input" placeholder="+15551234567">
+              <label for="caller-phone">WhatsApp / Phone</label>
+              <input type="text" id="caller-phone" class="form-input" placeholder="+919949350699">
             </div>
             <div class="form-group">
-              <label for="caller-email">Email</label>
-              <input type="email" id="caller-email" class="form-input" placeholder="name@company.com">
+              <label for="caller-email">Email (Optional)</label>
+              <input type="email" id="caller-email" class="form-input" placeholder="name@domain.com">
             </div>
           </div>
 
           <div class="form-group">
-            <label for="caller-company">Company / Institution</label>
+            <label for="caller-company">Company / Institution (Optional)</label>
             <input type="text" id="caller-company" class="form-input" placeholder="e.g. Acme Corp">
           </div>
 
@@ -80,11 +80,11 @@
             <div class="section-divider"><span>Outbound Campaign Context</span></div>
             <div class="form-group">
               <label for="campaign-objective">Campaign Objective</label>
-              <input type="text" id="campaign-objective" class="form-input" placeholder="e.g. AI automation follow-up">
+              <input type="text" id="campaign-objective" class="form-input" placeholder="e.g. Skyline Towers follow-up">
             </div>
             <div class="form-group">
               <label for="known-purpose">Known Interest / Purpose</label>
-              <input type="text" id="known-purpose" class="form-input" placeholder="e.g. Voice AI agent requirement">
+              <input type="text" id="known-purpose" class="form-input" placeholder="e.g. 3 BHK Luxury Apartment">
             </div>
           </div>
 
@@ -108,7 +108,7 @@
           <div class="chat-title-group">
             <h2 id="chat-session-title">No Active Call</h2>
             <span id="chat-direction-badge" class="badge badge-outline">INBOUND</span>
-            <span id="chat-domain-badge" class="badge badge-domain">VAYVORA</span>
+            <span id="chat-domain-badge" class="badge badge-domain">INFRA BUILDER</span>
           </div>
           <div class="session-meta">
             <span id="session-id-display" class="meta-item">Session: —</span>
@@ -120,17 +120,17 @@
           <div class="empty-state" id="empty-state">
             <div class="empty-icon">🎧</div>
             <h3>Call Workbench Idle</h3>
-            <p>Select your direction and domain, then click <strong>Start Session</strong> to initiate testing.</p>
+            <p>Select your direction and click <strong>Start Session</strong> to initiate testing.</p>
           </div>
         </div>
 
         <!-- Quick Prompts Bar -->
         <div class="quick-prompts-bar" id="quick-prompts">
           <button class="quick-btn" data-text="Hello">"Hello"</button>
-          <button class="quick-btn" data-text="yes">"yes"</button>
-          <button class="quick-btn" data-text="What services does Vayvora provide?">"What services does Vayvora provide?"</button>
-          <button class="quick-btn" data-text="We need an AI calling system.">"We need an AI calling system."</button>
-          <button class="quick-btn" data-text="Can you email me the details?">"Can you email me details?"</button>
+          <button class="quick-btn" data-text="Tell me about Skyline Towers in Whitefield.">"Skyline Towers"</button>
+          <button class="quick-btn" data-text="What is the price and configuration of Green Valley Villas?">"Green Valley Villas"</button>
+          <button class="quick-btn" data-text="Can you share the project brochure on WhatsApp?">"WhatsApp Brochure"</button>
+          <button class="quick-btn" data-text="Schedule a site visit for tomorrow at 11:00 AM.">"Schedule Site Visit"</button>
           <button class="quick-btn" data-text="That's all, thank you.">"That's all, goodbye."</button>
         </div>
 
@@ -239,7 +239,7 @@
 
         <!-- MCP Tool Card -->
         <div class="diag-card">
-          <div class="diag-card-title">🛠️ External Actions (MCP / SMTP)</div>
+          <div class="diag-card-title">🛠️ External Actions (MCP / WhatsApp / Calendar)</div>
           <div class="diag-row">
             <span class="diag-label">Action Proposed:</span>
             <span class="diag-value" id="diag-action-proposed">False</span>

@@ -26,8 +26,11 @@ class RedisVectorStore:
     def __init__(self, settings: Optional[Settings] = None) -> None:
         self.settings = settings or get_settings()
         self.redis_url = self.settings.redis_url
-        self.edusaas_index = self.settings.redis_edusaas_index
-        self.vayvora_index = self.settings.redis_vayvora_index
+        self.infra_builder_index = getattr(
+            self.settings, "redis_infra_builder_index", "idx:infra_builder_vdb"
+        )
+        self.edusaas_index = getattr(self.settings, "redis_edusaas_index", "idx:edusaas_vdb")
+        self.vayvora_index = getattr(self.settings, "redis_vayvora_index", "idx:vayvora_vdb")
         self.dim = self.settings.rag_embedding_dimension
         self._client: Optional[redis.Redis] = None
 
@@ -60,7 +63,9 @@ class RedisVectorStore:
 
     def get_index_name(self, domain: DomainType) -> str:
         """Map domain to isolated index name."""
-        if domain == DomainType.EDUSAAS:
+        if domain == DomainType.INFRA_BUILDER:
+            return self.infra_builder_index
+        elif domain == DomainType.EDUSAAS:
             return self.edusaas_index
         elif domain == DomainType.VAYVORA:
             return self.vayvora_index

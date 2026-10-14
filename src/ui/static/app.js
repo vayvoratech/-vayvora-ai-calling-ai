@@ -303,7 +303,7 @@
     chatSessionTitle.textContent = 'No Active Call';
     chatDirectionBadge.textContent = 'INBOUND';
     chatDirectionBadge.className = 'badge badge-outline';
-    chatDomainBadge.textContent = 'VAYVORA';
+    chatDomainBadge.textContent = 'INFRA BUILDER';
     sessionIdDisplay.textContent = 'Session: —';
     sessionStatusBadge.textContent = 'IDLE';
     sessionStatusBadge.className = 'meta-badge status-idle';
@@ -313,7 +313,7 @@
       <div class="empty-state" id="empty-state">
         <div class="empty-icon">🎧</div>
         <h3>Call Workbench Idle</h3>
-        <p>Select your direction and domain, then click <strong>Start Session</strong> to initiate testing.</p>
+        <p>Select your direction and click <strong>Start Session</strong> to initiate testing.</p>
       </div>
     `;
 

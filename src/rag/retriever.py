@@ -66,6 +66,7 @@ class GroundedKnowledgeProvider(KnowledgeProvider):
 
         # In-memory chunk store for testing or offline mode: Dict[domain, List[Dict[str, Any]]]
         self._mem_store: Dict[DomainType, List[Dict[str, Any]]] = {
+            DomainType.INFRA_BUILDER: [],
             DomainType.EDUSAAS: [],
             DomainType.VAYVORA: [],
             DomainType.GENERAL: [],
@@ -74,12 +75,14 @@ class GroundedKnowledgeProvider(KnowledgeProvider):
         # Lexical keyword indexes per domain
         if self.in_memory:
             self._keyword_indexes: Dict[DomainType, KnowledgeBaseKeywordIndex] = {
+                DomainType.INFRA_BUILDER: KnowledgeBaseKeywordIndex(tenant_id="infra_builder", initial_chunks=[]),
                 DomainType.EDUSAAS: KnowledgeBaseKeywordIndex(tenant_id="edusaas", initial_chunks=[]),
                 DomainType.VAYVORA: KnowledgeBaseKeywordIndex(tenant_id="vayvora", initial_chunks=[]),
                 DomainType.GENERAL: KnowledgeBaseKeywordIndex(tenant_id="default", initial_chunks=[]),
             }
         else:
             self._keyword_indexes: Dict[DomainType, KnowledgeBaseKeywordIndex] = {
+                DomainType.INFRA_BUILDER: KnowledgeBaseKeywordIndex(tenant_id="infra_builder"),
                 DomainType.EDUSAAS: KnowledgeBaseKeywordIndex(tenant_id="edusaas"),
                 DomainType.VAYVORA: KnowledgeBaseKeywordIndex(tenant_id="vayvora"),
                 DomainType.GENERAL: KnowledgeBaseKeywordIndex(tenant_id="default"),
@@ -252,8 +255,9 @@ class GroundedKnowledgeProvider(KnowledgeProvider):
         # Relevance threshold gating
         passing_chunks: List[RAGChunk] = []
         for res in final_candidates:
-            # Course catalog is dedicated to broad catalog queries; exclude from specific queries
-            if res.metadata.get("document_type") == "course_catalog":
+            # Catalog document is dedicated to broad catalog queries; exclude from specific queries
+            doc_type = res.metadata.get("document_type", "")
+            if doc_type in ("course_catalog", "project_catalog", "overview_catalog") or "catalog" in doc_type:
                 continue
             score_to_check = res.metadata.get("cosine_score", res.score)
             if score_to_check >= query.relevance_threshold:
@@ -262,23 +266,31 @@ class GroundedKnowledgeProvider(KnowledgeProvider):
         return self._format_result(query, passing_chunks)
 
     async def _retrieve_catalog_context(self, query: RAGQuery) -> GroundedContextResult:
-        """Retrieve dedicated course catalog chunk for catalog/list queries."""
+        """Retrieve dedicated catalog chunk for broad catalog/list queries."""
         if self.in_memory:
             return self._retrieve_catalog_in_memory(query)
         return await self._retrieve_catalog_redis(query)
 
     def _retrieve_catalog_in_memory(self, query: RAGQuery) -> GroundedContextResult:
-        """Retrieve course catalog chunk from in-memory store."""
+        """Retrieve catalog chunk from in-memory store."""
         items = self._mem_store.get(query.domain, [])
         catalog_chunks = [
             item["chunk"] for item in items
-            if item["chunk"].metadata.get("document_type") == "course_catalog"
-            or "course_catalog" in item["chunk"].doc_id
+            if "catalog" in item["chunk"].doc_id
+            or item["chunk"].metadata.get("document_type") in ("course_catalog", "project_catalog", "overview_catalog")
+            or "catalog" in str(item["chunk"].metadata.get("document_type", ""))
         ]
+        if not catalog_chunks:
+            catalog_chunks = [
+                item["chunk"] for item in items
+                if "overview" in item["chunk"].doc_id
+            ]
         if catalog_chunks:
-            primary = catalog_chunks[0]
-            primary.score = 1.0
-            return self._format_result(query, [primary])
+            top_doc_id_prefix = ":".join(catalog_chunks[0].doc_id.split(":")[:-1])
+            doc_chunks = [c for c in catalog_chunks if c.doc_id.startswith(top_doc_id_prefix)]
+            for c in doc_chunks:
+                c.score = 1.0
+            return self._format_result(query, doc_chunks if doc_chunks else [catalog_chunks[0]])
 
         return GroundedContextResult(
             query=query,
@@ -288,7 +300,7 @@ class GroundedKnowledgeProvider(KnowledgeProvider):
         )
 
     async def _retrieve_catalog_redis(self, query: RAGQuery) -> GroundedContextResult:
-        """Retrieve course catalog chunk from Redis via metadata filter."""
+        """Retrieve catalog chunk from Redis via metadata filter."""
         is_healthy = await self.store.health_check()
         if not is_healthy:
             logger.warning("Redis Stack is not available on %s", self.store.redis_url)
@@ -303,23 +315,37 @@ class GroundedKnowledgeProvider(KnowledgeProvider):
         # 1. Direct metadata query by document_type tag
         catalog_chunks = await self.store.get_documents_by_type(
             domain=query.domain,
-            document_type="course_catalog",
+            document_type="overview_catalog",
             limit=1,
         )
+        if not catalog_chunks:
+            catalog_chunks = await self.store.get_documents_by_type(
+                domain=query.domain,
+                document_type="course_catalog",
+                limit=1,
+            )
         if catalog_chunks:
             primary = catalog_chunks[0]
             primary.score = 1.0
             return self._format_result(query, [primary])
 
-        # 2. Fallback: vector search filtered by document_type=course_catalog
+        # 2. Fallback: vector search
         query_vector = self.embeddings.embed_text(query.query_text)
         vec_catalog_chunks = await self.store.search_vector(
             domain=query.domain,
             query_vector=query_vector,
             top_k=1,
             relevance_threshold=0.0,
-            document_type="course_catalog",
+            document_type="overview_catalog",
         )
+        if not vec_catalog_chunks:
+            vec_catalog_chunks = await self.store.search_vector(
+                domain=query.domain,
+                query_vector=query_vector,
+                top_k=1,
+                relevance_threshold=0.0,
+                document_type="course_catalog",
+            )
         if vec_catalog_chunks:
             primary = vec_catalog_chunks[0]
             primary.score = 1.0

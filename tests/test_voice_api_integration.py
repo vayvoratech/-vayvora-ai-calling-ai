@@ -90,8 +90,7 @@ class TestRestEndpoints:
             assert response.status_code == 200, f"Failed for {path}: {response.text}"
             data = response.json()
             assert data["model"] == "gemini-3.5-flash-lite"
-            assert "edusaas" in data["supported_domains"]
-            assert "vayvora" in data["supported_domains"]
+            assert "infra_builder" in data["supported_domains"]
             assert data["audio_sample_rate"] == 16000
 
     def test_03_voice_twiml_endpoints(self, client: TestClient):
@@ -109,9 +108,9 @@ class TestRestEndpoints:
     def test_04_chat_endpoint_turn_processing(self, client: TestClient):
         """POST /chat and POST /api/v1/chat process conversation turns and return responses."""
         payload = {
-            "message": "Hello, what programs or courses do you offer?",
+            "message": "Hello, what properties or projects do you offer?",
             "session_id": "test-rest-chat-session",
-            "domain": "edusaas",
+            "domain": "infra_builder",
             "caller_phone": "+1234567890",
         }
         for path in ["/chat", "/api/v1/chat"]:
@@ -121,7 +120,7 @@ class TestRestEndpoints:
             assert data["session_id"] == "test-rest-chat-session"
             assert isinstance(data["response"], str)
             assert len(data["response"]) > 0
-            assert data["domain"] == "edusaas"
+            assert data["domain"] == "infra_builder"
             assert "stage" in data
             assert "slots" in data
 
@@ -132,7 +131,7 @@ class TestRestEndpoints:
         # Start session
         start_payload = {
             "session_id": session_id,
-            "domain": "edusaas",
+            "domain": "infra_builder",
             "caller_phone": "+1987654321",
             "direction": "inbound",
         }
@@ -261,18 +260,18 @@ class TestSTTAndTTSServices:
 
         # Test with audio payload using mock or fallback
         test_audio = b"\x00\x01" * 1600  # 100ms of PCM16
-        with patch.object(stt, "transcribe_pcm16", return_value="Hello, I am interested in EduSaaS courses.") as mock_trans:
+        with patch.object(stt, "transcribe_pcm16", return_value="Hello, I am interested in Infra Builder properties.") as mock_trans:
             result = await stt.transcribe(test_audio)
-            assert result == "Hello, I am interested in EduSaaS courses."
+            assert result == "Hello, I am interested in Infra Builder properties."
             mock_trans.assert_called_once_with(test_audio)
 
     @pytest.mark.asyncio
     async def test_11_deepgram_tts_streaming_chunks(self):
         """DeepgramFluxTTS synthesizes text into streaming PCM audio chunks."""
-        tts = DeepgramFluxTTS()
+        tts = DeepgramFluxTTS(api_key="")
         
         chunks = []
-        async for chunk in tts.synthesize_stream("Welcome to EduSaaS, how can I assist you today?"):
+        async for chunk in tts.synthesize_stream("Welcome to Infra Builder, how can I assist you today?"):
             chunks.append(chunk)
 
         assert len(chunks) > 0
@@ -282,7 +281,7 @@ class TestSTTAndTTSServices:
     @pytest.mark.asyncio
     async def test_12_deepgram_tts_cancellation(self):
         """DeepgramFluxTTS halts generation when cancel() is invoked."""
-        tts = DeepgramFluxTTS()
+        tts = DeepgramFluxTTS(api_key="")
         tts.cancel()
         assert len(tts._accumulated_text) == 0
 

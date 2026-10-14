@@ -67,7 +67,7 @@ class VoiceSessionManager:
         state_manager: ConversationStateManager,
         stt_service: Optional[STTService] = None,
         tts_service: Optional[Any] = None,
-        default_domain: DomainType = DomainType.EDUSAAS,
+        default_domain: DomainType = DomainType.INFRA_BUILDER,
     ):
         self.engine = engine
         self.state_manager = state_manager
@@ -370,7 +370,7 @@ class VoiceSessionManager:
         await safe_send(websocket, ws_lock, {"type": "agent_started"})
 
         try:
-            # Execute turn through Vayvora's core ConversationEngine
+            # Execute turn through core ConversationEngine
             t0 = time.perf_counter()
             turn_result: EngineTurnResult = await self.engine.process_user_turn(
                 state=state,
@@ -462,10 +462,9 @@ class VoiceSessionManager:
 
             response_text = (outbound_result.response_text or "").strip()
             if not response_text:
-                if state.current_domain == DomainType.EDUSAAS:
-                    response_text = "Hi, this is the EduSaaS admissions team. How can I help you today?"
-                else:
-                    response_text = "Hello, this is the Vayvora team following up on your inquiry. How are you doing today?"
+                contact = state.caller.name or state.contact_name
+                greeting_prefix = f"Hello {contact}, " if contact else "Hello, "
+                response_text = f"{greeting_prefix}this is Infra Builder Real Estate following up on your property inquiry. How are you doing today?"
 
             if not connection_alive():
                 return

@@ -9,97 +9,79 @@ from typing import Any, Dict, Optional
 FAST_PATH_RULES = [
     {
         "topic": "office_headquarters",
-        "source": "knowledge_base/vayvora/company/overview.md",
+        "source": "knowledge_base/infra_builder/company/overview.md",
         "pattern": re.compile(
-            r"\b(where\s+is\s+(?:your|the)\s+office|where\s+are\s+you\s+located|headquarters|office\s+location|company\s+address|where\s+is\s+vayvora(?:\s+located)?)\b",
+            r"\b(where\s+is\s+(?:your|the)\s+office|where\s+are\s+you\s+located|headquarters|office\s+location|company\s+address|where\s+is\s+infra\s*builder(?:\s+located)?)\b",
             re.IGNORECASE,
         ),
         "response": (
-            "Vayvora Technologies' primary engineering and research facility is located in Bangalore, India, "
-            "with remote collaboration across international time zones."
+            "Infra Builder's corporate headquarters is located at Infra Builder Tower, Outer Ring Road, Bangalore, Karnataka."
         ),
     },
     {
-        "topic": "official_email",
-        "source": "knowledge_base/edusaas/courses/overview_catalog.md",
+        "topic": "official_contact",
+        "source": "knowledge_base/infra_builder/company/overview.md",
         "pattern": re.compile(
-            r"\b(what\s+is\s+(?:your|the|company'?s?|vayvora'?s?)\s+email|(?:official|company|contact|support)\s+email(?:\s+address)?|how\s+to\s+email\s+vayvora)\b",
+            r"\b(what\s+is\s+(?:your|the|company'?s?)\s+email|(?:official|company|contact|support)\s+email|contact\s+details|reach\s+infra\s*builder)\b",
             re.IGNORECASE,
         ),
         "response": (
-            "You can reach our team via email at info@edusaas.vayvora.com or visit our official portal at edusaas.vayvora.com."
+            "You can reach our property advisory team at info@infrabuilder.com or via WhatsApp at our official number."
         ),
     },
     {
-        "topic": "company_leadership",
-        "source": "knowledge_base/vayvora/company/overview.md",
+        "topic": "projects_catalog",
+        "source": "knowledge_base/infra_builder/projects/overview_catalog.md",
         "pattern": re.compile(
-            r"\b(who\s+is\s+(?:the\s+)?ceo|who\s+founded\s+vayvora|founder\s+of\s+vayvora|leadership\s+team|who\s+leads\s+vayvora)\b",
+            r"\b(what\s+projects\s+do\s+you\s+(?:offer|have|build)|list\s+of\s+projects|all\s+projects|current\s+projects|developments)\b",
             re.IGNORECASE,
         ),
         "response": (
-            "Vayvora Technologies specializes in enterprise artificial intelligence engineering, "
-            "high-throughput voice agent architectures, and custom cloud software development."
+            "Infra Builder has three premier residential developments in Bangalore: Skyline Towers in Whitefield (2 & 3 BHK apartments), Green Valley Villas on Sarjapur Road (4 & 5 BHK luxury villas), and Urban Heights in Electronic City (1 & 2 BHK ready-to-move homes)."
         ),
     },
     {
-        "topic": "service_catalog",
-        "source": "knowledge_base/vayvora/solutions/enterprise_ai.md",
+        "topic": "skyline_towers_pricing",
+        "source": "knowledge_base/infra_builder/projects/skyline_towers.md",
         "pattern": re.compile(
-            r"\b(what\s+services\s+does\s+vayvora\s+(?:provide|offer)|what\s+does\s+(?:your\s+company|vayvora)\s+do|what\s+are\s+your\s+services|overview\s+of\s+(?:your\s+)?services|services\s+catalog)\b",
+            r"\b(price\s+of\s+skyline\s+towers|skyline\s+towers\s+cost|pricing\s+for\s+skyline|skyline\s+towers\s+price)\b",
             re.IGNORECASE,
         ),
         "response": (
-            "Vayvora provides enterprise AI solutions including RAG pipelines, structured entity extraction, "
-            "multi-tenant conversational routing, vector search, and semantic verification guardrails."
+            "At Skyline Towers in Whitefield, 2 BHK apartments start at ₹85 Lakhs and 3 BHK luxury residences start at ₹1.42 Crores."
         ),
     },
     {
-        "topic": "ai_course_price",
-        "source": "knowledge_base/edusaas/courses/overview_catalog.md",
+        "topic": "green_valley_pricing",
+        "source": "knowledge_base/infra_builder/projects/green_valley_villas.md",
         "pattern": re.compile(
-            r"\b((?:price|fee|cost)\s+(?:of|for)\s+(?:the\s+)?ai(?:\s+engineering)?\s+course|how\s+much\s+(?:is|does)\s+the\s+ai(?:\s+engineering)?\s+course\s+cost|ai\s+course\s+price|ai\s+course\s+fee)\b",
+            r"\b(price\s+of\s+green\s+valley|green\s+valley\s+cost|green\s+valley\s+villas\s+price|pricing\s+for\s+green\s+valley)\b",
             re.IGNORECASE,
         ),
         "response": (
-            "The tuition fee for our AI & Machine Learning program track is five thousand rupees (₹5,000 INR)."
+            "At Green Valley Villas on Sarjapur Road, 4 BHK villas start at ₹2.5 Crores and 5 BHK grand estates start at ₹3.8 Crores."
         ),
     },
     {
-        "topic": "general_course_fee",
-        "source": "knowledge_base/edusaas/courses/overview_catalog.md",
+        "topic": "urban_heights_pricing",
+        "source": "knowledge_base/infra_builder/projects/urban_heights.md",
         "pattern": re.compile(
-            r"\b((?:how\s+much\s+(?:is|are|do)\s+the\s+courses?|(?:course|courses|tuition)\s+(?:price|fee|cost)|fees\s+for\s+courses?))\b",
+            r"\b(price\s+of\s+urban\s+heights|urban\s+heights\s+cost|urban\s+heights\s+price|pricing\s+for\s+urban\s+heights)\b",
             re.IGNORECASE,
         ),
         "response": (
-            "The tuition fee across our EduSaaS engineering specializations is five thousand rupees (₹5,000 INR) "
-            "per program track, including hands-on capstones, automated coding assessments, and AI voice mock interviews."
+            "Urban Heights in Electronic City offers ready-to-move homes with 1 BHK apartments from ₹45 Lakhs and 2 BHK units from ₹68 Lakhs."
         ),
     },
     {
-        "topic": "all_courses_list",
-        "source": "knowledge_base/edusaas/courses/overview_catalog.md",
+        "topic": "site_visit_policy",
+        "source": "knowledge_base/infra_builder/policies/site_visit_policy.md",
         "pattern": re.compile(
-            r"\b(what\s+courses\s+do\s+you\s+(?:offer|have|provide)|list\s+of\s+courses|course\s+catalog|all\s+courses|what\s+can\s+i\s+learn|all\s+programs)\b",
+            r"\b(site\s+visit\s+timing|visiting\s+hours|when\s+can\s+i\s+visit|site\s+visit\s+policy|free\s+cab|metro\s+pickup)\b",
             re.IGNORECASE,
         ),
         "response": (
-            "EduSaaS offers six comprehensive engineering programs: Artificial Intelligence & Machine Learning, "
-            "Full-Stack Web & Software Engineering, Data Science & Business Analytics, Cloud Computing & DevOps, "
-            "Cybersecurity & Ethical Hacking, and Data Structures, Algorithms & System Design."
-        ),
-    },
-    {
-        "topic": "sla_and_refund",
-        "source": "knowledge_base/edusaas/policies/admissions_policy.md",
-        "pattern": re.compile(
-            r"\b(sla\s+policy|uptime\s+guarantee|refund\s+policy|service\s+level\s+agreement|guaranteed\s+uptime)\b",
-            re.IGNORECASE,
-        ),
-        "response": (
-            "EduSaaS financial arrangements including installment plans and fee policies are reviewed "
-            "during the admissions interview based on cohort availability."
+            "Site visits for all Infra Builder developments are conducted daily between 10:00 AM and 6:00 PM, with complimentary pickup and drop services from nearby metro stations."
         ),
     },
 ]

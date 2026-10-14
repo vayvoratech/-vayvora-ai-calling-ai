@@ -24,7 +24,7 @@ class GroqWhisperSTT(STTProvider):
         model: str = "whisper-large-v3-turbo",
         sample_rate: int = 16000,
         language: str = "en",
-        prompt: str = "Vayvora Technology, AI, engineering services, consultation, appointment",
+        prompt: str = "Infra Builder, real estate, Skyline Towers, Green Valley Villas, Urban Heights, site visit, Bangalore, WhatsApp",
     ):
         self.api_key = api_key or os.getenv("GROQ_API_KEY")
         self.model = model or os.getenv("GROQ_STT_MODEL", "whisper-large-v3-turbo")
@@ -183,7 +183,7 @@ class GroqWhisperSTT(STTProvider):
                     file=wav_file,
                     model=self.model,
                     language=self.language,
-                    prompt=self.prompt,  # Guides domain terminology (Vayvora, EduSaaS, etc.)
+                    prompt=self.prompt,  # Guides domain terminology (Infra Builder, real estate, etc.)
                     temperature=0.0,
                     response_format="text",
                 )
@@ -240,7 +240,7 @@ class GroqWhisperSTT(STTProvider):
                     file=wav_file,
                     model=self.model,
                     language=self.language,
-                    prompt=self.prompt,  # Guides domain terminology (Vayvora, EduSaaS, etc.)
+                    prompt=self.prompt,  # Guides domain terminology (Infra Builder, real estate, etc.)
                     temperature=0.0,
                     response_format="text",
                 )
@@ -290,5 +290,5 @@ class GroqWhisperSTT(STTProvider):
         return ""
 
 
-# Canonical Alias for backward compatibility with Kiran and Vayvora codebase
+# Canonical Alias for STTService
 STTService = GroqWhisperSTT

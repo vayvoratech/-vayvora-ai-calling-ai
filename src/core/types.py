@@ -1,26 +1,33 @@
+
 """Foundational Pydantic v2 data models and enums.
 
-Defines the core data contracts for the Unified Conversational AI Voice Agent
-across EduSaaS and Vayvora domains, inbound and outbound lifecycles.
+Defines the core data contracts for the Infra Builder conversational AI voice
+agent, supporting inbound and outbound calls, grounded property knowledge,
+and verified external tool execution.
 """
 
 from enum import Enum
 import time
 from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class DomainType(str, Enum):
-    """Business domains supported by the unified agent."""
+    """Business domain identifiers supported during migration."""
 
     UNKNOWN = "unknown"
+    INFRA_BUILDER = "infra_builder"
+
+    # Legacy constants retained temporarily for compatibility with modules
+    # that have not yet been migrated. They are not active target domains.
     EDUSAAS = "edusaas"
     VAYVORA = "vayvora"
     GENERAL = "general"
 
 
 class CallDirection(str, Enum):
-    """Direction of telephony or web-based call session."""
+    """Direction of a telephony or web-based call session."""
 
     INBOUND = "inbound"
     OUTBOUND = "outbound"
@@ -46,7 +53,7 @@ class TurnRole(str, Enum):
 
 
 class ConversationStage(str, Enum):
-    """Controlled stages of the conversational progression."""
+    """Controlled stages of conversational progression."""
 
     GREETING = "greeting"
     IDENTITY = "identity"
@@ -62,15 +69,22 @@ class ConversationStage(str, Enum):
 
 
 class DialogueTurn(BaseModel):
-    """Represents a single conversational turn in the call transcript."""
+    """Represents one turn in the call transcript."""
 
     model_config = ConfigDict(extra="forbid")
 
-    role: TurnRole = Field(..., description="Role of the speaker for this turn")
-    content: str = Field(..., min_length=1, description="Transcribed or synthesized text")
+    role: TurnRole = Field(
+        ...,
+        description="Role of the speaker for this turn",
+    )
+    content: str = Field(
+        ...,
+        min_length=1,
+        description="Transcribed or synthesized text",
+    )
     timestamp: float = Field(
         default_factory=time.time,
-        description="Unix timestamp (seconds) when turn was recorded",
+        description="Unix timestamp in seconds when the turn was recorded",
     )
     grounded_citations: List[str] = Field(
         default_factory=list,
@@ -78,11 +92,11 @@ class DialogueTurn(BaseModel):
     )
     tool_calls_executed: List[str] = Field(
         default_factory=list,
-        description="Names of tools triggered or executed during this turn",
+        description="Names of tools actually executed during this turn",
     )
     intent_detected: Optional[str] = Field(
         default=None,
-        description="Classified user intent if detected during this turn",
+        description="Classified caller intent for this turn",
     )
 
 
@@ -91,88 +105,156 @@ class CallMetadata(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    call_id: str = Field(..., min_length=1, description="Unique identifier for the call session")
-    direction: CallDirection = Field(..., description="Inbound or outbound call direction")
-    primary_domain: DomainType = Field(..., description="Primary domain assigned to the session")
-    caller_phone: Optional[str] = Field(default=None, description="Caller or recipient phone number")
-    caller_name: Optional[str] = Field(default=None, description="Caller name if known or identified")
-    campaign_id: Optional[str] = Field(default=None, description="Campaign ID if outbound call")
+    call_id: str = Field(
+        ...,
+        min_length=1,
+        description="Unique identifier for the call session",
+    )
+    direction: CallDirection = Field(
+        ...,
+        description="Inbound or outbound call direction",
+    )
+    primary_domain: DomainType = Field(
+        ...,
+        description="Primary business domain assigned to the session",
+    )
+    caller_phone: Optional[str] = Field(
+        default=None,
+        description="Caller or outbound recipient phone number",
+    )
+    caller_name: Optional[str] = Field(
+        default=None,
+        description="Caller name if known or identified",
+    )
+    campaign_id: Optional[str] = Field(
+        default=None,
+        description="Campaign ID for outbound calls",
+    )
     outbound_objective: Optional[str] = Field(
         default=None,
-        description="Specific business goal for an outbound outreach call",
+        description="Specific business goal for an outbound call",
     )
-    status: CallStatus = Field(default=CallStatus.RINGING, description="Current call lifecycle status")
+    status: CallStatus = Field(
+        default=CallStatus.RINGING,
+        description="Current call lifecycle status",
+    )
     start_time: float = Field(
         default_factory=time.time,
-        description="Unix timestamp when call connected",
+        description="Unix timestamp when the call connected",
     )
     end_time: Optional[float] = Field(
         default=None,
-        description="Unix timestamp when call ended",
+        description="Unix timestamp when the call ended",
     )
 
 
 class RAGQuery(BaseModel):
-    """Input query specification for Grounded RAG retrieval."""
+    """Input specification for grounded knowledge retrieval."""
 
     model_config = ConfigDict(extra="forbid")
 
-    domain: DomainType = Field(..., description="Domain knowledge base to search")
-    query_text: str = Field(..., min_length=1, description="Semantic search query text")
-    top_k: int = Field(default=3, ge=1, le=20, description="Maximum number of context chunks to return")
+    domain: DomainType = Field(
+        ...,
+        description="Business domain knowledge base to search",
+    )
+    query_text: str = Field(
+        ...,
+        min_length=1,
+        description="Semantic search query",
+    )
+    top_k: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        description="Maximum number of context chunks to return",
+    )
     relevance_threshold: float = Field(
         default=0.70,
         ge=0.0,
         le=1.0,
-        description="Minimum cosine similarity score required for grounding",
+        description="Minimum similarity score required for grounding",
     )
 
 
 class RAGChunk(BaseModel):
-    """Retrieved knowledge chunk from Redis Stack vector store."""
+    """Retrieved knowledge chunk from the vector store."""
 
     model_config = ConfigDict(extra="forbid")
 
-    doc_id: str = Field(..., min_length=1, description="Document or chunk unique identifier")
-    domain: DomainType = Field(..., description="Associated domain")
-    title: str = Field(..., min_length=1, description="Document title or section heading")
-    content: str = Field(..., min_length=1, description="Extracted textual content")
-    score: float = Field(ge=0.0, le=1.0, description="Relevance / similarity score")
+    doc_id: str = Field(
+        ...,
+        min_length=1,
+        description="Unique document or chunk identifier",
+    )
+    domain: DomainType = Field(
+        ...,
+        description="Business domain associated with the chunk",
+    )
+    title: str = Field(
+        ...,
+        min_length=1,
+        description="Document title or section heading",
+    )
+    content: str = Field(
+        ...,
+        min_length=1,
+        description="Retrieved textual content",
+    )
+    score: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="Relevance or similarity score",
+    )
     metadata: Dict[str, Any] = Field(
         default_factory=dict,
-        description="Optional auxiliary attributes (e.g. source, category, updated_at)",
+        description="Optional metadata such as source, category, or update time",
     )
 
 
 class ToolCallRequest(BaseModel):
-    """Invocation request for an external action via Model Context Protocol (MCP)."""
+    """Invocation request for an external action through MCP."""
 
     model_config = ConfigDict(extra="forbid")
 
-    tool_name: str = Field(..., min_length=1, description="Name of the MCP tool to execute")
+    tool_name: str = Field(
+        ...,
+        min_length=1,
+        description="Registered MCP tool identifier",
+    )
     arguments: Dict[str, Any] = Field(
         default_factory=dict,
-        description="Input parameters supplied to the tool",
+        description="Arguments supplied to the tool",
     )
-    call_id: str = Field(..., min_length=1, description="Associated call session ID")
+    call_id: str = Field(
+        ...,
+        min_length=1,
+        description="Associated call session ID",
+    )
 
 
 class ToolExecutionResult(BaseModel):
-    """Execution response and verification status from an MCP tool."""
+    """Execution result and verification status from an MCP tool."""
 
     model_config = ConfigDict(extra="forbid")
 
-    tool_name: str = Field(..., min_length=1, description="Name of the tool executed")
-    success: bool = Field(..., description="True if action succeeded and was verified")
+    tool_name: str = Field(
+        ...,
+        min_length=1,
+        description="Name of the executed tool",
+    )
+    success: bool = Field(
+        ...,
+        description="Whether the action succeeded and was verified",
+    )
     data: Dict[str, Any] = Field(
         default_factory=dict,
         description="Payload returned by the external service",
     )
     error_message: Optional[str] = Field(
         default=None,
-        description="Error description if execution or verification failed",
+        description="Error details if execution or verification failed",
     )
     verification_code: Optional[str] = Field(
         default=None,
-        description="Confirmation token or tracking code from external service",
+        description="Confirmation token or tracking code when available",
     )

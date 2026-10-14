@@ -144,7 +144,7 @@ class ConversationStateManager(MemoryProvider):
         self,
         call_id: str,
         caller_phone: Optional[str] = None,
-        domain: DomainType = DomainType.VAYVORA,
+        domain: DomainType = DomainType.INFRA_BUILDER,
         caller_name: Optional[str] = None,
         campaign_id: Optional[str] = None,
         campaign_objective: Optional[str] = None,
@@ -228,7 +228,7 @@ class ConversationStateManager(MemoryProvider):
             return self.create_outbound_state(
                 call_id=session_id,
                 caller_phone=caller_profile.phone if caller_profile else None,
-                domain=domain if domain != DomainType.UNKNOWN else DomainType.VAYVORA,
+                domain=domain if domain != DomainType.UNKNOWN else DomainType.INFRA_BUILDER,
                 caller_name=caller_profile.name if caller_profile else None,
                 campaign_id=caller_profile.campaign if caller_profile else None,
                 campaign_objective=caller_profile.campaign_objective if caller_profile else None,

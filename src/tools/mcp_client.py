@@ -36,7 +36,7 @@ class BaseMCPClient(ToolProvider):
 
     def _compute_idempotency_key(self, request: ToolCallRequest) -> str:
         """Derive deterministic idempotency key from request arguments and session."""
-        raw_args = json.dumps(request.arguments, sort_keys=True)
+        raw_args = json.dumps(request.arguments, sort_keys=True, separators=(",", ":"), default=str)
         hash_digest = hashlib.sha256(raw_args.encode("utf-8")).hexdigest()[:16]
         return f"{request.call_id}:{request.tool_name}:{hash_digest}"
 
@@ -49,19 +49,20 @@ class BaseMCPClient(ToolProvider):
             logger.info("Idempotent replay detected for key '%s'", idempotency_key)
             return self._idempotency_cache[idempotency_key].to_tool_execution_result()
 
-        # Step 1: Wrap in ValidatedToolRequest and validate
-        validated_req = ValidatedToolRequest(
-            action_name=request.tool_name,
-            arguments=request.arguments,
-            session_id=request.call_id,
-            idempotency_key=idempotency_key,
-            domain=request.arguments.get("domain", "edusaas"),
-            caller_name=request.arguments.get("caller_name"),
-            caller_email=request.arguments.get("caller_email") or request.arguments.get("email"),
-            caller_phone=request.arguments.get("caller_phone") or request.arguments.get("phone"),
-        )
-
+        # Step 1: Build and validate the request. Invalid domains or malformed
+        # arguments must fail closed instead of escaping the tool-execution boundary.
         try:
+            validated_req = ValidatedToolRequest(
+                action_name=request.tool_name,
+                arguments=request.arguments,
+                session_id=request.call_id,
+                idempotency_key=idempotency_key,
+                domain=request.arguments.get("domain", "infra_builder"),
+                caller_name=request.arguments.get("caller_name"),
+                caller_email=request.arguments.get("caller_email") or request.arguments.get("email"),
+                caller_phone=request.arguments.get("caller_phone") or request.arguments.get("phone"),
+                intent=request.arguments.get("intent"),
+            )
             ActionValidator.validate_action(validated_req)
         except Exception as val_err:
             logger.warning("Action validation rejected for '%s': %s", request.tool_name, val_err)
@@ -83,7 +84,10 @@ class BaseMCPClient(ToolProvider):
         verified_result = ActionVerifier.verify(raw_result)
 
         # Cache only verified or completed mutations
-        if verified_result.succeeded:
+        if verified_result.is_verified_success:
+            # Keep the cache bounded for long-running voice sessions.
+            if len(self._idempotency_cache) >= 2_000:
+                self._idempotency_cache.clear()
             self._idempotency_cache[idempotency_key] = verified_result
 
         return verified_result.to_tool_execution_result()
@@ -229,7 +233,11 @@ class MockToolProvider(BaseMCPClient):
                 requested=True,
                 started=True,
                 succeeded=True,
-                data={"slots": ["Tomorrow 10:00 AM", "Tomorrow 2:00 PM", "Next Monday 11:00 AM"]},
+                data={
+                    "slots": ["Tomorrow 10:00 AM", "Tomorrow 2:00 PM", "Next Monday 11:00 AM"],
+                    "simulation": True,
+                    "notice": "Mock slots for tests only; not real calendar availability.",
+                },
             )
 
         elif action == "create_calendar_event":
@@ -239,7 +247,13 @@ class MockToolProvider(BaseMCPClient):
                 started=True,
                 succeeded=True,
                 external_reference="evt_cal_987654",
-                data={"event_id": "evt_cal_987654", "status": "confirmed", "slot": args.get("slot")},
+                data={
+                    "event_id": "evt_cal_987654",
+                    "status": "mock_confirmed",
+                    "slot": args.get("slot"),
+                    "simulation": True,
+                    "notice": "Mock event only; no real calendar booking was created.",
+                },
             )
 
         elif action == "update_lead":
@@ -249,7 +263,12 @@ class MockToolProvider(BaseMCPClient):
                 started=True,
                 succeeded=True,
                 external_reference="lead_crm_12345",
-                data={"lead_id": "lead_crm_12345", "updated": True},
+                data={
+                    "lead_id": "lead_crm_12345",
+                    "updated": True,
+                    "simulation": True,
+                    "notice": "Mock CRM update only; no production record was changed.",
+                },
             )
 
         elif action == "create_hr_followup":
@@ -259,7 +278,12 @@ class MockToolProvider(BaseMCPClient):
                 started=True,
                 succeeded=True,
                 external_reference="ticket_hr_554433",
-                data={"ticket_id": "ticket_hr_554433", "status": "queued"},
+                data={
+                    "ticket_id": "ticket_hr_554433",
+                    "status": "mock_queued",
+                    "simulation": True,
+                    "notice": "Mock follow-up only; no real ticket was created.",
+                },
             )
 
         elif action == "send_message":
@@ -269,7 +293,12 @@ class MockToolProvider(BaseMCPClient):
                 started=True,
                 succeeded=True,
                 external_reference="msg_sms_778899",
-                data={"message_id": "msg_sms_778899", "status": "delivered"},
+                data={
+                    "message_id": "msg_sms_778899",
+                    "status": "mock_sent",
+                    "simulation": True,
+                    "notice": "Mock message only; no WhatsApp/SMS was sent or delivered.",
+                },
             )
 
         elif action == "update_business_status":
@@ -279,7 +308,11 @@ class MockToolProvider(BaseMCPClient):
                 started=True,
                 succeeded=True,
                 external_reference=f"status_{args.get('status')}",
-                data={"status": args.get("status")},
+                data={
+                    "status": args.get("status"),
+                    "simulation": True,
+                    "notice": "Mock status update only; no production system was changed.",
+                },
             )
 
         elif action == "mail_read_recent":
@@ -312,10 +345,10 @@ class MockToolProvider(BaseMCPClient):
                 external_reference="emails_read_2",
                 data={
                     "messages": [
-                        {"from": "counseling@edusaas.com", "subject": "Enrollment Inquiry Followup"},
-                        {"from": "partners@vayvora.com", "subject": "Enterprise AI Voice Consultation"},
+                        {"from": "inquiries@infrabuilder.com", "subject": "Real Estate Brochure Inquiry"},
+                        {"from": "sales@infrabuilder.com", "subject": "Site Visit Booking Followup"},
                     ],
-                    "summary": "From: partners@vayvora.com | Subject: Enterprise AI Voice Consultation\nFrom: counseling@edusaas.com | Subject: Enrollment Inquiry Followup",
+                    "summary": "From: inquiries@infrabuilder.com | Subject: Real Estate Brochure Inquiry\nFrom: sales@infrabuilder.com | Subject: Site Visit Booking Followup",
                 },
             )
 
@@ -441,16 +474,45 @@ class HttpMCPToolProvider(BaseMCPClient):
                     error=f"MCP server error HTTP {resp.status_code}: {resp.text}",
                 )
 
-            body = resp.json()
-            if "error" in body:
+            try:
+                body = resp.json()
+            except ValueError:
                 return ToolResult(
                     action_name=request.action_name,
                     requested=True,
+                    started=True,
+                    failed=True,
+                    error="MCP server returned invalid JSON.",
+                )
+
+            if not isinstance(body, dict):
+                return ToolResult(
+                    action_name=request.action_name,
+                    requested=True,
+                    started=True,
+                    failed=True,
+                    error="MCP server returned an invalid JSON-RPC response.",
+                )
+
+            if body.get("error"):
+                return ToolResult(
+                    action_name=request.action_name,
+                    requested=True,
+                    started=True,
                     failed=True,
                     error=str(body["error"]),
                 )
 
-            res_data = body.get("result", {})
+            res_data = body.get("result")
+            if not isinstance(res_data, dict):
+                return ToolResult(
+                    action_name=request.action_name,
+                    requested=True,
+                    started=True,
+                    failed=True,
+                    error="MCP response is missing a valid result object.",
+                )
+
             if res_data.get("isError"):
                 return ToolResult(
                     action_name=request.action_name,
@@ -458,25 +520,29 @@ class HttpMCPToolProvider(BaseMCPClient):
                     started=True,
                     succeeded=False,
                     failed=True,
-                    error=res_data.get("error") or "Tool execution reported error",
+                    error=str(res_data.get("error") or "Tool execution reported error"),
                     data=res_data,
                 )
 
+            # Prefer structuredContent when supplied by an MCP server. Otherwise
+            # preserve the result payload for the verifier rather than guessing success.
+            structured = res_data.get("structuredContent")
+            result_data = structured if isinstance(structured, dict) else res_data
             ext_ref = (
-                res_data.get("external_reference")
-                or res_data.get("id")
-                or res_data.get("message_id")
-                or res_data.get("event_id")
-                or res_data.get("lead_id")
-                or res_data.get("ticket_id")
+                result_data.get("external_reference")
+                or result_data.get("id")
+                or result_data.get("message_id")
+                or result_data.get("event_id")
+                or result_data.get("lead_id")
+                or result_data.get("ticket_id")
             )
             return ToolResult(
                 action_name=request.action_name,
                 requested=True,
                 started=True,
                 succeeded=True,
-                data=res_data,
-                external_reference=ext_ref,
+                data=result_data,
+                external_reference=str(ext_ref) if ext_ref is not None else None,
             )
         except httpx.TimeoutException:
             return ToolResult(

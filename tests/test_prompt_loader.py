@@ -33,8 +33,8 @@ class TestPromptLoader:
             ("common/rules.txt", "CORE BEHAVIORAL RULES"),
             ("agent/json_schema.txt", "OUTPUT FORMAT"),
             ("agent/domain_section.txt", "ACTIVE BUSINESS DOMAIN"),
-            ("agent/inbound.txt", "CALL DIRECTION: INBOUND CALL"),
-            ("agent/outbound.txt", "CALL DIRECTION: OUTBOUND OUTREACH CALL"),
+            ("agent/inbound.txt", "CALL DIRECTION: INBOUND"),
+            ("agent/outbound.txt", "OUTBOUND CALLING"),
             ("agent/session_context.txt", "KNOWN SESSION CONTEXT"),
             ("agent/decision_instructions.txt", "DECISION INSTRUCTIONS"),
             ("conversation/outbound_opening.txt", "OUTBOUND phone call"),
@@ -42,7 +42,7 @@ class TestPromptLoader:
             ("rag/grounded_answer.txt", "verified reference data"),
             ("rag/system.txt", "verified reference data"),
             ("tools/action_confirmation.txt", "EXECUTED and VERIFIED"),
-            ("tools/system.txt", "confirming a verified action"),
+            ("tools/system.txt", "confirming a caller-requested action"),
         ],
     )
     def test_load_all_registered_prompt_files(
@@ -81,22 +81,22 @@ class TestPromptLoader:
     def test_render_prompt_replaces_placeholders_safely(self) -> None:
         rendered = render_prompt(
             "conversation/outbound_opening_system.txt",
-            domain_name="EduSaaS Academy",
+            domain_name="Infra Builder",
         )
-        assert "EduSaaS Academy" in rendered
+        assert "Infra Builder" in rendered
         assert "{domain_name}" not in rendered
 
     def test_render_prompt_tolerates_literal_json_braces(self) -> None:
         rendered = render_prompt(
             "agent/domain_section.txt",
-            name="TestingCorp",
-            domain="vayvora",
-            description="Leading AI solutions provider.",
+            name="Infra Builder",
+            domain="infra_builder",
+            description="Leading real-estate developer in Bangalore.",
             persona_guidelines="Be courteous and prompt.",
-            supported_intents="company_overview, career_inquiry",
+            supported_intents="project_inquiry, site_visit_booking",
             supported_slots="caller_name (str: name of caller)",
         )
-        assert "TestingCorp" in rendered
-        assert "Leading AI solutions provider." in rendered
+        assert "Infra Builder" in rendered
+        assert "Leading real-estate developer in Bangalore." in rendered
         assert "{name}" not in rendered
         assert "{domain}" not in rendered

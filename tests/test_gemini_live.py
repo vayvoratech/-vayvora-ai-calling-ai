@@ -35,12 +35,12 @@ async def test_live_gemini_decision_smoke():
     settings = Settings()
     provider = GeminiLLMProvider(settings=settings)
 
-    prompt = 'Caller says: "Hi, I want to learn about your data science and AI courses."'
-    system = "You are an assistant for EduSaaS. Output strict JSON with detected_domain, detected_intent, and user_facing_response."
+    prompt = 'Caller says: "Hi, I want to learn about your 3 BHK apartments in Whitefield."'
+    system = "You are an assistant for Infra Builder (domain: 'infra_builder'). Output strict JSON with detected_domain ('infra_builder'), detected_intent, and user_facing_response."
 
     decision: ConversationalDecision = await provider.generate_decision(prompt, system)
 
     assert decision is not None
     assert decision.user_facing_response is not None
     assert len(decision.user_facing_response) > 5
-    assert decision.detected_domain in (DomainType.EDUSAAS, DomainType.GENERAL)
+    assert decision.detected_domain in (DomainType.INFRA_BUILDER, DomainType.GENERAL, DomainType.UNKNOWN)

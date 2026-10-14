@@ -28,9 +28,7 @@ from src.state.manager import ConversationStateManager
 from src.tools import (
     EmailProvider,
     HttpMCPToolProvider,
-    MockEmailProvider,
     MockToolProvider,
-    SMTPEmailProvider,
 )
 from src.ui.service import RuntimeMode, ServiceComponents, WorkbenchService, run_sync
 
@@ -61,10 +59,7 @@ class InteractiveMockLLMProvider(MockLLMProvider):
             mc = re.search(r"Contact Name:\s*([A-Za-z0-9 _-]+)\s+\(NOTE:", prompt)
             contact_str = f"Hi {mc.group(1).strip()}, " if mc else "Hello, "
 
-            if "EduSaaS" in prompt:
-                return f"{contact_str}{agent_str} EduSaaS Academic Admissions & Guidance. I'm reaching out because you had shown interest in our courses. Is this a good time to speak for a couple of minutes?"
-            else:
-                return f"{contact_str}{agent_str} Vayvora Technologies. I'm reaching out to understand whether your organization is currently exploring AI or automation solutions. Is this a good time for a quick conversation?"
+            return f"{contact_str}{agent_str} Infra Builder Real Estate. I'm reaching out regarding your recent inquiry about premium residential properties in Bangalore. Is this a good time to speak for a moment?"
         return await super().generate_response(prompt, system_instruction, tools)
 
     async def generate_decision(
@@ -110,20 +105,20 @@ class InteractiveMockLLMProvider(MockLLMProvider):
         # (A) Farewells / Explicit Terminations
         if any(w in clean_user_text for w in ["bye", "goodbye", "that's all", "thank you, that's all", "end call"]):
             decision = ConversationalDecision(
-                detected_domain=DomainType.GENERAL,
+                detected_domain=DomainType.INFRA_BUILDER,
                 detected_intent="farewell",
                 proposed_stage=ConversationStage.COMPLETED,
-                user_facing_response="Thank you for speaking with us today! Have a wonderful day. Goodbye!",
+                user_facing_response="Thank you for contacting Infra Builder! Have a wonderful day. Goodbye!",
             )
             return self.validator.validate_and_filter(decision)
 
         # (B) Declines / Non-terminating Negatives
         if clean_user_text in ["no", "no thanks", "no thank you", "not really", "nope", "nah"]:
             decision = ConversationalDecision(
-                detected_domain=DomainType.GENERAL,
+                detected_domain=DomainType.INFRA_BUILDER,
                 detected_intent="decline",
                 proposed_stage=ConversationStage.INFORMATION,
-                user_facing_response="Understood! Is there anything else about EduSaaS courses or Vayvora solutions I can assist you with?",
+                user_facing_response="Understood! Is there anything else about Infra Builder properties or site visits I can assist you with?",
             )
             return self.validator.validate_and_filter(decision)
 
@@ -141,185 +136,108 @@ class InteractiveMockLLMProvider(MockLLMProvider):
 
         resolved_slot = dt_in_user_text or dt_in_state
 
-        # (C) Scheduling / Meeting Consultations
-        if any(w in clean_user_text for w in ["schedule", "meeting", "consultation", "demo", "book a slot", "calendar"]) or dt_in_user_text:
-            dom = DomainType.VAYVORA if "vayvora" in clean_user_text else DomainType.EDUSAAS
-            if resolved_slot:
-                decision = ConversationalDecision(
-                    detected_domain=dom,
-                    detected_intent="schedule_consultation",
-                    extracted_slots={"meeting_preference": resolved_slot},
-                    proposed_stage=ConversationStage.ACTION_CONFIRMATION,
-                    action_proposed=True,
-                    proposed_action=ProposedAction(
-                        tool_name="create_calendar_event",
-                        arguments={"slot": resolved_slot, "confirmed": True},
-                    ),
-                    user_facing_response=f"I would be happy to schedule a consultation for you. I have confirmed {resolved_slot}.",
-                )
-            else:
-                decision = ConversationalDecision(
-                    detected_domain=dom,
-                    detected_intent="schedule_consultation",
-                    extracted_slots={},
-                    proposed_stage=ConversationStage.ACTION_CONFIRMATION,
-                    action_proposed=True,
-                    proposed_action=ProposedAction(
-                        tool_name="create_calendar_event",
-                        arguments={},
-                    ),
-                    user_facing_response="I can certainly schedule that consultation. Which date or time slot would work best for you?",
-                )
+        # (C) Scheduling / Site Visits
+        if any(w in clean_user_text for w in ["schedule", "site visit", "visit", "meeting", "consultation", "demo", "book a slot", "calendar"]) or dt_in_user_text:
+            slots = {"meeting_preference": resolved_slot} if resolved_slot else {}
+            decision = ConversationalDecision(
+                detected_domain=DomainType.INFRA_BUILDER,
+                detected_intent="schedule_site_visit",
+                extracted_slots=slots,
+                proposed_stage=ConversationStage.ACTION_CONFIRMATION,
+                knowledge_required=False,
+                action_proposed=False,
+                proposed_action=None,
+                user_facing_response=(
+                    f"You prefer {resolved_slot}. I need to check the property's actual availability before confirming a site visit."
+                    if resolved_slot
+                    else "I can help arrange a site visit. Which property and date or time would you prefer?"
+                ),
+            )
             return self.validator.validate_and_filter(decision)
 
-        # (D) Brochure / Email Information
-        if any(w in clean_user_text for w in ["email", "brochure", "send me", "syllabus pdf", "mail me"]):
-            from src.domains.edusaas.email import is_vague_email_request
-            if is_vague_email_request(clean_user_text):
-                decision = ConversationalDecision(
-                    detected_domain=DomainType.EDUSAAS if "edusaas" in prompt.lower() or "course" in clean_user_text else DomainType.VAYVORA,
-                    detected_intent="clarify_request",
-                    proposed_stage=ConversationStage.INFORMATION,
-                    action_proposed=False,
-                    needs_clarification=True,
-                    clarification_question="Absolutely. What information would you like me to send you?",
-                    user_facing_response="Absolutely. What information would you like me to send you?",
+        # (D) Brochure / WhatsApp Information
+        if any(w in clean_user_text for w in ["whatsapp", "brochure", "send me", "catalog", "pricing", "floor plan", "details on whatsapp"]):
+            explicit_send_request = any(
+                phrase in clean_user_text
+                for phrase in (
+                    "send it on whatsapp", "send on whatsapp", "send me on whatsapp",
+                    "send the brochure on whatsapp", "whatsapp me", "send it to my whatsapp",
+                    "send the details on whatsapp", "send details on whatsapp",
                 )
-                return self.validator.validate_and_filter(decision)
-
+            )
             decision = ConversationalDecision(
-                detected_domain=DomainType.EDUSAAS if "course" in clean_user_text or "edusaas" in clean_user_text or "edusaas" in prompt.lower() else DomainType.VAYVORA,
+                detected_domain=DomainType.INFRA_BUILDER,
                 detected_intent="request_brochure",
                 proposed_stage=ConversationStage.ACTION_CONFIRMATION,
-                action_proposed=True,
-                proposed_action=ProposedAction(
-                    tool_name="send_email",
-                    arguments={"subject": "Detailed Information & Curriculum"},
+                action_proposed=False,
+                proposed_action=None,
+                user_facing_response=(
+                    "I can help with that. Please confirm that you want the project details sent to you on WhatsApp."
+                    if not explicit_send_request
+                    else "I can arrange that. Please confirm the WhatsApp number to use if it is not already on file."
                 ),
-                user_facing_response="I will send over the detailed syllabus and documentation right away.",
             )
             return self.validator.validate_and_filter(decision)
 
-        # (D2) Explicit Email Provision
-        extracted_email = extract_email_address(clean_user_text)
-        if extracted_email:
-            dom = DomainType.EDUSAAS if "edusaas" in prompt.lower() else DomainType.VAYVORA
-            decision = ConversationalDecision(
-                detected_domain=dom,
-                detected_intent="provide_email",
-                extracted_slots={"email": extracted_email},
-                proposed_stage=ConversationStage.ACTION_CONFIRMATION,
-                action_proposed=True,
-                proposed_action=ProposedAction(
-                    tool_name="send_email",
-                    arguments={
-                        "recipient": extracted_email,
-                        "subject": "Course Details & Curriculum" if dom == DomainType.EDUSAAS else "Detailed Information",
-                    },
-                ),
-                user_facing_response="Thank you for providing your email address.",
-            )
-            return self.validator.validate_and_filter(decision)
+        # (E) Explicit Phone / WhatsApp Provision
+        import re
+        from src.tools.message_provider import validate_phone_number
+        phone_match = re.search(r"\b(?:\+?91[\-\s]?)?[6-9]\d{9}\b", clean_user_text)
+        if phone_match:
+            valid_p, norm_p, _ = validate_phone_number(phone_match.group(0))
+            if valid_p:
+                decision = ConversationalDecision(
+                    detected_domain=DomainType.INFRA_BUILDER,
+                    detected_intent="provide_phone",
+                    extracted_slots={"phone": norm_p, "whatsapp_number": norm_p},
+                    proposed_stage=ConversationStage.ACTION_CONFIRMATION,
+                    action_proposed=False,
+                    proposed_action=None,
+                    user_facing_response=(
+                        f"Thank you. I have the number ending in {norm_p[-4:]}. "
+                        "Would you like me to send the property details to this number on WhatsApp?"
+                    ),
+                )
+                return self.validator.validate_and_filter(decision)
 
-        # (E) Careers / HR Followups
-        if any(w in clean_user_text for w in ["career", "careers", "job", "hiring", "apply", "internship"]):
+        # (F) Real Estate Projects & Inquiries
+        if any(w in clean_user_text for w in ["skyline", "whitefield", "green valley", "sarjapur", "urban heights", "electronic city", "villa", "apartment", "2 bhk", "3 bhk", "price", "pricing", "rera", "property", "project", "location"]):
             decision = ConversationalDecision(
-                detected_domain=DomainType.VAYVORA,
-                detected_intent="career_inquiry",
-                proposed_stage=ConversationStage.ACTION_CONFIRMATION,
-                action_proposed=True,
-                proposed_action=ProposedAction(
-                    tool_name="create_hr_followup",
-                    arguments={"position": "Software Engineer"},
-                ),
-                user_facing_response="We are always looking for talented engineers at Vayvora. I have queued a follow-up ticket with our HR team.",
-            )
-            return self.validator.validate_and_filter(decision)
-
-        # (F) Vayvora Enterprise & Corporate Solutions
-        if any(w in clean_user_text for w in ["vayvora", "solution", "solutions", "enterprise", "consulting", "software", "custom ai"]):
-            decision = ConversationalDecision(
-                detected_domain=DomainType.VAYVORA,
-                detected_intent="solutions_inquiry",
+                detected_domain=DomainType.INFRA_BUILDER,
+                detected_intent="property_inquiry",
                 proposed_stage=ConversationStage.INFORMATION,
                 knowledge_required=True,
                 knowledge_query=clean_user_text,
-                user_facing_response="Vayvora provides enterprise AI solutions, autonomous agent workflows, and intelligent software engineering.",
+                user_facing_response="I’ll check the approved property information so I can give you accurate details.",
             )
             return self.validator.validate_and_filter(decision)
 
-        # (G) EduSaaS Courses & Curriculum
-        if any(w in clean_user_text for w in ["course", "courses", "syllabus", "learn", "enroll", "curriculum", "ai engineering"]):
-            decision = ConversationalDecision(
-                detected_domain=DomainType.EDUSAAS,
-                detected_intent="course_information",
-                proposed_stage=ConversationStage.INFORMATION,
-                knowledge_required=True,
-                knowledge_query=clean_user_text,
-                user_facing_response="At EduSaaS, we offer comprehensive programs in AI Engineering, Data Science, and Machine Learning.",
-            )
-            return self.validator.validate_and_filter(decision)
-
-        # (H) Affirmative confirmations / continuations ("yes", "sure", "okay", "yeah", "tell me more")
+        # (G) Affirmative confirmations / continuations ("yes", "sure", "okay", "yeah", "tell me more")
         if any(w in clean_user_text for w in ["yes", "yeah", "sure", "okay", "ok", "yep", "certainly", "tell me more", "sounds good", "interested"]):
-            detected_dom = DomainType.EDUSAAS if "edusaas" in prompt.lower() else DomainType.VAYVORA
             decision = ConversationalDecision(
-                detected_domain=detected_dom,
+                detected_domain=DomainType.INFRA_BUILDER,
                 detected_intent="confirm_interest",
                 proposed_stage=ConversationStage.DISCOVERY,
-                user_facing_response="Great! To better assist you, could you share more about your specific requirements or interests?",
+                user_facing_response="Wonderful! Are you looking for a 2 or 3 BHK apartment, or are you interested in private luxury villas?",
             )
             return self.validator.validate_and_filter(decision)
 
-        # (I) Pure Greetings & Initial Openings
+        # (H) Pure Greetings & Initial Openings
         if any(w in clean_user_text for w in ["hello", "hi", "hey", "good morning", "good afternoon"]):
-            detected_dom = DomainType.UNKNOWN if "unknown" in prompt.lower() else (DomainType.EDUSAAS if "edusaas" in prompt.lower() else DomainType.VAYVORA)
             decision = ConversationalDecision(
-                detected_domain=detected_dom,
+                detected_domain=DomainType.INFRA_BUILDER,
                 detected_intent="greeting",
                 proposed_stage=ConversationStage.GREETING,
-                user_facing_response="Hi, how can I help you today?",
+                user_facing_response="Hello! Welcome to Infra Builder. How can I assist you with our residential properties today?",
             )
             return self.validator.validate_and_filter(decision)
 
-        # (J) Ambiguous Purpose Inquiries
-        if any(w in clean_user_text for w in ["need some information", "want some information", "need information", "some information", "tell me about your services", "what do you do", "can you help me"]):
-            decision = ConversationalDecision(
-                detected_domain=DomainType.UNKNOWN,
-                detected_intent="purpose_discovery",
-                proposed_stage=ConversationStage.PURPOSE_DISCOVERY,
-                user_facing_response="Sure. Are you calling about our software and AI solutions, or our education services?",
-                needs_clarification=True,
-                clarification_question="Are you calling about our software and AI solutions, or our education services?",
-            )
-            return self.validator.validate_and_filter(decision)
-
-        # (K) Explicit Domain Corrections
-        if any(w in clean_user_text for w in ["actually", "i meant", "meant", "wrong company", "not vayvora", "not edusaas"]):
-            if any(w in clean_user_text for w in ["edusaas", "education", "courses", "course"]):
-                decision = ConversationalDecision(
-                    detected_domain=DomainType.EDUSAAS,
-                    detected_intent="course_information",
-                    proposed_stage=ConversationStage.INFORMATION,
-                    user_facing_response="Understood! Switching to EduSaaS. How can I assist you with our education platform or courses?",
-                )
-                return self.validator.validate_and_filter(decision)
-            elif any(w in clean_user_text for w in ["vayvora", "software", "ai"]):
-                decision = ConversationalDecision(
-                    detected_domain=DomainType.VAYVORA,
-                    detected_intent="solutions_inquiry",
-                    proposed_stage=ConversationStage.INFORMATION,
-                    user_facing_response="Understood! Switching to Vayvora. How can I assist you with our AI and software engineering solutions?",
-                )
-                return self.validator.validate_and_filter(decision)
-
-        # (L) Default Fallback (Conversational continuity, NEVER reset to greeting)
-        detected_dom = DomainType.UNKNOWN if "unknown" in prompt.lower() else (DomainType.EDUSAAS if "edusaas" in prompt.lower() else DomainType.VAYVORA)
+        # (I) Default Fallback
         decision = ConversationalDecision(
-            detected_domain=detected_dom,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="general_inquiry",
             proposed_stage=ConversationStage.INFORMATION,
-            user_facing_response=f"Understood. Could you share more details about your specific questions or requirements regarding {detected_dom.value}?",
+            user_facing_response="Understood. Could you share your preferred location, budget, or configuration so I can assist you better?",
         )
         return self.validator.validate_and_filter(decision)
 
@@ -425,6 +343,8 @@ def bootstrap_workbench(
             rag_mode = "LIVE"
             notes.append("RAG: Live Redis Stack vector store connected")
         except Exception as exc:
+            if live_rag:
+                raise RuntimeError(f"Live RAG was explicitly requested but failed to initialize: {exc}") from exc
             logger.warning("Falling back to in-memory RAG: %s", exc)
             knowledge_provider = GroundedKnowledgeProvider(
                 embedding_provider=get_embedding_provider(settings=cfg, force_mock=force_mock),
@@ -441,9 +361,8 @@ def bootstrap_workbench(
         rag_mode = "MOCK" if force_mock else "IN_MEMORY"
         try:
             pipeline = KnowledgeIngestionPipeline(knowledge_provider=knowledge_provider)
-            run_sync(pipeline.ingest_domain(DomainType.EDUSAAS))
-            run_sync(pipeline.ingest_domain(DomainType.VAYVORA))
-            notes.append("RAG: In-memory vector store seeded with EduSaaS & Vayvora knowledge")
+            run_sync(pipeline.ingest_domain(DomainType.INFRA_BUILDER))
+            notes.append("RAG: In-memory vector store seeded with Infra Builder knowledge")
         except Exception as ingest_err:
             logger.warning("Could not pre-seed in-memory knowledge: %s", ingest_err)
             notes.append(f"RAG: In-memory store unseeded ({ingest_err})")
@@ -451,16 +370,10 @@ def bootstrap_workbench(
     # -------------------------------------------------------------------------
     # 3. Tool Provider (MCP) & Email Provider (SMTP)
     # -------------------------------------------------------------------------
+    # Infra Builder workflows use WhatsApp, not customer email. Keep email
+    # dispatch unconfigured in this domain so a misrouted action cannot send mail.
     email_provider: Optional[EmailProvider] = None
-    if cfg.smtp_host and cfg.smtp_host != "localhost" and cfg.smtp_username:
-        email_provider = SMTPEmailProvider(settings=cfg)
-        notes.append(f"Email: SMTPEmailProvider active ({cfg.smtp_host}:{cfg.smtp_port})")
-    elif not force_mock and cfg.smtp_host and cfg.smtp_host != "localhost":
-        email_provider = SMTPEmailProvider(settings=cfg)
-        notes.append(f"Email: SMTPEmailProvider active ({cfg.smtp_host}:{cfg.smtp_port})")
-    else:
-        email_provider = MockEmailProvider(force_success=True)
-        notes.append("Email: MockEmailProvider active")
+    notes.append("Email: disabled for Infra Builder runtime")
 
     tool_mode = "MOCK"
 
@@ -481,6 +394,8 @@ def bootstrap_workbench(
             tool_mode = "LIVE"
             notes.append(f"Tools: Live HTTP MCP provider connected to {cfg.mcp_server_url}")
         except Exception as exc:
+            if live_tools:
+                raise RuntimeError(f"Live MCP tools were explicitly requested but failed to initialize: {exc}") from exc
             logger.warning("Falling back to MockToolProvider: %s", exc)
             tool_provider = MockToolProvider(settings=cfg, email_provider=email_provider)
             notes.append(f"Tools: Mock fallback ({exc})")

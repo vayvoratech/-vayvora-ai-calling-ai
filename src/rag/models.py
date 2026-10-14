@@ -40,11 +40,14 @@ class DocumentChunk:
 
     @property
     def domain(self) -> DomainType:
-        if self.tenant_id.lower() == "edusaas":
+        t_id = self.tenant_id.lower()
+        if t_id in ("infra_builder", "infrabuilder"):
+            return DomainType.INFRA_BUILDER
+        elif t_id == "edusaas":
             return DomainType.EDUSAAS
-        elif self.tenant_id.lower() == "vayvora":
+        elif t_id == "vayvora":
             return DomainType.VAYVORA
-        return DomainType.GENERAL
+        return DomainType.INFRA_BUILDER
 
     @property
     def source_file(self) -> str:

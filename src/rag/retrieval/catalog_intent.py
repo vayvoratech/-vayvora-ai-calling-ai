@@ -7,66 +7,46 @@ from src.core.types import DomainType
 
 
 def is_catalog_query(query_text: str, domain: DomainType) -> bool:
-    """Detect whether a query is requesting the broad/complete course catalog list.
+    """Detect whether a query is requesting the broad/complete project or course catalog list.
 
-    Returns True ONLY for catalog/list queries in the EduSaaS domain, while
-    guaranteeing that queries about specific courses or details continue using
+    Returns True for catalog/list queries in INFRA_BUILDER (and legacy EDUSAAS), while
+    guaranteeing that queries about specific properties/courses or details continue using
     semantic vector retrieval.
     """
-    if domain != DomainType.EDUSAAS:
-        return False
-
     text = query_text.lower().strip()
 
-    # Negative triggers: if the user asks about specific course topics or details,
-    # it is a specific query, NOT a broad catalog query.
-    specific_topics = (
-        "artificial intelligence",
-        "ai/ml",
-        "machine learning",
-        "full stack",
-        "full-stack",
-        "web development",
-        "react",
-        "data science",
-        "business analytics",
-        "cloud computing",
-        "devops",
-        "aws",
-        "kubernetes",
-        "cybersecurity",
-        "ethical hacking",
-        "data structures",
-        "dsa",
-        "algorithms",
-        "system design",
-        "technolog",
-        "fee for",
-        "cost of",
-        "price of",
-        "syllabus",
-        "prerequisite",
-        "placement",
-        "demo",
-        "admission process",
-        "interview",
-        "refund",
-    )
-    if any(topic in text for topic in specific_topics):
-        return False
+    if domain == DomainType.INFRA_BUILDER:
+        # Negative triggers: specific projects or specific detail inquiries
+        specific_real_estate = (
+            "skyline",
+            "green valley",
+            "urban heights",
+            "whitefield",
+            "sarjapur",
+            "electronic city",
+            "villa",
+            "villas",
+            "reschedule",
+            "cancel",
+            "book site visit",
+            "schedule site visit",
+            "whatsapp",
+        )
+        if any(topic in text for topic in specific_real_estate):
+            return False
 
-    # Positive patterns matching broad catalog / course list intent
-    catalog_patterns = [
-        r"\b(list|show|give|tell)\b.*\b(courses?|programs?|tracks?|offerings?|classes)\b",
-        r"\b(all|available|offered)\b.*\b(courses?|programs?|tracks?)\b",
-        r"\b(courses?|programs?|tracks?)\b.*\b(available|offered|list|catalog|options)\b",
-        r"\bwhat\b.*\b(courses?|programs?|tracks?)\b.*\b(offer|have|provide|available|teach|run)\b",
-        r"\bwhat\s+(do\s+you|does\s+edusaas)\s+(offer|have|provide|teach)\b",
-        r"\bwhich\b.*\b(courses?|programs?|tracks?)\b",
-        r"\bcourse\s*list\b",
-        r"\bprogram\s*list\b",
-        r"\bcatalog\b",
-        r"\bwhat\s+(are\s+)?(your|the)\s+(courses?|programs?)\b",
-    ]
+        catalog_patterns = [
+            r"\b(list|show|give|tell)\b.*\b(projects?|properties|developments?|apartments?|communities|units)\b",
+            r"\b(all|available|ongoing|active)\b.*\b(projects?|properties|developments?|options)\b",
+            r"\b(projects?|properties)\b.*\b(available|offered|list|catalog|portfolio|options)\b",
+            r"\bwhat\b.*\b(projects?|properties)\b.*\b(have|offer|provide|develop|available|build)\b",
+            r"\bwhat\s+(do\s+you|does\s+infra\s*builder)\s+(offer|have|develop|build)\b",
+            r"\bwhich\b.*\b(projects?|properties)\b",
+            r"\bproject\s*list\b",
+            r"\bproperty\s*list\b",
+            r"\bcatalog\b",
+            r"\bwhat\s+(are\s+)?(your|the)\s+(projects?|properties)\b",
+        ]
+        return any(re.search(pat, text) for pat in catalog_patterns)
 
-    return any(re.search(pat, text) for pat in catalog_patterns)
+    return False

@@ -47,7 +47,7 @@ async def telephony_webhook() -> Response:
 async def voice_media_stream(
     websocket: WebSocket,
     session_id: Optional[str] = Query(default=None),
-    domain: Optional[str] = Query(default="edusaas"),
+    domain: Optional[str] = Query(default="infra_builder"),
     direction: Optional[str] = Query(default="inbound"),
     caller_phone: Optional[str] = Query(default=None),
     caller_name: Optional[str] = Query(default=None),
@@ -57,8 +57,8 @@ async def voice_media_stream(
     raw_dir = (direction or "inbound").lower()
     call_dir = CallDirection.OUTBOUND if raw_dir == "outbound" else CallDirection.INBOUND
 
-    raw_domain = (domain or "edusaas").lower()
-    dom = DomainType.VAYVORA if raw_domain == "vayvora" else DomainType.EDUSAAS
+    raw_domain = (domain or "infra_builder").lower()
+    dom = DomainType.INFRA_BUILDER
     initial_domain = DomainType.UNKNOWN if call_dir == CallDirection.INBOUND else dom
 
     # Strict caller identity rule: If inbound, caller name cannot be a placeholder
@@ -85,7 +85,7 @@ async def start_session(
     """Explicitly initialize an inbound or outbound voice session."""
     direction = CallDirection.OUTBOUND if payload.direction.lower() == "outbound" else CallDirection.INBOUND
     raw_domain = payload.domain.lower()
-    domain = DomainType.VAYVORA if raw_domain == "vayvora" else DomainType.EDUSAAS
+    domain = DomainType.INFRA_BUILDER
     initial_domain = DomainType.UNKNOWN if direction == CallDirection.INBOUND else domain
 
     session_id = payload.session_id or f"session_{direction.value}_{int(time.time())}"

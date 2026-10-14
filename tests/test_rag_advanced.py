@@ -25,7 +25,7 @@ from src.rag.retrieval.vector_store import RAGVectorStore
 from src.rag.retriever import GroundedContextResult, GroundedKnowledgeProvider
 from src.rag.schemas import RAGResponse, RetrievalResult
 from src.rag.services.fast_path import FAST_PATH_RULES, get_deterministic_fast_path
-from src.rag.services.recommendation import CourseRecommendationService
+from src.rag.services.recommendation import CourseRecommendationService, PropertyRecommendationService
 from src.rag.services.retriever import RAGRetriever
 from src.state.manager import ConversationStateManager
 
@@ -36,27 +36,27 @@ from src.state.manager import ConversationStateManager
 class TestMarkdownChunking:
     def test_chunking_preserves_hierarchy_and_context(self):
         chunker = MarkdownChunker(chunk_size=300, chunk_overlap=30)
-        sample_md = """# Vayvora AI Overview
-## Voice Architecture
-Vayvora provides ultra-low latency conversational voice AI.
-Our media gateways interface directly with WebRTC and SIP trunks.
+        sample_md = """# Infra Builder Overview
+## Development Architecture
+Infra Builder provides premier residential properties and villas in Bangalore.
+Our developments include Skyline Towers, Green Valley Villas, and Urban Heights.
 
 ## Security Compliance
 All media streams are encrypted end-to-end with TLS and SRTP.
 """
         chunks = chunker.chunk_text(
             text=sample_md,
-            domain_or_tenant="vayvora",
+            domain_or_tenant="infra_builder",
             category="architecture",
-            source_file="voice_platform.md",
+            source_file="development_platform.md",
         )
         assert len(chunks) >= 2
         for c in chunks:
-            assert c.tenant_id == "vayvora"
-            assert c.domain == DomainType.VAYVORA
+            assert c.tenant_id == "infra_builder"
+            assert c.domain == DomainType.INFRA_BUILDER
             assert c.category == "architecture"
-            assert "Vayvora AI Overview" in c.text
-            assert c.chunk_id.startswith("vayvora:architecture:voice_platform:")
+            assert "Infra Builder Overview" in c.text
+            assert c.chunk_id.startswith("infra_builder:architecture:development_platform:")
 
     def test_chunk_size_validation(self):
         with pytest.raises(ValueError):
@@ -288,13 +288,15 @@ class TestFastPathSubsystem:
         assert res["latency_ms"] < 20.0
 
     def test_courses_and_pricing_rules(self):
-        res_course = get_deterministic_fast_path("What courses do you offer?")
+        res_course = get_deterministic_fast_path("What projects do you offer?")
         assert res_course is not None
-        assert "EduSaaS offers six comprehensive engineering programs" in res_course["response"]
+        assert "Skyline Towers" in res_course["response"]
+        assert "Green Valley" in res_course["response"]
+        assert "Urban Heights" in res_course["response"]
 
-        res_price = get_deterministic_fast_path("What is the fee for the AI course?")
+        res_price = get_deterministic_fast_path("What is the price of Skyline Towers?")
         assert res_price is not None
-        assert "five thousand rupees" in res_price["response"].lower() or "₹5,000" in res_price["response"]
+        assert "₹85 Lakhs" in res_price["response"]
 
     def test_unmatched_queries(self):
         assert get_deterministic_fast_path("") is None
@@ -302,27 +304,27 @@ class TestFastPathSubsystem:
 
 
 # =========================================================================
-# 9. COURSE RECOMMENDATIONS
+# 9. PROPERTY RECOMMENDATIONS
 # =========================================================================
 class TestCourseRecommendationSubsystem:
     def test_ai_plus_fullstack_path(self):
-        res = CourseRecommendationService.get_recommendations({
-            "interest": ["AI", "Full Stack"],
-            "year": "3rd year",
-            "experience": "intermediate",
+        res = PropertyRecommendationService.get_recommendations({
+            "property_type": "villa",
+            "location": "Sarjapur Road",
         })
-        assert "AI + Full Stack" in res["recommendedPath"]
-        assert "Generative AI" in res["courses"]
-        assert res["readinessScore"] >= 50
+        assert "Green Valley Villas" in res["recommendedProperty"]
+        assert "4 BHK" in res["configurations"][0]
+        assert res["matchScore"] >= 90
 
     def test_cloud_devops_path(self):
-        res = CourseRecommendationService.get_recommendations({
-            "interest": ["Cloud", "DevOps"],
-            "year": "4th year",
-            "experience": "advanced",
+        res = PropertyRecommendationService.get_recommendations({
+            "interest": ["ready-to-move"],
+            "location": "Electronic City",
+            "budget": "50 Lakhs",
         })
-        assert "Cloud & DevOps" in res["recommendedPath"]
-        assert "Kubernetes Orchestration" in res["courses"]
+        assert "Urban Heights" in res["recommendedProperty"]
+        assert "Electronic City" in res["location"]
+        assert res["matchScore"] >= 85
 
 
 # =========================================================================
@@ -334,16 +336,15 @@ class TestRealQueriesHybridRAG:
         from src.rag.ingestion.pipeline import KnowledgeIngestionPipeline
         provider = GroundedKnowledgeProvider(in_memory=True)
         pipeline = KnowledgeIngestionPipeline(knowledge_provider=provider)
-        await pipeline.ingest_domain(DomainType.EDUSAAS)
-        await pipeline.ingest_domain(DomainType.VAYVORA)
+        await pipeline.ingest_domain(DomainType.INFRA_BUILDER)
         yield provider
         await provider.store.close()
 
     @pytest.mark.asyncio
     async def test_vayvora_ai_solutions_query(self, live_provider):
         query = RAGQuery(
-            domain=DomainType.VAYVORA,
-            query_text="What AI solutions does Vayvora provide?",
+            domain=DomainType.INFRA_BUILDER,
+            query_text="What projects does Infra Builder offer?",
             top_k=3,
             relevance_threshold=0.30,
         )
@@ -351,16 +352,15 @@ class TestRealQueriesHybridRAG:
         assert res.knowledge_available is True
         assert len(res.chunks) > 0
         all_content = " ".join(c.content for c in res.chunks).lower()
-        assert "retrieval-augmented generation" in all_content or "rag" in all_content or "enterprise ai" in all_content
-        # Confirm no EduSaaS leakage
+        assert "skyline towers" in all_content or "green valley" in all_content or "urban heights" in all_content
         for c in res.chunks:
-            assert c.domain == DomainType.VAYVORA
+            assert c.domain == DomainType.INFRA_BUILDER
 
     @pytest.mark.asyncio
     async def test_vayvora_location_query(self, live_provider):
         query = RAGQuery(
-            domain=DomainType.VAYVORA,
-            query_text="Where is Vayvora located?",
+            domain=DomainType.INFRA_BUILDER,
+            query_text="Where is Infra Builder located?",
             top_k=3,
             relevance_threshold=0.30,
         )
@@ -373,23 +373,8 @@ class TestRealQueriesHybridRAG:
     @pytest.mark.asyncio
     async def test_edusaas_courses_query(self, live_provider):
         query = RAGQuery(
-            domain=DomainType.EDUSAAS,
-            query_text="What courses does EduSaaS offer?",
-            top_k=3,
-            relevance_threshold=0.30,
-        )
-        res = await live_provider.retrieve_grounded_context(query)
-        assert res.knowledge_available is True
-        assert len(res.chunks) > 0
-        # Confirm no Vayvora leakage
-        for c in res.chunks:
-            assert c.domain == DomainType.EDUSAAS
-
-    @pytest.mark.asyncio
-    async def test_edusaas_ai_fee_query(self, live_provider):
-        query = RAGQuery(
-            domain=DomainType.EDUSAAS,
-            query_text="What is the fee for the AI course?",
+            domain=DomainType.INFRA_BUILDER,
+            query_text="Tell me about Skyline Towers in Whitefield",
             top_k=3,
             relevance_threshold=0.30,
         )
@@ -397,7 +382,23 @@ class TestRealQueriesHybridRAG:
         assert res.knowledge_available is True
         assert len(res.chunks) > 0
         all_content = " ".join(c.content for c in res.chunks).lower()
-        assert "5,000" in all_content or "five thousand" in all_content or "tuition" in all_content or "fee" in all_content
+        assert "whitefield" in all_content or "skyline" in all_content
+        for c in res.chunks:
+            assert c.domain == DomainType.INFRA_BUILDER
+
+    @pytest.mark.asyncio
+    async def test_edusaas_ai_fee_query(self, live_provider):
+        query = RAGQuery(
+            domain=DomainType.INFRA_BUILDER,
+            query_text="What is the price of Green Valley Villas?",
+            top_k=3,
+            relevance_threshold=0.30,
+        )
+        res = await live_provider.retrieve_grounded_context(query)
+        assert res.knowledge_available is True
+        assert len(res.chunks) > 0
+        all_content = " ".join(c.content for c in res.chunks).lower()
+        assert "2.5" in all_content or "crore" in all_content or "villa" in all_content
 
 
 # =========================================================================
@@ -405,22 +406,22 @@ class TestRealQueriesHybridRAG:
 # =========================================================================
 class TestRetrieverService:
     def test_query_expansion_adds_domain_cues(self):
-        expanded = RAGRetriever._expand_query("tell me about the services")
-        assert "Vayvora Technology" in expanded
+        expanded = RAGRetriever._expand_query("tell me about the apartments")
+        assert "Infra Builder" in expanded
 
-        already_has = RAGRetriever._expand_query("vayvora cloud architecture")
-        assert already_has == "vayvora cloud architecture"
+        already_has = RAGRetriever._expand_query("infra builder whitefield project")
+        assert already_has == "infra builder whitefield project"
 
     @pytest.mark.asyncio
     async def test_retriever_search_method(self):
         retriever = RAGRetriever()
         res = await retriever.search(
-            query="What AI solutions does Vayvora provide?",
-            tenant_id="vayvora",
+            query="What projects does Infra Builder offer?",
+            tenant_id="infra_builder",
             top_k=3,
         )
         assert isinstance(res, RAGResponse)
-        assert res.query == "What AI solutions does Vayvora provide?"
+        assert res.query == "What projects does Infra Builder offer?"
         assert res.has_relevant_context is True
         assert len(res.results) > 0
-        assert "vayvora" in res.metadata["tenant_id"]
+        assert "infra_builder" in res.metadata["tenant_id"]

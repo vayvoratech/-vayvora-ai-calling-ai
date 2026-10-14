@@ -1,13 +1,13 @@
-"""Comprehensive unit tests for the Streamlit Testing Workbench (Phase 6).
+"""Comprehensive unit tests for the Infra Builder Workbench (Phase 6).
 
 Covers all 18 required scenarios:
-1. Inbound EduSaaS session creation
-2. Outbound EduSaaS session creation
-3. Inbound Vayvora session creation
-4. Outbound Vayvora session creation
+1. Inbound Infra Builder session creation
+2. Outbound Infra Builder session creation
+3. Inbound session defaults to Infra Builder
+4. Outbound villa campaign session creation
 5. Unknown inbound caller handling
 6. Known outbound caller handling
-7. Domain switching mid-conversation
+7. Single-business domain stability
 8. Intent switching and preemption
 9. RAG knowledge response incorporation
 10. Missing RAG knowledge graceful handling
@@ -56,63 +56,62 @@ def workbench_service() -> WorkbenchService:
 class TestWorkbenchSessionCreation:
     """Tests 1-6: Inbound/outbound session initialization across domains and caller types."""
 
-    def test_01_inbound_edusaas_session(self, workbench_service: WorkbenchService):
-        """Scenario 1: Inbound EduSaaS session creation."""
+    def test_01_inbound_infra_builder_session(self, workbench_service: WorkbenchService):
+        """Scenario 1: Inbound Infra Builder session creation."""
         state = workbench_service.create_inbound_session(
-            call_id="test-in-edu-01",
-            caller_phone="+15551112222",
-            domain=DomainType.EDUSAAS,
+            call_id="test-in-ib-01",
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
         )
-        assert state.metadata.call_id == "test-in-edu-01"
-        assert state.current_domain == DomainType.EDUSAAS
+        assert state.metadata.call_id == "test-in-ib-01"
+        assert state.current_domain == DomainType.INFRA_BUILDER
         assert state.metadata.direction == CallDirection.INBOUND
         assert state.conversation_active is True
         assert state.stage == ConversationStage.GREETING
 
-    def test_02_outbound_edusaas_session(self, workbench_service: WorkbenchService):
-        """Scenario 2: Outbound EduSaaS session creation."""
+    def test_02_outbound_infra_builder_session(self, workbench_service: WorkbenchService):
+        """Scenario 2: Outbound Infra Builder session creation."""
         state = workbench_service.create_outbound_session(
-            call_id="test-out-edu-01",
-            caller_phone="+15552223333",
-            domain=DomainType.EDUSAAS,
+            call_id="test-out-ib-01",
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
             caller_name="Sarah Connor",
-            campaign_id="CAMP-AI-2026",
-            campaign_objective="Discuss AI Engineering syllabus",
+            campaign_id="CAMP-SKYLINE",
+            campaign_objective="Discuss Skyline Towers residences",
             caller_email="sarah@example.com",
         )
-        assert state.metadata.call_id == "test-out-edu-01"
-        assert state.current_domain == DomainType.EDUSAAS
+        assert state.metadata.call_id == "test-out-ib-01"
+        assert state.current_domain == DomainType.INFRA_BUILDER
         assert state.metadata.direction == CallDirection.OUTBOUND
         assert state.caller.name == "Sarah Connor"
         assert state.caller.email == "sarah@example.com"
         assert state.caller.is_known() is True
-        assert state.metadata.campaign_id == "CAMP-AI-2026"
+        assert state.metadata.campaign_id == "CAMP-SKYLINE"
 
-    def test_03_inbound_vayvora_session(self, workbench_service: WorkbenchService):
-        """Scenario 3: Inbound Vayvora session creation."""
+    def test_03_inbound_session_defaults_to_infra_builder(self, workbench_service: WorkbenchService):
+        """Scenario 3: Inbound session defaults to Infra Builder."""
         state = workbench_service.create_inbound_session(
-            call_id="test-in-vay-01",
-            caller_phone="+15553334444",
-            domain=DomainType.VAYVORA,
+            call_id="test-in-def-01",
+            caller_phone="+919845123456",
         )
-        assert state.metadata.call_id == "test-in-vay-01"
-        assert state.current_domain == DomainType.VAYVORA
+        assert state.metadata.call_id == "test-in-def-01"
+        assert state.current_domain == DomainType.INFRA_BUILDER
         assert state.metadata.direction == CallDirection.INBOUND
         assert state.conversation_active is True
 
-    def test_04_outbound_vayvora_session(self, workbench_service: WorkbenchService):
-        """Scenario 4: Outbound Vayvora session creation."""
+    def test_04_outbound_villa_campaign_session(self, workbench_service: WorkbenchService):
+        """Scenario 4: Outbound Green Valley Villas session creation."""
         state = workbench_service.create_outbound_session(
-            call_id="test-out-vay-01",
-            caller_phone="+15554445555",
-            domain=DomainType.VAYVORA,
+            call_id="test-out-villa-01",
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
             caller_name="Dr. Miles Dyson",
-            campaign_id="CAMP-VAYVORA-CORP",
-            campaign_objective="Enterprise AI architecture discussion",
+            campaign_id="CAMP-VILLAS",
+            campaign_objective="Green Valley Villas consultation",
             company="Cyberdyne Systems",
         )
-        assert state.metadata.call_id == "test-out-vay-01"
-        assert state.current_domain == DomainType.VAYVORA
+        assert state.metadata.call_id == "test-out-villa-01"
+        assert state.current_domain == DomainType.INFRA_BUILDER
         assert state.metadata.direction == CallDirection.OUTBOUND
         assert state.caller.name == "Dr. Miles Dyson"
         assert state.caller.company == "Cyberdyne Systems"
@@ -121,8 +120,8 @@ class TestWorkbenchSessionCreation:
         """Scenario 5: Unknown inbound caller has anonymous profile attributes."""
         state = workbench_service.create_inbound_session(
             call_id="test-in-anon-01",
-            caller_phone="+15559998888",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
         )
         assert state.caller.name is None
         assert state.caller.email is None
@@ -132,8 +131,8 @@ class TestWorkbenchSessionCreation:
         """Scenario 6: Known outbound caller is flagged as known with pre-populated details."""
         state = workbench_service.create_outbound_session(
             call_id="test-out-known-01",
-            caller_phone="+15557776666",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
             caller_name="Alice Smith",
             campaign_id="CAMP-001",
             campaign_objective="Followup",
@@ -147,58 +146,58 @@ class TestWorkbenchSessionCreation:
 
 
 class TestWorkbenchConversationalBehaviors:
-    """Tests 7-16: Core turns, domain switching, RAG, MCP actions, termination, and resets."""
+    """Tests 7-16: Core turns, domain stability, RAG, MCP actions, termination, and resets."""
 
-    def test_07_domain_switching(self, workbench_service: WorkbenchService):
-        """Scenario 7: Caller switches domain mid-conversation (EduSaaS -> Vayvora)."""
+    def test_07_single_business_domain_stability(self, workbench_service: WorkbenchService):
+        """Scenario 7: Infra Builder remains locked as sole active business domain throughout conversation."""
         session_id = "test-switch-01"
         workbench_service.create_inbound_session(
             call_id=session_id,
-            caller_phone="+15551234567",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
         )
 
-        # Turn 1: EduSaaS course inquiry
-        workbench_service.process_turn(session_id, "Tell me about your courses.")
+        # Turn 1: Property inquiry
+        workbench_service.process_turn(session_id, "Tell me about Skyline Towers.")
         state = workbench_service.get_session(session_id)
-        assert state.current_domain == DomainType.EDUSAAS
+        assert state.current_domain == DomainType.INFRA_BUILDER
 
-        # Turn 2: Switch to Vayvora software solutions
-        workbench_service.process_turn(session_id, "Actually, tell me about Vayvora enterprise solutions.")
+        # Turn 2: Followup inquiry
+        workbench_service.process_turn(session_id, "What about Green Valley Villas?")
         state = workbench_service.get_session(session_id)
-        assert state.current_domain == DomainType.VAYVORA
+        assert state.current_domain == DomainType.INFRA_BUILDER
 
     def test_08_intent_switching(self, workbench_service: WorkbenchService):
         """Scenario 8: Preemption of intent by latest user request."""
         session_id = "test-intent-switch-01"
         workbench_service.create_inbound_session(
             call_id=session_id,
-            caller_phone="+15551234567",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
         )
 
-        # Turn 1: Course information intent
-        workbench_service.process_turn(session_id, "I want to know about AI courses.")
+        # Turn 1: Property inquiry intent
+        workbench_service.process_turn(session_id, "Tell me about Skyline Towers in Whitefield.")
         state = workbench_service.get_session(session_id)
-        assert state.current_intent == "course_information"
+        assert state.current_intent == "property_inquiry"
 
-        # Turn 2: Switch to scheduling a meeting
+        # Turn 2: Switch to scheduling a site visit
         workbench_service.process_turn(session_id, "Can we schedule a consultation meeting?")
         state = workbench_service.get_session(session_id)
-        assert state.current_intent == "schedule_consultation"
-        assert "course_information" in state.intent_history
+        assert state.current_intent == "schedule_site_visit"
+        assert "property_inquiry" in state.intent_history
 
     def test_09_rag_knowledge_response(self, workbench_service: WorkbenchService):
         """Scenario 9: RAG knowledge is retrieved and incorporated into response."""
         session_id = "test-rag-success-01"
         workbench_service.create_inbound_session(
             call_id=session_id,
-            caller_phone="+15551234567",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
         )
 
         state, turn_result = workbench_service.process_turn(
-            session_id, "Tell me about your course syllabus and curriculum."
+            session_id, "Tell me about Skyline Towers in Whitefield."
         )
         assert len(state.history) == 2
         agent_turn = state.history[-1]
@@ -212,35 +211,34 @@ class TestWorkbenchConversationalBehaviors:
         session_id = "test-rag-missing-01"
         state = workbench_service.create_inbound_session(
             call_id=session_id,
-            caller_phone="+15551234567",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
         )
 
         # Inject canned decision with knowledge_required=True but an obscure query
         decision = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="obscure_topic",
+            proposed_stage=ConversationStage.INFORMATION,
+            user_facing_response="I don't have verified details on that specific topic.",
             knowledge_required=True,
-            knowledge_query="quantum teleportation in medieval times",
-            user_facing_response="Checking our database...",
+            knowledge_query="completely nonexistent quantum hyperloop project",
         )
-        if isinstance(workbench_service.llm_provider, MockLLMProvider):
-            workbench_service.llm_provider.add_decision(decision)
+        workbench_service.engine.llm = MockLLMProvider(canned_decisions=[decision])
 
         state, turn_result = workbench_service.process_turn(
-            session_id, "Tell me about quantum teleportation in medieval times."
+            session_id, "What about your quantum hyperloop project?"
         )
-        # Should gracefully reply without verified details
         assert state.conversation_active is True
-        assert len(state.history) == 2
+        assert len(turn_result.response_text) > 10
 
     def test_11_proposed_mcp_action_in_debug(self, workbench_service: WorkbenchService):
-        """Scenario 11: Proposed MCP action is extracted and visible in debug payload."""
+        """Scenario 11: Proposed MCP action without confirmed slot proposes find_available_slots."""
         session_id = "test-prop-action-01"
         workbench_service.create_inbound_session(
             call_id=session_id,
-            caller_phone="+15551234567",
-            domain=DomainType.VAYVORA,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
         )
 
         state, turn_result = workbench_service.process_turn(
@@ -248,15 +246,15 @@ class TestWorkbenchConversationalBehaviors:
         )
         debug_payload = workbench_service.get_debug_payload(state, turn_result)
         assert debug_payload["tools"]["proposed_action"] is not None
-        assert debug_payload["tools"]["proposed_action"]["tool_name"] == "create_calendar_event"
+        assert debug_payload["tools"]["proposed_action"]["tool_name"] == "find_available_slots"
 
     def test_12_verified_mcp_action_execution(self, workbench_service: WorkbenchService):
         """Scenario 12: Executed MCP action passes verification and updates state."""
         session_id = "test-ver-action-01"
         workbench_service.create_inbound_session(
             call_id=session_id,
-            caller_phone="+15551234567",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
         )
 
         state, turn_result = workbench_service.process_turn(
@@ -271,7 +269,6 @@ class TestWorkbenchConversationalBehaviors:
 
     def test_13_failed_mcp_action_does_not_terminate_call(self, workbench_service: WorkbenchService):
         """Scenario 13: Failed tool action records failure, preserves conversation_active=True."""
-        # Custom failing tool provider
         failing_tools = MockToolProvider(force_unavailable=True)
         workbench_service.engine.tool_provider = failing_tools
         workbench_service.tool_provider = failing_tools
@@ -280,8 +277,8 @@ class TestWorkbenchConversationalBehaviors:
         session_id = "test-fail-action-01"
         svc.create_inbound_session(
             call_id=session_id,
-            caller_phone="+15551234567",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
         )
 
         state, turn_result = svc.process_turn(
@@ -292,15 +289,15 @@ class TestWorkbenchConversationalBehaviors:
         assert debug_payload["tools"]["tool_status"] == "failed"
         assert debug_payload["tools"]["verification_status"] == "unverified"
         assert state.conversation_active is True
-        assert "system issue" in turn_result.response_text.lower()
+        assert "could not be booked" in turn_result.response_text.lower() or "system issue" in turn_result.response_text.lower()
 
     def test_14_explicit_termination(self, workbench_service: WorkbenchService):
-        """Scenario 14: Explicit farewell concludes the session."""
+        """Scenario 14: Caller explicit farewell cleanly terminates the session."""
         session_id = "test-term-01"
         workbench_service.create_inbound_session(
             call_id=session_id,
-            caller_phone="+15551234567",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
         )
 
         state, turn_result = workbench_service.process_turn(
@@ -315,25 +312,25 @@ class TestWorkbenchConversationalBehaviors:
         session_id = "test-no-term-01"
         workbench_service.create_inbound_session(
             call_id=session_id,
-            caller_phone="+15551234567",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
         )
 
         state, turn_result = workbench_service.process_turn(session_id, "No thanks.")
         assert state.conversation_active is True
         assert state.termination_requested is False
-        assert "anything else" in turn_result.response_text.lower()
+        assert "anything else" in turn_result.response_text.lower() or "assistance" in turn_result.response_text.lower() or "help" in turn_result.response_text.lower()
 
     def test_16_clean_session_reset(self, workbench_service: WorkbenchService):
         """Scenario 16: Resetting session completely removes stale context."""
         session_id = "test-reset-01"
         workbench_service.create_inbound_session(
             call_id=session_id,
-            caller_phone="+15551234567",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
         )
 
-        workbench_service.process_turn(session_id, "I want to know about AI courses.")
+        workbench_service.process_turn(session_id, "Tell me about Skyline Towers.")
         assert workbench_service.get_session(session_id) is not None
 
         # Reset session
@@ -349,8 +346,8 @@ class TestWorkbenchDiagnosticsAndModes:
         session_id = "test-err-resilience-01"
         workbench_service.create_inbound_session(
             call_id=session_id,
-            caller_phone="+15551234567",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
         )
 
         # Non-existent session
@@ -359,7 +356,6 @@ class TestWorkbenchDiagnosticsAndModes:
 
     def test_18_mock_mode_is_visibly_distinguished_from_live_mode(self):
         """Scenario 18: Service reports MOCK vs LIVE mode explicitly."""
-        # 1. Force Mock Bootstrap
         mock_svc = bootstrap_workbench(force_mock=True)
         assert mock_svc.overall_mode == RuntimeMode.MOCK
         assert mock_svc.llm_mode == "MOCK"

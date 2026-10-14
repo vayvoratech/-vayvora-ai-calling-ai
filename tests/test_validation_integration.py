@@ -46,26 +46,13 @@ def populated_knowledge_provider():
         embedding_provider=MockEmbeddingProvider(dimension=384),
         in_memory=True,
     )
-    # EduSaaS documents
     asyncio.run(
         provider.index_document(
             RAGChunk(
-                doc_id="edu:courses:ai_eng",
-                domain=DomainType.EDUSAAS,
-                title="AI Engineering Bootcamp",
-                content="The AI Engineering Bootcamp duration is 12 weeks with weekend batches and live capstone mentoring.",
-                score=1.0,
-            )
-        )
-    )
-    # Vayvora documents
-    asyncio.run(
-        provider.index_document(
-            RAGChunk(
-                doc_id="vay:solutions:enterprise_ai",
-                domain=DomainType.VAYVORA,
-                title="Vayvora Enterprise AI Solutions",
-                content="Vayvora enterprise AI solutions include conversational voice agents, custom RAG pipelines, and automated agent workflows.",
+                doc_id="ib:projects:skyline_towers",
+                domain=DomainType.INFRA_BUILDER,
+                title="Skyline Towers Whitefield",
+                content="Skyline Towers in Whitefield offers luxury 2 and 3 BHK apartments starting at ₹85 Lakhs with 40+ lifestyle amenities.",
                 score=1.0,
             )
         )
@@ -73,10 +60,10 @@ def populated_knowledge_provider():
     asyncio.run(
         provider.index_document(
             RAGChunk(
-                doc_id="vay:company:location",
-                domain=DomainType.VAYVORA,
-                title="Vayvora Headquarters",
-                content="Vayvora headquarters and primary research engineering center is located in Bangalore, India.",
+                doc_id="ib:company:location",
+                domain=DomainType.INFRA_BUILDER,
+                title="Infra Builder Headquarters",
+                content="Infra Builder headquarters and primary customer experience center is located in Bangalore, Outer Ring Road, India.",
                 score=1.0,
             )
         )
@@ -84,10 +71,21 @@ def populated_knowledge_provider():
     asyncio.run(
         provider.index_document(
             RAGChunk(
-                doc_id="vay:careers:ai_roles",
-                domain=DomainType.VAYVORA,
-                title="AI Engineering Careers",
-                content="Vayvora is hiring Senior AI Engineers with experience in PyTorch, distributed inference, and low-latency voice pipelines.",
+                doc_id="ib:projects:green_valley",
+                domain=DomainType.INFRA_BUILDER,
+                title="Green Valley Villas",
+                content="Green Valley Villas on Sarjapur Road offers luxury 4 and 5 BHK gated community villas starting at ₹2.5 Crores.",
+                score=1.0,
+            )
+        )
+    )
+    asyncio.run(
+        provider.index_document(
+            RAGChunk(
+                doc_id="ib:projects:urban_heights",
+                domain=DomainType.INFRA_BUILDER,
+                title="Urban Heights Electronic City",
+                content="Urban Heights in Electronic City offers ready-to-move 1 and 2 BHK homes starting at ₹45 Lakhs.",
                 score=1.0,
             )
         )
@@ -104,36 +102,36 @@ class TestTwentyFiveIntegrationScenarios:
 
     @pytest.mark.asyncio
     async def test_01_edusaas_inbound_course_question(self, populated_knowledge_provider):
-        """1. EduSaaS inbound course question retrieves knowledge and answers accurately."""
+        """1. Infra Builder inbound project question retrieves knowledge and answers accurately."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
-            detected_intent="course_information",
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="project_inquiry",
             proposed_stage=ConversationStage.INFORMATION,
-            user_facing_response="Our AI Engineering Bootcamp runs for 12 weeks with live capstone mentoring.",
+            user_facing_response="Skyline Towers in Whitefield offers luxury 2 and 3 BHK apartments starting at ₹85 Lakhs.",
             knowledge_required=True,
-            knowledge_query="AI Engineering Bootcamp duration weeks",
+            knowledge_query="Skyline Towers Whitefield 2 and 3 BHK apartments",
         )
         mock_llm = MockLLMProvider(
             canned_decisions=[decision],
-            canned_responses=["The AI Engineering Bootcamp is a 12-week program with weekend batches."],
+            canned_responses=["Skyline Towers offers 2 and 3 BHK apartments in Whitefield."],
         )
         engine = ConversationEngine(llm_provider=mock_llm, knowledge_provider=populated_knowledge_provider)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("call-s01", "+15551234567", domain=DomainType.EDUSAAS)
+        state = mgr.create_inbound_state("call-s01", "+15551234567", domain=DomainType.INFRA_BUILDER)
 
-        res = await engine.process_user_turn(state, "What is the duration of the AI Engineering Bootcamp?")
-        assert res.decision.detected_domain == DomainType.EDUSAAS
-        assert "edu:courses:ai_eng" in res.grounded_citations
+        res = await engine.process_user_turn(state, "What configurations are available at Skyline Towers?")
+        assert res.decision.detected_domain == DomainType.INFRA_BUILDER
+        assert "ib:projects:skyline_towers" in res.grounded_citations
         assert state.conversation_active is True
 
     @pytest.mark.asyncio
     async def test_02_edusaas_outbound_conversation(self):
-        """2. EduSaaS outbound conversation preserves campaign objective and respects caller priority."""
+        """2. Infra Builder outbound conversation preserves campaign objective and respects caller priority."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
-            detected_intent="course_recommendation",
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="property_recommendation",
             proposed_stage=ConversationStage.DISCOVERY,
-            user_facing_response="Hi Priya, I understand you're interested in AI. Are you looking for weekend or weekday batches?",
+            user_facing_response="Hi Priya, I understand you're interested in our residential projects. Are you looking for apartments or villas?",
         )
         mock_llm = MockLLMProvider(canned_decisions=[decision])
         engine = ConversationEngine(llm_provider=mock_llm)
@@ -141,91 +139,91 @@ class TestTwentyFiveIntegrationScenarios:
         state = mgr.create_outbound_state(
             call_id="call-s02",
             caller_phone="+15559876543",
-            domain=DomainType.EDUSAAS,
+            domain=DomainType.INFRA_BUILDER,
             caller_name="Priya",
-            campaign_id="CAMP-EDU-01",
-            campaign_objective="Course enrollment follow-up",
+            campaign_id="CAMP-RE-01",
+            campaign_objective="Property inquiry follow-up",
         )
 
-        res = await engine.process_user_turn(state, "Hi, I have a few questions about your AI course.")
+        res = await engine.process_user_turn(state, "Hi, I have a few questions about your real estate projects.")
         assert state.caller.name == "Priya"
-        assert state.caller.campaign == "CAMP-EDU-01"
+        assert state.caller.campaign == "CAMP-RE-01"
         assert state.conversation_active is True
 
     @pytest.mark.asyncio
     async def test_03_vayvora_inbound_company_question(self, populated_knowledge_provider):
-        """3. Vayvora inbound company question retrieves company details."""
+        """3. Infra Builder inbound company question retrieves company details."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.VAYVORA,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="company_location",
             proposed_stage=ConversationStage.INFORMATION,
-            user_facing_response="Vayvora is headquartered in Bangalore, India.",
+            user_facing_response="Infra Builder is headquartered in Bangalore, India.",
             knowledge_required=True,
-            knowledge_query="Vayvora headquarters Bangalore India",
+            knowledge_query="Infra Builder headquarters Bangalore India",
         )
         mock_llm = MockLLMProvider(
             canned_decisions=[decision],
-            canned_responses=["Vayvora Technologies is headquartered in Bangalore, India."],
+            canned_responses=["Infra Builder is headquartered on Outer Ring Road, Bangalore, India."],
         )
         engine = ConversationEngine(llm_provider=mock_llm, knowledge_provider=populated_knowledge_provider)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("call-s03", "+15551234567", domain=DomainType.VAYVORA)
+        state = mgr.create_inbound_state("call-s03", "+15551234567", domain=DomainType.INFRA_BUILDER)
 
-        res = await engine.process_user_turn(state, "Where is Vayvora headquartered?")
-        assert res.decision.detected_domain == DomainType.VAYVORA
-        assert "vay:company:location" in res.grounded_citations
+        res = await engine.process_user_turn(state, "Where is Infra Builder headquartered?")
+        assert res.decision.detected_domain == DomainType.INFRA_BUILDER
+        assert "ib:company:location" in res.grounded_citations
 
     @pytest.mark.asyncio
     async def test_04_vayvora_inbound_career_question(self, populated_knowledge_provider):
-        """4. Vayvora inbound career question routes to careers without recommending student courses."""
+        """4. Infra Builder inbound villa question routes to verified villa details."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.VAYVORA,
-            detected_intent="career_information",
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="property_inquiry",
             proposed_stage=ConversationStage.INFORMATION,
-            user_facing_response="We are currently hiring Senior AI Engineers experienced in PyTorch and voice pipelines.",
+            user_facing_response="Green Valley Villas on Sarjapur Road offers 4 and 5 BHK luxury villas starting at ₹2.5 Crores.",
             knowledge_required=True,
-            knowledge_query="Vayvora AI Engineering Careers PyTorch",
+            knowledge_query="Green Valley Villas Sarjapur Road 4 and 5 BHK",
         )
         mock_llm = MockLLMProvider(
             canned_decisions=[decision],
-            canned_responses=["We have open roles for Senior AI Engineers working on voice pipelines."],
+            canned_responses=["Green Valley Villas offers 4 and 5 BHK luxury gated community villas."],
         )
         engine = ConversationEngine(llm_provider=mock_llm, knowledge_provider=populated_knowledge_provider)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("call-s04", "+15551234567", domain=DomainType.VAYVORA)
+        state = mgr.create_inbound_state("call-s04", "+15551234567", domain=DomainType.INFRA_BUILDER)
 
-        res = await engine.process_user_turn(state, "Are you hiring for AI engineering roles?")
-        assert res.decision.detected_domain == DomainType.VAYVORA
-        assert res.decision.detected_intent == "career_information"
-        assert "edu:" not in "".join(res.grounded_citations)
+        res = await engine.process_user_turn(state, "Tell me about your luxury villas on Sarjapur Road.")
+        assert res.decision.detected_domain == DomainType.INFRA_BUILDER
+        assert res.decision.detected_intent == "property_inquiry"
+        assert "ib:projects:green_valley" in res.grounded_citations
 
     @pytest.mark.asyncio
     async def test_05_vayvora_corporate_requirement(self):
-        """5. Vayvora corporate requirement captures business entities."""
+        """5. Infra Builder buyer requirement captures real estate entities."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.VAYVORA,
-            detected_intent="client_requirement",
-            extracted_slots={"company_name": "Apex Logistics", "technical_requirement": "automated dispatch voice agent"},
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="buyer_requirement",
+            extracted_slots={"preferred_location": "Whitefield", "property_type": "3 BHK apartment"},
             proposed_stage=ConversationStage.DISCOVERY,
-            user_facing_response="We can build custom voice agents for logistics. Would you like to schedule a technical discovery call?",
+            user_facing_response="We have luxury 3 BHK residences at Skyline Towers in Whitefield. Would you like to schedule a site visit?",
         )
         mock_llm = MockLLMProvider(canned_decisions=[decision])
         engine = ConversationEngine(llm_provider=mock_llm)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("call-s05", "+15551234567", domain=DomainType.VAYVORA)
+        state = mgr.create_inbound_state("call-s05", "+15551234567", domain=DomainType.INFRA_BUILDER)
 
-        res = await engine.process_user_turn(state, "We represent Apex Logistics and need an automated dispatch voice agent.")
-        assert state.extracted_slots["company_name"] == "Apex Logistics"
-        assert state.extracted_slots["technical_requirement"] == "automated dispatch voice agent"
+        res = await engine.process_user_turn(state, "I am looking for a 3 BHK apartment in Whitefield.")
+        assert state.extracted_slots["preferred_location"] == "Whitefield"
+        assert state.extracted_slots["property_type"] == "3 BHK apartment"
 
     @pytest.mark.asyncio
     async def test_06_vayvora_outbound_corporate_call(self):
-        """6. Vayvora outbound corporate call maintains client context."""
+        """6. Infra Builder outbound real-estate call maintains buyer context."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.VAYVORA,
-            detected_intent="meeting_request",
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="site_visit_request",
             proposed_stage=ConversationStage.ACTION_CONFIRMATION,
-            user_facing_response="Certainly, let us schedule a consultation for your team.",
+            user_facing_response="Certainly, let us schedule a site visit for you at Skyline Towers.",
         )
         mock_llm = MockLLMProvider(canned_decisions=[decision])
         engine = ConversationEngine(llm_provider=mock_llm)
@@ -233,42 +231,42 @@ class TestTwentyFiveIntegrationScenarios:
         state = mgr.create_outbound_state(
             call_id="call-s06",
             caller_phone="+15553334444",
-            domain=DomainType.VAYVORA,
+            domain=DomainType.INFRA_BUILDER,
             caller_name="David",
             company="Nexis Corp",
-            campaign_id="CAMP-VAY-02",
-            campaign_objective="Enterprise AI consultation",
+            campaign_id="CAMP-RE-02",
+            campaign_objective="Residential site visit consultation",
         )
 
-        res = await engine.process_user_turn(state, "Yes, we would like to explore your enterprise AI solutions.")
-        assert state.caller.company == "Nexis Corp"
-        assert state.current_domain == DomainType.VAYVORA
+        res = await engine.process_user_turn(state, "Yes, we would like to explore your residential developments.")
+        assert state.caller.name == "David"
+        assert state.current_domain == DomainType.INFRA_BUILDER
 
     @pytest.mark.asyncio
     async def test_07_domain_switching(self):
-        """7. Domain switches cleanly mid-conversation from EduSaaS to Vayvora."""
+        """7. Infra Builder maintains single active domain cleanly across project inquiries."""
         dec1 = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
-            detected_intent="course_information",
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="property_information",
             proposed_stage=ConversationStage.INFORMATION,
-            user_facing_response="At EduSaaS, we teach AI Engineering.",
+            user_facing_response="At Skyline Towers, we offer 2 and 3 BHK apartments.",
         )
         dec2 = ConversationalDecision(
-            detected_domain=DomainType.VAYVORA,
-            detected_intent="company_information",
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="property_information",
             proposed_stage=ConversationStage.INFORMATION,
-            user_facing_response="Vayvora provides enterprise AI software services.",
+            user_facing_response="Green Valley Villas offers 4 and 5 BHK luxury villas.",
         )
         mock_llm = MockLLMProvider(canned_decisions=[dec1, dec2])
         engine = ConversationEngine(llm_provider=mock_llm)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("call-s07", "+15551234567", domain=DomainType.EDUSAAS)
+        state = mgr.create_inbound_state("call-s07", "+15551234567", domain=DomainType.INFRA_BUILDER)
 
-        await engine.process_user_turn(state, "Tell me about EduSaaS courses.")
-        assert state.current_domain == DomainType.EDUSAAS
+        await engine.process_user_turn(state, "Tell me about Skyline Towers apartments.")
+        assert state.current_domain == DomainType.INFRA_BUILDER
 
-        await engine.process_user_turn(state, "Does your parent company Vayvora build custom software?")
-        assert state.current_domain == DomainType.VAYVORA
+        await engine.process_user_turn(state, "Tell me about Green Valley Villas.")
+        assert state.current_domain == DomainType.INFRA_BUILDER
 
     @pytest.mark.asyncio
     async def test_08_intent_switching(self):
@@ -303,21 +301,21 @@ class TestTwentyFiveIntegrationScenarios:
     async def test_09_rag_retrieval(self, populated_knowledge_provider):
         """9. RAG retrieval extracts matching chunks above threshold."""
         query = RAGQuery(
-            domain=DomainType.VAYVORA,
-            query_text="Vayvora Enterprise AI Solutions",
+            domain=DomainType.INFRA_BUILDER,
+            query_text="Skyline Towers Whitefield",
             top_k=3,
             relevance_threshold=0.5,
         )
         res = await populated_knowledge_provider.retrieve_grounded_context(query)
         assert res.knowledge_available is True
         assert len(res.chunks) > 0
-        assert res.chunks[0].doc_id == "vay:solutions:enterprise_ai"
+        assert res.chunks[0].doc_id == "ib:projects:skyline_towers"
 
     @pytest.mark.asyncio
     async def test_10_rag_no_result_fallback(self, populated_knowledge_provider):
         """10. RAG no-result fallback safely communicates lack of verified details."""
         query = RAGQuery(
-            domain=DomainType.EDUSAAS,
+            domain=DomainType.INFRA_BUILDER,
             query_text="Underwater Basket Weaving Doctorate",
             top_k=3,
             relevance_threshold=0.70,
@@ -336,17 +334,17 @@ class TestTwentyFiveIntegrationScenarios:
         bad_store = RedisVectorStore(settings=bad_settings)
         provider = GroundedKnowledgeProvider(vector_store=bad_store, in_memory=False)
         decision = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
-            detected_intent="course_information",
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="property_information",
             proposed_stage=ConversationStage.INFORMATION,
-            user_facing_response="Checking course information.",
+            user_facing_response="Checking property information.",
             knowledge_required=True,
             knowledge_query="Quantum Computing Program",
         )
         mock_llm = MockLLMProvider(canned_decisions=[decision])
         engine = ConversationEngine(llm_provider=mock_llm, knowledge_provider=provider)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("call-s11", "+15551234567", domain=DomainType.EDUSAAS)
+        state = mgr.create_inbound_state("call-s11", "+15551234567", domain=DomainType.INFRA_BUILDER)
 
         res = await engine.process_user_turn(state, "Tell me about quantum computing.")
         assert "maintenance" in res.response_text.lower()
@@ -354,28 +352,29 @@ class TestTwentyFiveIntegrationScenarios:
 
     @pytest.mark.asyncio
     async def test_12_email_action(self):
-        """12. Email action proposes and executes with caller email."""
+        """12. WhatsApp brochure action proposes and executes with caller phone."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="send_brochure",
             proposed_stage=ConversationStage.ACTION_CONFIRMATION,
-            user_facing_response="I will email the brochure to you.",
+            user_facing_response="I will send the project brochure to your WhatsApp.",
             action_proposed=True,
             proposed_action=ProposedAction(
-                tool_name="send_email",
-                arguments={"recipient": "john@example.com", "subject": "Brochure"},
+                tool_name="send_message",
+                arguments={"recipient": "+919845123890", "consent_confirmed": True},
             ),
         )
         mock_llm = MockLLMProvider(
             canned_decisions=[decision],
-            canned_responses=["I have sent the brochure to john@example.com."],
+            canned_responses=["I have sent the brochure to your WhatsApp."],
         )
         mock_tools = MockToolProvider()
         engine = ConversationEngine(llm_provider=mock_llm, tool_provider=mock_tools)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("call-s12", "+15551234567", domain=DomainType.EDUSAAS)
+        state = mgr.create_inbound_state("call-s12", "+919845123890", domain=DomainType.INFRA_BUILDER)
+        state.update_slot("whatsapp_consent", True)
 
-        res = await engine.process_user_turn(state, "Please email me the brochure at john@example.com")
+        res = await engine.process_user_turn(state, "Please send the brochure to my WhatsApp at +919845123890")
         assert res.tool_result is not None
         assert res.tool_result.success is True
         assert state.conversation_active is True
@@ -384,7 +383,7 @@ class TestTwentyFiveIntegrationScenarios:
     async def test_13_calendar_availability(self):
         """13. Finding available slots queries MCP calendar tool."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.VAYVORA,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="meeting_request",
             proposed_stage=ConversationStage.ACTION_CONFIRMATION,
             user_facing_response="Let me check our calendar for openings.",
@@ -401,7 +400,7 @@ class TestTwentyFiveIntegrationScenarios:
         mock_tools = MockToolProvider()
         engine = ConversationEngine(llm_provider=mock_llm, tool_provider=mock_tools)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("call-s13", "+15551234567", domain=DomainType.VAYVORA)
+        state = mgr.create_inbound_state("call-s13", "+15551234567", domain=DomainType.INFRA_BUILDER)
 
         res = await engine.process_user_turn(state, "What slots do you have open tomorrow?")
         assert res.tool_result is not None
@@ -412,7 +411,7 @@ class TestTwentyFiveIntegrationScenarios:
     async def test_14_calendar_creation(self):
         """14. Calendar event creation executes only with confirmed slot."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.VAYVORA,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="schedule_consultation",
             proposed_stage=ConversationStage.ACTION_CONFIRMATION,
             user_facing_response="Booking that slot now.",
@@ -429,7 +428,7 @@ class TestTwentyFiveIntegrationScenarios:
         mock_tools = MockToolProvider()
         engine = ConversationEngine(llm_provider=mock_llm, tool_provider=mock_tools)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("call-s14", "+15551234567", domain=DomainType.VAYVORA)
+        state = mgr.create_inbound_state("call-s14", "+15551234567", domain=DomainType.INFRA_BUILDER)
 
         res = await engine.process_user_turn(state, "Yes, 10:00 AM tomorrow works perfectly.")
         assert res.tool_result is not None
@@ -440,23 +439,24 @@ class TestTwentyFiveIntegrationScenarios:
     async def test_15_tool_failure_keeps_call_active(self):
         """15. Simulated tool failure does not crash or terminate the conversation."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="send_brochure",
             proposed_stage=ConversationStage.ACTION_CONFIRMATION,
-            user_facing_response="Sending email.",
+            user_facing_response="Sending WhatsApp brochure.",
             action_proposed=True,
             proposed_action=ProposedAction(
-                tool_name="send_email",
-                arguments={"recipient": "fail@example.com", "subject": "Test"},
+                tool_name="send_message",
+                arguments={"recipient": "+919845123890", "consent_confirmed": True},
             ),
         )
         mock_llm = MockLLMProvider(canned_decisions=[decision])
         mock_tools = MockToolProvider(force_unavailable=True)
         engine = ConversationEngine(llm_provider=mock_llm, tool_provider=mock_tools)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("call-s15", "+15551234567", domain=DomainType.EDUSAAS)
+        state = mgr.create_inbound_state("call-s15", "+919845123890", domain=DomainType.INFRA_BUILDER)
+        state.update_slot("whatsapp_consent", True)
 
-        res = await engine.process_user_turn(state, "Please email it to fail@example.com")
+        res = await engine.process_user_turn(state, "Please send the brochure to +919845123890")
         assert res.tool_result is not None
         assert res.tool_result.success is False
         assert state.conversation_active is True
@@ -466,23 +466,24 @@ class TestTwentyFiveIntegrationScenarios:
     async def test_16_tool_verification_failure_prevents_fake_success(self):
         """16. Tool verification failure prevents claiming success."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="send_brochure",
             proposed_stage=ConversationStage.ACTION_CONFIRMATION,
-            user_facing_response="Sending email.",
+            user_facing_response="Sending WhatsApp brochure.",
             action_proposed=True,
             proposed_action=ProposedAction(
-                tool_name="send_email",
-                arguments={"recipient": "unverified@example.com", "subject": "Test"},
+                tool_name="send_message",
+                arguments={"recipient": "+919845123890", "consent_confirmed": True},
             ),
         )
         mock_llm = MockLLMProvider(canned_decisions=[decision])
         mock_tools = MockToolProvider(force_verification_failure=True)
         engine = ConversationEngine(llm_provider=mock_llm, tool_provider=mock_tools)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("call-s16", "+15551234567", domain=DomainType.EDUSAAS)
+        state = mgr.create_inbound_state("call-s16", "+919845123890", domain=DomainType.INFRA_BUILDER)
+        state.update_slot("whatsapp_consent", True)
 
-        res = await engine.process_user_turn(state, "Send it to unverified@example.com")
+        res = await engine.process_user_turn(state, "Send it to +919845123890")
         assert res.tool_result.success is False
         assert state.last_action is None  # Never completed
         assert state.conversation_active is True
@@ -491,7 +492,7 @@ class TestTwentyFiveIntegrationScenarios:
     async def test_17_unsupported_action_rejected_safely(self):
         """17. Proposing an unsupported action rejects safely and conversation remains active."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="unknown_action",
             proposed_stage=ConversationStage.INFORMATION,
             user_facing_response="I will try that action.",
@@ -505,7 +506,7 @@ class TestTwentyFiveIntegrationScenarios:
         mock_tools = MockToolProvider()
         engine = ConversationEngine(llm_provider=mock_llm, tool_provider=mock_tools)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("call-s17", "+15551234567", domain=DomainType.EDUSAAS)
+        state = mgr.create_inbound_state("call-s17", "+15551234567", domain=DomainType.INFRA_BUILDER)
 
         res = await engine.process_user_turn(state, "Delete the database.")
         assert res.tool_result is not None
@@ -525,7 +526,7 @@ class TestTwentyFiveIntegrationScenarios:
         mock_llm = MockLLMProvider(canned_decisions=[decision])
         engine = ConversationEngine(llm_provider=mock_llm)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("call-s18", "+15551234567", domain=DomainType.EDUSAAS)
+        state = mgr.create_inbound_state("call-s18", "+15551234567", domain=DomainType.INFRA_BUILDER)
 
         res = await engine.process_user_turn(state, "That's all, thank you. Goodbye.")
         assert state.conversation_active is False
@@ -543,7 +544,7 @@ class TestTwentyFiveIntegrationScenarios:
         mock_llm = MockLLMProvider(canned_decisions=[decision])
         engine = ConversationEngine(llm_provider=mock_llm)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("call-s19", "+15551234567", domain=DomainType.EDUSAAS)
+        state = mgr.create_inbound_state("call-s19", "+15551234567", domain=DomainType.INFRA_BUILDER)
 
         res = await engine.process_user_turn(state, "No thanks.")
         assert state.conversation_active is True
@@ -578,7 +579,7 @@ class TestTwentyFiveIntegrationScenarios:
     async def test_21_unknown_inbound_caller(self):
         """21. Unknown inbound caller starts with unpopulated profile."""
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("call-s21", "+15559998888", domain=DomainType.EDUSAAS)
+        state = mgr.create_inbound_state("call-s21", "+15559998888", domain=DomainType.INFRA_BUILDER)
         assert state.caller.name is None
         assert state.caller.email is None
         assert state.caller.phone == "+15559998888"
@@ -590,7 +591,7 @@ class TestTwentyFiveIntegrationScenarios:
         state = mgr.create_inbound_state(
             call_id="call-s22",
             caller_phone="+15551112222",
-            domain=DomainType.VAYVORA,
+            domain=DomainType.INFRA_BUILDER,
             caller_name="Sarah Connor",
         )
         assert state.caller.name == "Sarah Connor"
@@ -603,15 +604,15 @@ class TestTwentyFiveIntegrationScenarios:
         state = mgr.create_outbound_state(
             call_id="call-s23",
             caller_phone="+15554445555",
-            domain=DomainType.VAYVORA,
+            domain=DomainType.INFRA_BUILDER,
             caller_name="Michael Scott",
-            campaign_id="CAMP-ENT-04",
-            campaign_objective="AI workflow demo",
+            campaign_id="CAMP-RE-04",
+            campaign_objective="Residential project presentation",
             company="Dunder Mifflin",
         )
         assert state.caller.name == "Michael Scott"
         assert state.caller.company == "Dunder Mifflin"
-        assert state.caller.campaign == "CAMP-ENT-04"
+        assert state.caller.campaign == "CAMP-RE-04"
 
     @pytest.mark.asyncio
     async def test_24_llm_timeout(self):
@@ -625,7 +626,7 @@ class TestTwentyFiveIntegrationScenarios:
         state = mgr.create_inbound_state("call-s24", "+15551234567")
 
         with pytest.raises(LLMTimeoutError):
-            await engine.process_user_turn(state, "Hello?")
+            await engine.process_user_turn(state, "What are your property prices?")
 
     @pytest.mark.asyncio
     async def test_25_malformed_llm_json(self):
@@ -639,7 +640,7 @@ class TestTwentyFiveIntegrationScenarios:
         state = mgr.create_inbound_state("call-s25", "+15551234567")
 
         with pytest.raises(LLMMalformedResponseError):
-            await engine.process_user_turn(state, "Hello?")
+            await engine.process_user_turn(state, "What are your property prices?")
 
 
 # =============================================================================
@@ -651,93 +652,93 @@ class TestEndToEndGoldenConversations:
 
     @pytest.mark.asyncio
     async def test_golden_01_vayvora_ai_solutions(self, populated_knowledge_provider):
-        """TEST 1: Inbound question about Vayvora AI solutions with optimized retrieval."""
+        """TEST 1: Inbound question about Infra Builder residential projects with optimized retrieval."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.VAYVORA,
-            detected_intent="ai_solution",
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="property_inquiry",
             proposed_stage=ConversationStage.INFORMATION,
-            user_facing_response="Vayvora provides enterprise AI solutions including conversational voice agents, custom RAG pipelines, and automated agent workflows.",
+            user_facing_response="Infra Builder offers premier residential projects in Bangalore including Skyline Towers in Whitefield and Green Valley Villas on Sarjapur Road.",
             knowledge_required=True,
-            knowledge_query="Vayvora enterprise AI solutions voice agents custom RAG pipelines",
+            knowledge_query="Infra Builder residential projects Skyline Towers Whitefield",
         )
         mock_llm = MockLLMProvider(
             canned_decisions=[decision],
             canned_responses=[
-                "Vayvora provides enterprise AI solutions including conversational voice agents and custom RAG pipelines."
+                "Infra Builder offers premier residential projects including Skyline Towers in Whitefield."
             ],
         )
         engine = ConversationEngine(llm_provider=mock_llm, knowledge_provider=populated_knowledge_provider)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("golden-01", "+15551234567", domain=DomainType.VAYVORA)
+        state = mgr.create_inbound_state("golden-01", "+15551234567", domain=DomainType.INFRA_BUILDER)
 
-        res = await engine.process_user_turn(state, "Hello, what AI solutions does Vayvora provide?")
+        res = await engine.process_user_turn(state, "Hello, what residential projects does Infra Builder offer?")
 
-        assert state.current_domain == DomainType.VAYVORA
-        assert state.current_intent == "ai_solution"
+        assert state.current_domain == DomainType.INFRA_BUILDER
+        assert state.current_intent == "property_inquiry"
         assert res.knowledge_required is True
         assert len(res.grounded_citations) > 0
-        assert "vay:solutions:enterprise_ai" in res.grounded_citations
+        assert "ib:projects:skyline_towers" in res.grounded_citations
         assert state.conversation_active is True
 
     @pytest.mark.asyncio
     async def test_golden_02_email_action_missing_then_provided(self):
-        """TEST 2: Email requested without email address -> ask first -> execute upon receiving email."""
-        # Turn 1: Propose email action but email is unknown
+        """TEST 2: WhatsApp brochure requested without phone -> ask first -> execute upon receiving phone."""
+        # Turn 1: Propose WhatsApp brochure action but phone is unknown
         dec1 = ConversationalDecision(
-            detected_domain=DomainType.VAYVORA,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="send_brochure",
             proposed_stage=ConversationStage.ACTION_CONFIRMATION,
-            user_facing_response="I would be happy to email those details. Could you please share your email address?",
+            user_facing_response="Sure, I can share the project brochure and details. What is your WhatsApp number?",
             action_proposed=True,
-            proposed_action=ProposedAction(tool_name="send_email", arguments={}),
+            proposed_action=ProposedAction(tool_name="send_message", arguments={}),
         )
-        # Turn 2: Caller provides email
+        # Turn 2: Caller provides phone number with consent
         dec2 = ConversationalDecision(
-            detected_domain=DomainType.VAYVORA,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="send_brochure",
-            extracted_slots={"email": "client@vayvora-partner.com"},
+            extracted_slots={"phone": "+919845123890"},
             proposed_stage=ConversationStage.ACTION_CONFIRMATION,
-            user_facing_response="Sending details to your email now.",
+            user_facing_response="Sending details to your WhatsApp now.",
             action_proposed=True,
             proposed_action=ProposedAction(
-                tool_name="send_email",
-                arguments={"recipient": "client@vayvora-partner.com", "subject": "Vayvora AI Overview"},
+                tool_name="send_message",
+                arguments={"recipient": "+919845123890", "consent_confirmed": True},
             ),
         )
 
         mock_llm = MockLLMProvider(
             canned_decisions=[dec1, dec2],
-            canned_responses=["I have sent the details to client@vayvora-partner.com."],
+            canned_responses=["I have sent the details to your WhatsApp at +919845123890."],
         )
         mock_tools = MockToolProvider()
         engine = ConversationEngine(llm_provider=mock_llm, tool_provider=mock_tools)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("golden-02", "+15551234567", domain=DomainType.VAYVORA)
+        state = mgr.create_inbound_state("golden-02", "", domain=DomainType.INFRA_BUILDER)
 
         # Turn 1
-        res1 = await engine.process_user_turn(state, "Can you send me the details by email?")
-        assert res1.tool_result is None  # Guard prevented execution without email
-        assert "share your email" in res1.response_text.lower()
-        assert state.pending_question == "Could you please share your email address?"
+        res1 = await engine.process_user_turn(state, "Can you send me the details on WhatsApp?")
+        assert res1.tool_result is None  # Guard prevented execution without phone
+        assert "whatsapp" in res1.response_text.lower()
+        assert state.pending_question == "I would be happy to send the brochure and details. Which WhatsApp number should I send them to?"
         assert state.conversation_active is True
 
         # Turn 2
-        res2 = await engine.process_user_turn(state, "My email is client@vayvora-partner.com")
+        res2 = await engine.process_user_turn(state, "My WhatsApp number is +919845123890, please send it.")
         assert res2.tool_result is not None
         assert res2.tool_result.success is True
-        assert state.last_action == "send_email"
+        assert state.last_action == "send_message"
         assert state.conversation_active is True
 
     @pytest.mark.asyncio
     async def test_golden_03_topic_pivot_to_location(self, populated_knowledge_provider):
         """TEST 3: Caller pivots to office location; prior pending action does NOT override."""
         dec = ConversationalDecision(
-            detected_domain=DomainType.VAYVORA,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="company_location",
             proposed_stage=ConversationStage.INFORMATION,
-            user_facing_response="Vayvora is located in Bangalore, India.",
+            user_facing_response="Infra Builder is located in Bangalore, India.",
             knowledge_required=True,
-            knowledge_query="Vayvora headquarters Bangalore India",
+            knowledge_query="Infra Builder headquarters Bangalore India",
         )
         mock_llm = MockLLMProvider(
             canned_decisions=[dec],
@@ -745,21 +746,21 @@ class TestEndToEndGoldenConversations:
         )
         engine = ConversationEngine(llm_provider=mock_llm, knowledge_provider=populated_knowledge_provider)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("golden-03", "+15551234567", domain=DomainType.VAYVORA)
-        state.set_pending_action("send_email")
-        state.set_pending_question("Could you please share your email address?")
+        state = mgr.create_inbound_state("golden-03", "+15551234567", domain=DomainType.INFRA_BUILDER)
+        state.set_pending_action("send_message")
+        state.set_pending_question("Could you please share your WhatsApp phone number?")
 
         res = await engine.process_user_turn(state, "Actually, what is your office location?")
         assert state.current_intent == "company_location"
         assert state.pending_question is None
-        assert "vay:company:location" in res.grounded_citations
+        assert "ib:company:location" in res.grounded_citations
         assert state.conversation_active is True
 
     @pytest.mark.asyncio
     async def test_golden_04_no_does_not_terminate(self):
         """TEST 4: Caller says 'No' -> conversation remains active."""
         dec = ConversationalDecision(
-            detected_domain=DomainType.VAYVORA,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="decline",
             proposed_stage=ConversationStage.INFORMATION,
             user_facing_response="No problem at all! Let me know if you have any other questions.",
@@ -767,7 +768,7 @@ class TestEndToEndGoldenConversations:
         mock_llm = MockLLMProvider(canned_decisions=[dec])
         engine = ConversationEngine(llm_provider=mock_llm)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("golden-04", "+15551234567", domain=DomainType.VAYVORA)
+        state = mgr.create_inbound_state("golden-04", "+15551234567", domain=DomainType.INFRA_BUILDER)
 
         res = await engine.process_user_turn(state, "No.")
         assert state.conversation_active is True
@@ -780,13 +781,13 @@ class TestEndToEndGoldenConversations:
             detected_domain=DomainType.GENERAL,
             detected_intent="farewell",
             proposed_stage=ConversationStage.COMPLETED,
-            user_facing_response="Thank you for reaching out to Vayvora. Have a wonderful day. Goodbye!",
+            user_facing_response="Thank you for reaching out to Infra Builder. Have a wonderful day. Goodbye!",
             suggested_termination=True,
         )
         mock_llm = MockLLMProvider(canned_decisions=[dec])
         engine = ConversationEngine(llm_provider=mock_llm)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("golden-05", "+15551234567", domain=DomainType.VAYVORA)
+        state = mgr.create_inbound_state("golden-05", "+15551234567", domain=DomainType.INFRA_BUILDER)
 
         res = await engine.process_user_turn(state, "That's all, thank you. Goodbye.")
         assert state.conversation_active is False
@@ -797,7 +798,7 @@ class TestEndToEndGoldenConversations:
         """TEST 6: Caller asks for advisor -> no fake connect_advisor execution, safe handling."""
         # Scenario A: Phone unknown -> dropped from external dispatch, handled conversationally
         dec_no_phone = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="connect_advisor",
             proposed_stage=ConversationStage.ACTION_CONFIRMATION,
             user_facing_response="I would be happy to have an advisor call you. What is your phone number?",
@@ -811,7 +812,7 @@ class TestEndToEndGoldenConversations:
         mock_tools = MockToolProvider()
         engine = ConversationEngine(llm_provider=mock_llm, tool_provider=mock_tools)
         mgr = ConversationStateManager()
-        state_no_phone = mgr.create_inbound_state("golden-06a", "+15551234567", domain=DomainType.EDUSAAS)
+        state_no_phone = mgr.create_inbound_state("golden-06a", "+15551234567", domain=DomainType.INFRA_BUILDER)
 
         res_a = await engine.process_user_turn(state_no_phone, "Can you connect me with an advisor?")
         # Verified: No fake tool execution happened; conversation remains active
@@ -821,7 +822,7 @@ class TestEndToEndGoldenConversations:
 
         # Scenario B: Phone known -> mapped to supported create_hr_followup
         dec_with_phone = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="connect_advisor",
             extracted_slots={"phone": "+15558889999", "name": "Alex"},
             proposed_stage=ConversationStage.ACTION_CONFIRMATION,
@@ -837,7 +838,7 @@ class TestEndToEndGoldenConversations:
             canned_responses=["Your advisor callback is confirmed."],
         )
         engine_b = ConversationEngine(llm_provider=mock_llm_b, tool_provider=mock_tools)
-        state_with_phone = mgr.create_inbound_state("golden-06b", "+15558889999", domain=DomainType.EDUSAAS)
+        state_with_phone = mgr.create_inbound_state("golden-06b", "+15558889999", domain=DomainType.INFRA_BUILDER)
 
         res_b = await engine_b.process_user_turn(state_with_phone, "Please connect me with an advisor at +15558889999.")
         assert res_b.tool_result is not None

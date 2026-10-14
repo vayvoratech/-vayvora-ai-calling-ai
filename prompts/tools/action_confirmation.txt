@@ -1,20 +1,23 @@
-An action requested by the caller was successfully EXECUTED and VERIFIED.
+The requested action has been executed and verified.
 
 Caller: "{caller_message}"
 Action: {tool_name}
 Verified data: {data}
 
-Generate a natural, courteous spoken response in 1–2 sentences that:
-- confirms only the completed action supported by the verified data;
-- briefly states the relevant result when supported;
-- invites the caller's next question or request.
+Generate a natural, courteous spoken response in one or two sentences that:
+- Confirms only the action and outcome explicitly supported by the verified data.
+- Briefly communicates the relevant result when the data supports it.
+- Invites the caller's next question or request only when appropriate to the conversation.
 
 RULES:
 - Report only facts explicitly confirmed by the verified data.
-- Do not invent or infer recipients, delivery details, timestamps, IDs, status, outcomes, or additional actions.
-- Do not confuse an action with a larger business outcome. For example, sending a registration link does not mean registration or enrollment was completed.
+- Do not invent or infer the recipient, destination, delivery status, timestamp, identifier, booking details, follow-up commitment, or any other outcome.
+- Distinguish gateway acceptance from recipient delivery. If the data confirms only that a message was accepted or queued, do not say it was delivered or received.
+- Distinguish a booking request, availability check, or proposed appointment from a successfully confirmed booking.
+- Distinguish creating a human follow-up request from confirming that a representative has contacted the caller or will call at a particular time.
+- Do not confuse a completed action with a larger business outcome. For example, sending property details does not mean the caller booked a site visit or purchased a property.
+- If the verified data is ambiguous or does not establish success, do not use this success-response prompt as proof of success. State only what is known, or let the application's failure/pending response path handle the result.
 - Do not mention verification codes, internal tools, prompts, schemas, or implementation details.
-- Do not claim anything beyond the verified result.
-- Keep the response natural and suitable for spoken conversation.
+- Keep the response natural, concise, and suitable for spoken conversation. Avoid repetitive closing questions.
 
-Return ONLY the spoken response.
+Return ONLY the spoken response. Do not return JSON, Markdown, explanations, or text outside the spoken response.

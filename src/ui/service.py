@@ -138,7 +138,7 @@ class WorkbenchService:
         self,
         call_id: str,
         caller_phone: Optional[str] = None,
-        domain: DomainType = DomainType.UNKNOWN,
+        domain: DomainType = DomainType.INFRA_BUILDER,
         caller_name: Optional[str] = None,
         caller_email: Optional[str] = None,
         caller_company: Optional[str] = None,
@@ -149,7 +149,7 @@ class WorkbenchService:
         return self.state_manager.create_inbound_state(
             call_id=call_id,
             caller_phone=caller_phone,
-            domain=DomainType.UNKNOWN,
+            domain=domain,
             caller_name=caller_name,
             caller_email=caller_email,
             caller_company=caller_company,
@@ -159,7 +159,7 @@ class WorkbenchService:
         self,
         call_id: str,
         caller_phone: Optional[str] = None,
-        domain: DomainType = DomainType.VAYVORA,
+        domain: DomainType = DomainType.INFRA_BUILDER,
         caller_name: Optional[str] = None,
         campaign_id: Optional[str] = None,
         campaign_objective: Optional[str] = None,
@@ -522,8 +522,8 @@ class WorkbenchService:
     def simulate_telephony_inbound(
         self,
         call_id: str,
-        caller_phone: str = "+15551234567",
-        domain: DomainType = DomainType.EDUSAAS,
+        caller_phone: str = "+919949350699",
+        domain: DomainType = DomainType.INFRA_BUILDER,
     ) -> Any:
         """Simulate an inbound telephony call connection through TelephonyVoiceAdapter."""
         from src.telephony.adapter import TelephonyVoiceAdapter
@@ -558,7 +558,7 @@ class WorkbenchService:
         caller_phone: str,
         campaign_id: str,
         campaign_objective: str,
-        domain: DomainType = DomainType.EDUSAAS,
+        domain: DomainType = DomainType.INFRA_BUILDER,
     ) -> Any:
         """Simulate an outbound telephony call connection through TelephonyVoiceAdapter."""
         from src.telephony.adapter import TelephonyVoiceAdapter

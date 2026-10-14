@@ -104,7 +104,7 @@ class TelephonyVoiceAdapter:
 
     async def handle_inbound_call(
         self,
-        domain: DomainType = DomainType.EDUSAAS,
+        domain: DomainType = DomainType.INFRA_BUILDER,
         caller_name: Optional[str] = None,
     ) -> VoiceSession:
         """Establish inbound call session from external telephony media transport."""

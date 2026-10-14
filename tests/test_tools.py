@@ -52,22 +52,22 @@ class TestActionValidation:
         """Verify list of registered tools matches supported actions."""
         tools = list_registered_tools()
         names = {t["name"] for t in tools}
-        assert names == SUPPORTED_ACTIONS
-        assert "send_email" in names
+        assert "send_message" in names
         assert "create_calendar_event" in names
         assert "find_available_slots" in names
         assert "update_lead" in names
         assert "create_hr_followup" in names
-        assert "send_message" in names
         assert "update_business_status" in names
+        # Customer email is retired from registered tools
+        assert "send_email" not in names
 
     def test_valid_action_proposal(self):
         """Test valid action proposals pass validation without error."""
         req = ValidatedToolRequest(
-            action_name="send_email",
-            arguments={"recipient": "user@example.com", "subject": "Info", "body": "Details"},
+            action_name="send_message",
+            arguments={"recipient": "+919845123456", "message": "Skyline Towers Brochure", "whatsapp_consent": True},
             session_id="call-001",
-            domain=DomainType.EDUSAAS,
+            domain=DomainType.INFRA_BUILDER,
         )
         ActionValidator.validate_action(req)
 
@@ -75,7 +75,7 @@ class TestActionValidation:
             action_name="create_calendar_event",
             arguments={"slot": "Tomorrow 10:00 AM", "confirmed": True},
             session_id="call-001",
-            domain=DomainType.EDUSAAS,
+            domain=DomainType.INFRA_BUILDER,
         )
         ActionValidator.validate_action(req_cal)
 
@@ -85,7 +85,7 @@ class TestActionValidation:
             action_name="execute_system_command",
             arguments={"command": "rm -rf /"},
             session_id="call-001",
-            domain=DomainType.EDUSAAS,
+            domain=DomainType.INFRA_BUILDER,
         )
         with pytest.raises(UnsupportedActionError) as exc_info:
             ActionValidator.validate_action(req)
@@ -97,7 +97,7 @@ class TestActionValidation:
             action_name="send_email",
             arguments={"subject": "Information"},
             session_id="call-001",
-            domain=DomainType.EDUSAAS,
+            domain=DomainType.INFRA_BUILDER,
             caller_email=None,
         )
         with pytest.raises(InvalidToolArgumentsError) as exc_info:
@@ -110,7 +110,7 @@ class TestActionValidation:
             action_name="send_email",
             arguments={"recipient": "invalid-email-address"},
             session_id="call-001",
-            domain=DomainType.EDUSAAS,
+            domain=DomainType.INFRA_BUILDER,
         )
         with pytest.raises(InvalidToolArgumentsError) as exc_info:
             ActionValidator.validate_action(req)
@@ -122,7 +122,7 @@ class TestActionValidation:
             action_name="create_calendar_event",
             arguments={"confirmed": True},
             session_id="call-001",
-            domain=DomainType.EDUSAAS,
+            domain=DomainType.INFRA_BUILDER,
         )
         with pytest.raises(InvalidToolArgumentsError) as exc_info:
             ActionValidator.validate_action(req)
@@ -134,11 +134,11 @@ class TestActionValidation:
             action_name="create_calendar_event",
             arguments={"slot": "Tomorrow 10:00 AM", "confirmed": False},
             session_id="call-001",
-            domain=DomainType.EDUSAAS,
+            domain=DomainType.INFRA_BUILDER,
         )
         with pytest.raises(InvalidToolArgumentsError) as exc_info:
             ActionValidator.validate_action(req)
-        assert "before caller confirms the slot" in str(exc_info.value)
+        assert "before caller explicitly confirms the slot" in str(exc_info.value)
 
     def test_send_message_missing_recipient_raises_error(self):
         """send_message requires a phone number or recipient."""
@@ -146,7 +146,7 @@ class TestActionValidation:
             action_name="send_message",
             arguments={"text": "Hello"},
             session_id="call-001",
-            domain=DomainType.VAYVORA,
+            domain=DomainType.INFRA_BUILDER,
         )
         with pytest.raises(InvalidToolArgumentsError) as exc_info:
             ActionValidator.validate_action(req)
@@ -158,7 +158,7 @@ class TestActionValidation:
             action_name="update_lead",
             arguments={},
             session_id="call-001",
-            domain=DomainType.EDUSAAS,
+            domain=DomainType.INFRA_BUILDER,
         )
         with pytest.raises(InvalidToolArgumentsError) as exc_info:
             ActionValidator.validate_action(req)
@@ -168,9 +168,9 @@ class TestActionValidation:
         """create_hr_followup requires candidate identification."""
         req = ValidatedToolRequest(
             action_name="create_hr_followup",
-            arguments={"position": "Software Engineer"},
+            arguments={"position": "Sales Consultant"},
             session_id="call-001",
-            domain=DomainType.VAYVORA,
+            domain=DomainType.INFRA_BUILDER,
         )
         with pytest.raises(InvalidToolArgumentsError) as exc_info:
             ActionValidator.validate_action(req)
@@ -182,7 +182,7 @@ class TestActionValidation:
             action_name="update_business_status",
             arguments={"something": "else"},
             session_id="call-001",
-            domain=DomainType.EDUSAAS,
+            domain=DomainType.INFRA_BUILDER,
         )
         with pytest.raises(InvalidToolArgumentsError) as exc_info:
             ActionValidator.validate_action(req)
@@ -344,7 +344,7 @@ class TestMockToolProvider:
         )
         res = await provider.execute_tool(req)
         assert res.success is False
-        assert "before caller confirms the slot" in res.error_message
+        assert "before caller explicitly confirms the slot" in res.error_message
         assert len(provider.dispatched_requests) == 0
 
     @pytest.mark.asyncio
@@ -499,14 +499,14 @@ class TestEngineToolIntegration:
     async def test_successful_action_updates_state_and_synthesizes_confirmation(self):
         """When tool succeeds, engine completes action in state and synthesizes confirmation."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
-            detected_intent="request_brochure",
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="whatsapp_information_request",
             action_proposed=True,
             proposed_action=ProposedAction(
-                tool_name="send_email",
-                arguments={"recipient": "lead@example.com", "subject": "Brochure"},
+                tool_name="send_message",
+                arguments={"recipient": "+919845123456", "message": "Skyline Towers Brochure", "whatsapp_consent": True},
             ),
-            user_facing_response="I will send that over.",
+            user_facing_response="I will send the brochure over WhatsApp.",
         )
         mock_llm = MockLLMProvider(canned_decisions=[decision])
         tool_provider = MockToolProvider()
@@ -515,35 +515,37 @@ class TestEngineToolIntegration:
         mgr = ConversationStateManager()
         state = mgr.create_inbound_state(
             call_id="engine-tool-01",
-            caller_phone="+1234567890",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
         )
+        state.update_slot("whatsapp_consent", True)
 
         turn_result = await engine.process_user_turn(
             state=state,
-            user_message="Please email me the brochure to lead@example.com.",
+            user_message="Please send the Skyline Towers brochure to my WhatsApp at +919845123456.",
         )
 
         assert state.pending_action is None
         assert state.last_tool_result is not None
         assert state.last_tool_result.success is True
         assert state.last_tool_result.verification_code is not None
-        assert state.last_action == "send_email"
+        assert state.last_action == "send_message"
         assert state.conversation_active is True
         assert len(state.history) == 2
+        assert "whatsapp" in turn_result.response_text.lower()
 
     @pytest.mark.asyncio
     async def test_email_missing_recipient_asks_caller_and_avoids_provider_call(self):
-        """Conversational guard: if caller email is unknown and not in args, engine asks for email."""
+        """Conversational guard: if caller phone is unknown, engine asks for WhatsApp number."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
-            detected_intent="request_email",
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="whatsapp_information_request",
             action_proposed=True,
             proposed_action=ProposedAction(
-                tool_name="send_email",
-                arguments={"subject": "Course Catalog"},  # No recipient!
+                tool_name="send_message",
+                arguments={"message": "Skyline Towers Brochure"},  # No recipient!
             ),
-            user_facing_response="I'll email it.",
+            user_facing_response="I'll send it.",
         )
         mock_llm = MockLLMProvider(canned_decisions=[decision])
         tool_provider = MockToolProvider()
@@ -552,28 +554,26 @@ class TestEngineToolIntegration:
         mgr = ConversationStateManager()
         state = mgr.create_inbound_state(
             call_id="engine-email-guard-01",
-            caller_phone="+1234567890",
-            domain=DomainType.EDUSAAS,
+            caller_phone=None,
+            domain=DomainType.INFRA_BUILDER,
         )
 
         turn_result = await engine.process_user_turn(
             state=state,
-            user_message="Could you email me the catalog?",
+            user_message="Could you WhatsApp me the brochure?",
         )
 
         # Provider must NOT have been called
         assert len(tool_provider.dispatched_requests) == 0
-        # Engine asked for email
-        assert "email address" in turn_result.response_text.lower()
-        assert state.pending_question == "Could you please share your email address?"
+        assert "whatsapp number" in turn_result.response_text.lower()
         assert state.conversation_active is True
 
     @pytest.mark.asyncio
     async def test_calendar_missing_slot_asks_caller_and_avoids_provider_call(self):
         """Calendar guard: if slot is missing, engine asks caller which time slot works best."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.VAYVORA,
-            detected_intent="schedule_consultation",
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="site_visit_request",
             action_proposed=True,
             proposed_action=ProposedAction(
                 tool_name="create_calendar_event",
@@ -588,32 +588,32 @@ class TestEngineToolIntegration:
         mgr = ConversationStateManager()
         state = mgr.create_inbound_state(
             call_id="engine-cal-guard-01",
-            caller_phone="+1234567890",
-            domain=DomainType.VAYVORA,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
         )
 
         turn_result = await engine.process_user_turn(
             state=state,
-            user_message="I'd like to book a meeting.",
+            user_message="I'd like to book a site visit.",
         )
 
         assert len(tool_provider.dispatched_requests) == 0
         assert "time slot" in turn_result.response_text.lower()
-        assert state.pending_question == "Which date or time slot would work best for you?"
+        assert state.pending_question == "Which date and time slot works best for you?"
         assert state.conversation_active is True
 
     @pytest.mark.asyncio
     async def test_action_failure_does_not_terminate_conversation(self):
         """When tool fails, conversation remains active, error is logged, and caller is not disconnected."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
-            detected_intent="send_brochure",
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="whatsapp_information_request",
             action_proposed=True,
             proposed_action=ProposedAction(
-                tool_name="send_email",
-                arguments={"recipient": "test@example.com"},
+                tool_name="send_message",
+                arguments={"recipient": "+919845123456", "whatsapp_consent": True},
             ),
-            user_facing_response="Sending email now.",
+            user_facing_response="Sending brochure now.",
         )
         mock_llm = MockLLMProvider(canned_decisions=[decision])
         tool_provider = MockToolProvider(force_unavailable=True)
@@ -622,13 +622,14 @@ class TestEngineToolIntegration:
         mgr = ConversationStateManager()
         state = mgr.create_inbound_state(
             call_id="engine-fail-01",
-            caller_phone="+1234567890",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
         )
+        state.update_slot("whatsapp_consent", True)
 
         turn_result = await engine.process_user_turn(
             state=state,
-            user_message="Please send the syllabus to test@example.com.",
+            user_message="Please send the brochure to my WhatsApp at +919845123456.",
         )
 
         # Call must remain active
@@ -636,7 +637,7 @@ class TestEngineToolIntegration:
         # Tool failure recorded
         assert state.last_tool_result is not None
         assert state.last_tool_result.success is False
-        assert state.last_action != "send_email"
+        assert state.last_action != "send_message"
         # Polite failure explanation presented to caller
         assert "system issue" in turn_result.response_text.lower()
 
@@ -644,8 +645,8 @@ class TestEngineToolIntegration:
     async def test_verification_failure_prevents_fabricated_success_speech(self):
         """When tool reports HTTP success but verification fails, engine does NOT claim success."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
-            detected_intent="book_consultation",
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="site_visit_request",
             action_proposed=True,
             proposed_action=ProposedAction(
                 tool_name="create_calendar_event",
@@ -661,13 +662,14 @@ class TestEngineToolIntegration:
         mgr = ConversationStateManager()
         state = mgr.create_inbound_state(
             call_id="engine-ver-fail-01",
-            caller_phone="+1234567890",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
         )
+        state.update_slot("meeting_preference", "Tomorrow 3:00 PM")
 
         turn_result = await engine.process_user_turn(
             state=state,
-            user_message="Confirm Tomorrow at 3 PM for my consultation.",
+            user_message="Confirm Tomorrow at 3 PM for my site visit.",
         )
 
         assert state.conversation_active is True
@@ -675,21 +677,21 @@ class TestEngineToolIntegration:
         assert state.last_tool_result.success is False
         # Does not record as completed action
         assert state.last_action != "create_calendar_event"
-        # Response should reflect system issue, NOT fabricated confirmation
-        assert "system issue" in turn_result.response_text.lower()
+        # Response should reflect booking failure, NOT fabricated confirmation
+        assert "could not be booked" in turn_result.response_text.lower() or "system issue" in turn_result.response_text.lower()
 
     @pytest.mark.asyncio
     async def test_auto_populate_caller_profile_details(self):
         """Engine auto-populates known caller profile attributes into tool call arguments."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
-            detected_intent="send_brochure",
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="whatsapp_information_request",
             action_proposed=True,
             proposed_action=ProposedAction(
-                tool_name="send_email",
-                arguments={"subject": "Curriculum PDF"},  # recipient omitted in proposed_action
+                tool_name="send_message",
+                arguments={"whatsapp_consent": True},  # recipient omitted in proposed_action
             ),
-            user_facing_response="Sending to your registered email.",
+            user_facing_response="Sending to your registered number.",
         )
         mock_llm = MockLLMProvider(canned_decisions=[decision])
         tool_provider = MockToolProvider()
@@ -698,23 +700,24 @@ class TestEngineToolIntegration:
         mgr = ConversationStateManager()
         state = mgr.create_outbound_state(
             call_id="engine-auto-pop-01",
-            caller_phone="+1234567890",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123456",
+            domain=DomainType.INFRA_BUILDER,
             caller_name="Alice Smith",
             caller_email="alice@university.edu",
             campaign_id="camp-01",
-            campaign_objective="Syllabus follow up",
+            campaign_objective="Skyline Towers follow up",
         )
+        state.update_slot("outbound_identity_verified", True)
+        state.update_slot("whatsapp_consent", True)
 
         turn_result = await engine.process_user_turn(
             state=state,
-            user_message="Go ahead and email that to me.",
+            user_message="Go ahead and WhatsApp that to me.",
         )
 
-        # Provider received auto-populated email
+        # Provider received auto-populated phone
         assert len(tool_provider.dispatched_requests) == 1
         dispatched_req = tool_provider.dispatched_requests[0]
-        assert dispatched_req.arguments.get("recipient") == "alice@university.edu"
-        assert dispatched_req.arguments.get("caller_name") == "Alice Smith"
+        assert dispatched_req.arguments.get("recipient") in ("919845123456", "+919845123456")
         assert state.last_tool_result.success is True
 

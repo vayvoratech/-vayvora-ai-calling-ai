@@ -314,13 +314,13 @@ async def test_telephony_voice_adapter_inbound_lifecycle():
     adapter, repo, transport, stt = build_test_adapter(CallDirection.INBOUND)
 
     # 1. Inbound Call
-    session = await adapter.handle_inbound_call(domain=DomainType.EDUSAAS)
+    session = await adapter.handle_inbound_call(domain=DomainType.INFRA_BUILDER)
     assert transport.is_connected
     assert session.is_active
-    assert adapter.conversation_state.current_domain == DomainType.EDUSAAS
+    assert adapter.conversation_state.current_domain == DomainType.INFRA_BUILDER
 
     # 2. Process Telephony Packet (Speech)
-    stt.add_transcription("Tell me about machine learning.")
+    stt.add_transcription("Tell me about Skyline Towers.")
     pcm_audio = b"\x01\x00" * 320  # 20ms at 8kHz 16-bit
     res = await adapter.process_incoming_packet(pcm_audio, sample_rate=8000)
     assert res is not None
@@ -346,19 +346,19 @@ async def test_telephony_voice_adapter_outbound_lifecycle():
     adapter, repo, transport, stt = build_test_adapter(CallDirection.OUTBOUND)
 
     session = await adapter.handle_outbound_call(
-        domain=DomainType.VAYVORA,
+        domain=DomainType.INFRA_BUILDER,
         caller_name="Sarah Connor",
-        campaign_id="CAMP-AI-01",
-        campaign_objective="Discuss enterprise AI orchestration platform",
+        campaign_id="CAMP-RE-01",
+        campaign_objective="Discuss Skyline Towers luxury apartments",
     )
     assert transport.is_connected
     assert session.is_active
-    assert adapter.conversation_state.current_domain == DomainType.VAYVORA
+    assert adapter.conversation_state.current_domain == DomainType.INFRA_BUILDER
     assert adapter.conversation_state.metadata.direction == CallDirection.OUTBOUND
     assert adapter.conversation_state.caller.name == "Sarah Connor"
-    assert adapter.conversation_state.metadata.campaign_id == "CAMP-AI-01"
-    assert adapter.conversation_state.caller.campaign == "CAMP-AI-01"
-    assert adapter.conversation_state.caller.campaign_objective == "Discuss enterprise AI orchestration platform"
+    assert adapter.conversation_state.metadata.campaign_id == "CAMP-RE-01"
+    assert adapter.conversation_state.caller.campaign == "CAMP-RE-01"
+    assert adapter.conversation_state.caller.campaign_objective == "Discuss Skyline Towers luxury apartments"
 
     summary = await adapter.handle_disconnect(reason="completed_goodbye")
     assert summary.termination_reason == "completed_goodbye"

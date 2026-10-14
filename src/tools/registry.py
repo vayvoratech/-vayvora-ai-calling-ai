@@ -16,97 +16,81 @@ class ToolDefinition(BaseModel):
 
 REGISTERED_TOOLS: List[ToolDefinition] = [
     ToolDefinition(
-        name="send_email",
-        description="Dispatch an email containing course information, syllabus, or corporate materials.",
+        name="send_message",
+        description="Dispatch an authorized WhatsApp message to the caller containing verified property brochures, pricing details, or site visit confirmations.",
         parameters={
             "type": "object",
             "properties": {
-                "recipient": {"type": "string", "description": "Recipient email address"},
-                "subject": {"type": "string", "description": "Email subject header"},
-                "body": {"type": "string", "description": "Body message or template identifier"},
+                "recipient": {"type": "string", "description": "Recipient phone number (normalized with country code)"},
+                "message": {"type": "string", "description": "WhatsApp message content or property details"},
+                "whatsapp_consent": {"type": "boolean", "description": "Caller explicit authorization for WhatsApp communication"},
             },
-            "required": ["recipient"],
+            "required": ["recipient", "message"],
         },
     ),
     ToolDefinition(
         name="find_available_slots",
-        description="Lookup calendar availability for academic consultation or sales discovery meetings.",
+        description="Lookup calendar availability for property site visits or real estate consultations.",
         parameters={
             "type": "object",
             "properties": {
-                "preferred_date": {"type": "string", "description": "Preferred date or timeframe"},
-                "meeting_type": {"type": "string", "description": "Type of consultation"},
+                "preferred_date": {"type": "string", "description": "Preferred date or timeframe for site visit"},
+                "property_name": {"type": "string", "description": "Name of the project (e.g. Skyline Towers, Green Valley Villas, Urban Heights)"},
+                "meeting_type": {"type": "string", "description": "Type of visit (e.g. site_visit, sales_consultation)"},
             },
         },
     ),
     ToolDefinition(
         name="create_calendar_event",
-        description="Book a confirmed meeting slot on the calendar once chosen by the caller.",
+        description="Book a confirmed property site visit slot on the calendar once verified and explicitly confirmed by the caller.",
         parameters={
             "type": "object",
             "properties": {
-                "slot": {"type": "string", "description": "Selected confirmed date/time slot"},
-                "attendee_name": {"type": "string", "description": "Attendee full name"},
-                "attendee_email": {"type": "string", "description": "Attendee email address"},
-                "confirmed": {"type": "boolean", "description": "Explicit confirmation from caller"},
+                "slot": {"type": "string", "description": "Selected confirmed date/time slot (e.g. '2026-10-15 11:00 AM')"},
+                "property_name": {"type": "string", "description": "Name of the project for the site visit"},
+                "attendee_name": {"type": "string", "description": "Caller full name"},
+                "attendee_phone": {"type": "string", "description": "Caller contact phone number"},
+                "confirmed": {"type": "boolean", "description": "Explicit confirmation from caller for the specific slot"},
             },
-            "required": ["slot"],
+            "required": ["slot", "confirmed"],
         },
     ),
     ToolDefinition(
         name="update_lead",
-        description="Update CRM lead details, interest tags, or qualification notes.",
+        description="Update CRM real estate lead details, preferred project, configuration, budget, or purchase timeline.",
         parameters={
             "type": "object",
             "properties": {
-                "status": {"type": "string", "description": "Updated lead lifecycle status"},
-                "notes": {"type": "string", "description": "Counselor or sales notes"},
+                "status": {"type": "string", "description": "Updated lead lifecycle status (e.g. interested, qualified, site_visit_scheduled)"},
+                "project_name": {"type": "string", "description": "Preferred real estate project"},
+                "configuration": {"type": "string", "description": "Preferred apartment/villa configuration (e.g. 2 BHK, 3 BHK, 4 BHK Villa)"},
+                "budget": {"type": "string", "description": "Stated budget or budget range"},
+                "notes": {"type": "string", "description": "Customer preferences or qualification notes"},
             },
         },
     ),
     ToolDefinition(
         name="create_hr_followup",
-        description="Queue an HR advisory callback for prospective students or job candidates.",
+        description="Queue a property relationship manager or sales specialist callback for the caller.",
         parameters={
             "type": "object",
             "properties": {
-                "candidate_name": {"type": "string", "description": "Candidate or student name"},
-                "phone": {"type": "string", "description": "Contact number"},
-                "notes": {"type": "string", "description": "Reason for follow-up"},
+                "candidate_name": {"type": "string", "description": "Customer contact name"},
+                "phone": {"type": "string", "description": "Customer contact phone number"},
+                "notes": {"type": "string", "description": "Reason for follow-up or specific questions requiring human assistance"},
             },
-        },
-    ),
-    ToolDefinition(
-        name="send_message",
-        description="Send an SMS or instant message confirmation.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "recipient": {"type": "string", "description": "Phone number or user ID"},
-                "message": {"type": "string", "description": "Message content"},
-            },
-            "required": ["recipient"],
+            "required": ["candidate_name"],
         },
     ),
     ToolDefinition(
         name="update_business_status",
-        description="Update the domain-specific business lifecycle status.",
+        description="Update the real estate customer disposition status (e.g. inquiry, site_visit_booked, qualified, follow_up_needed).",
         parameters={
             "type": "object",
             "properties": {
-                "status": {"type": "string", "description": "Status (e.g. interested, qualified, enrolled)"},
+                "status": {"type": "string", "description": "Status string"},
             },
             "required": ["status"],
-        },
-    ),
-    ToolDefinition(
-        name="mail_read_recent",
-        description="Read recent emails from IMAP inbox.",
-        parameters={
-            "type": "object",
-            "properties": {
-                "limit": {"type": "integer", "description": "Number of recent emails to retrieve (default 5)"},
-            },
         },
     ),
 ]

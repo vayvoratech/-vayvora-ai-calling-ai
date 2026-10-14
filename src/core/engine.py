@@ -36,11 +36,51 @@ from src.core.types import (
 from src.logging import get_logger
 from src.state.models import ConversationState
 
+from src.tools.message_provider import validate_phone_number
+
 if TYPE_CHECKING:
     from src.domains.base import DomainConfig
     from src.domains.registry import DomainRegistry
 
 logger = get_logger("core.engine")
+
+
+def generate_infra_builder_whatsapp_message(
+    project_name: Optional[str] = None,
+    rag_context: Optional[str] = None,
+    caller_name: Optional[str] = None,
+) -> str:
+    """Build a concise WhatsApp message without inventing property facts."""
+    greeting = f"Hello {caller_name.strip()},\n\n" if caller_name and caller_name.strip() else "Hello,\n\n"
+    project = (project_name or "").strip()
+    context = (rag_context or "").strip()
+
+    if context:
+        # Keep only retrieved content; the knowledge provider is the source of property facts.
+        lines = [
+            re.sub(r"^[-*#\s]+", "", line).strip()
+            for line in context.splitlines()
+            if line.strip()
+            and not line.lstrip().startswith("<")
+            and not line.lstrip().upper().startswith("NOTICE")
+            and not line.lstrip().lower().startswith("treat ")
+        ]
+        summary = "\n".join(f"• {line}" for line in lines[:6])
+        heading = f"Here is the verified information for {project}:\n\n" if project else "Here is the verified property information: \n\n"
+        body = heading + summary
+        body += "\n\nPlease reply here if you would like any other verified details.\n- Infra Builder Team"
+        return greeting + body
+
+    # No verified property facts were retrieved. Do not manufacture projects, prices,
+    # availability, amenities, or imply that an attachment was sent.
+    subject = f" regarding {project}" if project else ""
+    return (
+        greeting
+        + f"Thank you for your interest in Infra Builder{subject}. "
+        "I do not have verified property details to include in this message right now. "
+        "Please reply here with the project you are interested in, and our team can assist.\n"
+        "- Infra Builder Team"
+    )
 
 
 class EngineTurnResult(BaseModel):
@@ -192,107 +232,57 @@ class ConversationEngine:
     async def start_outbound_conversation(
         self, state: ConversationState
     ) -> EngineTurnResult:
-        """Initiate an outbound conversation with an opening agent turn."""
+        """Start an outbound call deterministically; no LLM round-trip is needed for identity gating."""
         if state.metadata.direction != CallDirection.OUTBOUND:
             raise ValueError(
                 f"Cannot start outbound conversation on an inbound call (call_id: {state.metadata.call_id})"
             )
 
-        domain_config = self.registry.get_or_raise(state.current_domain)
-        t_out_start = time.perf_counter()
+        t_start = time.perf_counter()
+        # This deployment has one active business domain.
+        state.lock_domain(DomainType.INFRA_BUILDER)
+        domain_config = self.registry.get_or_raise(DomainType.INFRA_BUILDER)
 
-        # 1. Synthesize opening prompt
-        prompt = self.synthesizer.build_outbound_opening_prompt(state, domain_config)
-        system_instruction = render_prompt(
-            "conversation/outbound_opening_system.txt",
-            domain_name=domain_config.name,
-        ).strip()
-
-        opening_text: Optional[str] = None
-        # 2. Try LLM generation if available
-        try:
-            if hasattr(self.llm, "generate_response"):
-                raw_res = await self.llm.generate_response(prompt, system_instruction)
-                from src.core.llm import extract_json_block
-                import json
-
-                try:
-                    clean = extract_json_block(raw_res)
-                    parsed = json.loads(clean)
-                    if isinstance(parsed, dict) and "user_facing_response" in parsed:
-                        opening_text = parsed["user_facing_response"]
-                    elif isinstance(parsed, dict) and "response" in parsed:
-                        opening_text = parsed["response"]
-                except Exception:
-                    opening_text = raw_res.strip().strip('"')
-        except Exception as exc:
-            logger.warning("LLM outbound opening generation failed, using deterministic opening: %s", exc)
-
-        # 3. Fallback deterministic opening if needed
         contact_name = (state.caller.name or state.contact_name or "").strip()
-        has_identity_confusion = False
-        if contact_name and opening_text:
-            lower_open = opening_text.lower()
-            lower_contact = contact_name.lower()
-            if any(f"{p} {lower_contact}" in lower_open for p in ["i am", "i'm", "my name is", "this is"]):
-                has_identity_confusion = True
-
-        if (
-            not opening_text
-            or len(opening_text.strip()) < 10
-            or opening_text.strip().startswith("{")
-            or opening_text.strip() == "Mock default response."
-            or has_identity_confusion
-        ):
-            opening_text = self._generate_deterministic_outbound_opening(state, domain_config)
-
-        # 4. Outbound identity-first opening. Do not discuss the campaign purpose until
-        # the person on the line has been identified/verified.
-        contact_name = (state.caller.name or state.contact_name or "").strip()
+        agent_name = (state.agent_name or (self.settings.agent_name if self.settings else None) or "").strip()
+        intro = f"Hi, I'm {agent_name} from {domain_config.name}." if agent_name else f"Hi, I'm calling from {domain_config.name}."
         if contact_name:
-            opening_text = f"Hi, I'm calling from {domain_config.name}. Am I speaking with {contact_name}?"
-            pending_q = f"Am I speaking with {contact_name}?"
+            opening_text = f"{intro} Am I speaking with {contact_name}?"
+            pending_question = f"Am I speaking with {contact_name}?"
+            state.update_slot("outbound_identity_name_pending", False)
         else:
-            opening_text = f"Hi, I'm calling from {domain_config.name}. May I know who I'm speaking with?"
-            pending_q = "May I know who I'm speaking with?"
+            opening_text = f"{intro} May I know who I'm speaking with?"
+            pending_question = "May I know who I'm speaking with?"
             state.update_slot("outbound_identity_name_pending", True)
 
         state.update_slot("outbound_identity_verified", False)
+        state.set_stage(ConversationStage.GREETING)
+        state.set_intent("identity_verification", clear_pending_question=False)
+        state.set_pending_question(pending_question)
+        state.conversation_active = True
+        state.record_turn(role=TurnRole.AGENT, content=opening_text)
 
         decision = ConversationalDecision(
-            detected_domain=state.current_domain,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="identity_verification",
             proposed_stage=ConversationStage.GREETING,
             user_facing_response=opening_text,
             action_proposed=False,
             knowledge_required=False,
         )
-
-        # 5. Update state
-        state.set_stage(ConversationStage.GREETING)
-        state.set_intent("identity_verification", clear_pending_question=False)
-        state.set_pending_question(pending_q)
-        state.conversation_active = True
-
-        # 6. Record agent opening in transcript
-        state.record_turn(
-            role=TurnRole.AGENT,
-            content=opening_text,
-        )
-
+        elapsed_ms = round((time.perf_counter() - t_start) * 1000, 2)
         logger.info(
-            "Outbound conversation %s started with opening: '%s'",
+            "Outbound conversation %s started; deterministic identity opening in %.2fms",
             state.metadata.call_id,
-            opening_text,
+            elapsed_ms,
         )
-
         return EngineTurnResult(
             response_text=opening_text,
             decision=decision,
             conversation_active=True,
             termination_occurred=False,
-            latency_ms=round((time.perf_counter() - t_out_start) * 1000, 2),
-            latency_breakdown={"opening_generation_ms": round((time.perf_counter() - t_out_start) * 1000, 2)},
+            latency_ms=elapsed_ms,
+            latency_breakdown={"opening_generation_ms": elapsed_ms},
         )
 
     def synthesize_outbound_greeting(self, state: ConversationState) -> str:
@@ -314,55 +304,30 @@ class ConversationEngine:
         reason = obj or purpose
         greeting_contact = f"Hi {contact_name}, " if contact_name else "Hello, "
 
-        if state.current_domain == DomainType.EDUSAAS:
-            if agent_name:
-                intro = f"I'm {agent_name} from EduSaaS Academic Admissions & Guidance."
-            else:
-                intro = "I'm calling from EduSaaS Academic Admissions & Guidance."
+        if agent_name:
+            intro = f"I'm {agent_name} from Infra Builder."
+        else:
+            intro = "I'm calling from Infra Builder."
 
-            if reason:
-                r_clean = reason.rstrip(".!? ")
-                for prefix in [
-                    "follow up with student who showed interest in ",
-                    "follow up with student who had shown interest in ",
-                    "follow up with student regarding interest in ",
-                    "follow up with student regarding ",
-                    "follow up with student about ",
-                    "follow up regarding interest in ",
-                    "follow up regarding ",
-                    "follow up about ",
-                    "follow up on ",
-                    "you had shown interest in ",
-                    "shown interest in ",
-                    "interest in ",
-                ]:
-                    if r_clean.lower().startswith(prefix):
-                        r_clean = r_clean[len(prefix) :]
-                        break
-                return f"{greeting_contact}{intro} I'm reaching out because you had shown interest in {r_clean}. Is this a good time to speak for a couple of minutes?"
-            return f"{greeting_contact}{intro} I'm reaching out because you had shown interest in our courses. Is this a good time to speak for a couple of minutes?"
-
-        else:  # Vayvora
-            if agent_name:
-                intro = f"I'm {agent_name} from Vayvora Technologies."
-            else:
-                intro = "I'm calling from Vayvora Technologies."
-
-            target_org = company or "your organization"
-            if reason:
-                r_clean = reason.rstrip(".!? ")
-                for prefix in [
-                    "understand whether organization is exploring ",
-                    "understand whether your organization is exploring ",
-                    "understand whether company is exploring ",
-                    "understand whether ",
-                    "exploring ",
-                ]:
-                    if r_clean.lower().startswith(prefix):
-                        r_clean = r_clean[len(prefix) :]
-                        break
-                return f"{greeting_contact}{intro} I'm reaching out to understand whether {target_org} is currently exploring {r_clean}. Is this a good time for a quick conversation?"
-            return f"{greeting_contact}{intro} I'm reaching out to understand whether {target_org} is currently exploring AI or automation solutions. Is this a good time for a quick conversation?"
+        if reason:
+            r_clean = reason.rstrip(".!? ")
+            for prefix in [
+                "follow up with buyer who showed interest in ",
+                "follow up with client who showed interest in ",
+                "follow up regarding inquiry on ",
+                "follow up regarding interest in ",
+                "follow up regarding ",
+                "follow up about ",
+                "follow up on ",
+                "inquiry about ",
+                "shown interest in ",
+                "interest in ",
+            ]:
+                if r_clean.lower().startswith(prefix):
+                    r_clean = r_clean[len(prefix) :]
+                    break
+            return f"{greeting_contact}{intro} I'm following up on your inquiry regarding {r_clean}. Is now a convenient time for a quick conversation?"
+        return f"{greeting_contact}{intro} I'm following up on your recent property inquiry with us. Is now a convenient time for a quick conversation?"
 
     @staticmethod
     def _voice_spell_email(email: str) -> str:
@@ -441,7 +406,9 @@ class ConversationEngine:
 
     @staticmethod
     def _normalize_confirmation_text(message: str) -> str:
-        return re.sub(r"[.!?,]+$", "", (message or "").strip().lower()).strip()
+        cleaned = re.sub(r"[.!?,]+$", "", (message or "").strip().lower()).strip()
+        cleaned = re.sub(r"[,]+", " ", cleaned)
+        return re.sub(r"\s+", " ", cleaned).strip()
 
     @staticmethod
     def _is_identity_confirmation(message: str) -> bool:
@@ -449,6 +416,7 @@ class ConversationEngine:
         return text in {
             "yes", "yeah", "yep", "yes speaking", "speaking", "that's me", "that is me",
             "this is me", "correct", "right", "yes this is me", "yes that's me",
+            "yeah speaking", "yep speaking", "this is he", "this is she", "yes correct",
         }
 
     @staticmethod
@@ -577,7 +545,7 @@ class ConversationEngine:
         else:
             # No trusted/designated name: ask the person on the line to identify themselves.
             state.update_slot("outbound_identity_name_pending", True)
-            response = "Hi, I'm calling from EduSaaS. May I know who I'm speaking with?" if state.current_domain == DomainType.EDUSAAS else "Hello, I'm calling from Vayvora Technologies. May I know who I'm speaking with?"
+            response = "Hello, I'm calling from Infra Builder. May I know who I'm speaking with?"
 
         if response is None:
             return None
@@ -613,7 +581,7 @@ class ConversationEngine:
         """Process an incoming caller utterance and advance conversation state."""
         cleaned_msg = user_message.strip()
 
-        # Outbound identity must be verified before any course, RAG, email, or action flow.
+        # Outbound identity must be verified before any RAG or external-action flow.
         identity_result = await self._handle_outbound_identity_gate(state, cleaned_msg)
         if identity_result is not None:
             return identity_result
@@ -700,7 +668,7 @@ class ConversationEngine:
             and state.current_domain == DomainType.UNKNOWN
             and is_ambiguous_purpose(cleaned_msg)
         ):
-            clarify_resp = "Sure. Are you calling about our software and AI solutions, or our education services?"
+            clarify_resp = "Of course. Are you calling about a property, pricing, or arranging a site visit?"
             decision = ConversationalDecision(
                 detected_domain=DomainType.UNKNOWN,
                 detected_intent="purpose_discovery",
@@ -735,14 +703,18 @@ class ConversationEngine:
                     )
                     state.lock_domain(corrected_domain)
             else:
-                # Initial routing: check deterministic classifier
-                pre_domain = classify_inbound_domain(cleaned_msg)
-                if pre_domain in (DomainType.VAYVORA, DomainType.EDUSAAS):
-                    state.lock_domain(pre_domain)
-                    logger.info("Inbound domain resolved and locked to %s", pre_domain.value)
+                # Initial routing: lock directly to Infra Builder
+                state.lock_domain(DomainType.INFRA_BUILDER)
+                logger.info("Inbound domain resolved and locked to %s", DomainType.INFRA_BUILDER.value)
 
         # 6. Retrieve active domain configuration
         domain_config = self.registry.get_or_raise(state.current_domain)
+
+        # Infra Builder uses the authorized WhatsApp flow, not the retired course-email workflow.
+        if state.current_domain == DomainType.INFRA_BUILDER and state.pending_action == "send_email":
+            state.set_pending_action(None)
+            state.update_slot("email_confirmation_pending", None)
+            state.update_slot("email_confirmed", False)
 
         # 7. Synthesize prompts
         t_prompt = time.perf_counter()
@@ -784,21 +756,15 @@ class ConversationEngine:
                     )
                     decision.detected_domain = state.current_domain
             else:
-                # Domain was not locked. If LLM detected a valid business domain, lock it now.
-                if decision.detected_domain in (DomainType.VAYVORA, DomainType.EDUSAAS):
-                    state.lock_domain(decision.detected_domain)
-                    logger.info("Inbound domain resolved from LLM decision and locked to %s", decision.detected_domain.value)
-                else:
-                    # Still unknown
-                    decision.detected_domain = DomainType.UNKNOWN
-                    if decision.user_facing_response in ("Hi, how can I help you today?", None, ""):
-                        decision.user_facing_response = "Sure. Are you calling about our software and AI solutions, or our education services?"
-                        decision.needs_clarification = True
-                        decision.clarification_question = decision.user_facing_response
+                # Domain was not locked. Lock to Infra Builder.
+                state.lock_domain(DomainType.INFRA_BUILDER)
+                decision.detected_domain = DomainType.INFRA_BUILDER
+                if decision.user_facing_response in ("Hi, how can I help you today?", None, ""):
+                    decision.user_facing_response = "Hello! Welcome to Infra Builder. How can I assist you with your property search today?"
         else:
-            # Outbound calls: update domain if caller or LLM explicitly pivoted
-            if decision.detected_domain in (DomainType.VAYVORA, DomainType.EDUSAAS):
-                state.current_domain = decision.detected_domain
+            # Outbound calls: ensure active domain is Infra Builder
+            state.current_domain = DomainType.INFRA_BUILDER
+            decision.detected_domain = DomainType.INFRA_BUILDER
 
         # Capture pending question/action prior to intent preemption
         prior_pending_question = state.pending_question
@@ -824,7 +790,7 @@ class ConversationEngine:
         # Check for email extraction, explicit email correction, or unclear email attempts
         explicit_email_corr = detect_explicit_email_correction(cleaned_msg)
         extracted_email = extract_email_address(cleaned_msg)
-        email_confirmation_pending = state.get_slot("email_confirmation_pending")
+        email_confirmation_pending = (state.get_slot("email_confirmation_pending") if state.current_domain != DomainType.INFRA_BUILDER else None)
 
         # Deterministically handle a spoken correction BEFORE LLM intent handling can
         # overwrite the pending email state. This is critical for turns such as
@@ -898,62 +864,138 @@ class ConversationEngine:
             decision.extracted_slots["caller_name"] = extracted_spoken_name
             logger.info("Updated caller name from caller utterance: %s", extracted_spoken_name)
 
+        is_whatsapp_context = bool(
+            (prior_pending_action == "send_message" or state.pending_action == "send_message")
+            or (last_agent_text and "whatsapp" in last_agent_text.lower())
+            or (prior_pending_question and "whatsapp" in prior_pending_question.lower())
+            or (state.pending_question and "whatsapp" in state.pending_question.lower())
+        )
         is_asking_for_email_address = bool(
-            not is_confirming_email
+            state.current_domain != DomainType.INFRA_BUILDER
+            and not is_confirming_email
+            and not is_whatsapp_context
             and (
-                (prior_pending_question and any(w in prior_pending_question.lower() for w in ["email address", "what email", "share your email", "send the details to", "send the course details to", "send them to"]))
-                or (state.pending_question and any(w in state.pending_question.lower() for w in ["email address", "what email", "share your email", "send the details to", "send the course details to", "send them to"]))
-                or (last_agent_text and any(w in last_agent_text.lower() for w in ["email address", "what email", "share your email", "send the details to", "send the course details to", "send them to"]))
+                (prior_pending_question and any(w in prior_pending_question.lower() for w in ["email address", "what email", "share your email"]))
+                or (state.pending_question and any(w in state.pending_question.lower() for w in ["email address", "what email", "share your email"]))
+                or (last_agent_text and any(w in last_agent_text.lower() for w in ["email address", "what email", "share your email"]))
             )
         )
         is_asking_for_topic = bool(
             (prior_pending_question and any(w in prior_pending_question.lower() for w in ["what information", "what would you like me to send", "which course"]))
             or (state.pending_question and any(w in state.pending_question.lower() for w in ["what information", "what would you like me to send", "which course"]))
         )
-        is_email_context = is_asking_for_email_address or (
+        is_email_context = state.current_domain != DomainType.INFRA_BUILDER and not is_whatsapp_context and (is_asking_for_email_address or (
             (prior_pending_action == "send_email" or state.pending_action == "send_email") and not is_asking_for_topic
-        )
+        ))
 
-        # Handle accepting an email offer from the agent
-        is_accepting_email_offer = bool(
-            not is_confirming_email
-            and not extracted_email
-            and not explicit_email_corr
-            and not state.get_slot("email_confirmation_pending")
-            and last_agent_text
-            and any(w in last_agent_text.lower() for w in ["send", "email"])
-            and any(w in last_agent_text.lower() for w in ["would you like", "should i send", "to your email", "by email", "course details", "registration link", "registration information"])
-            and self._normalize_confirmation_text(cleaned_msg) in {"yes", "yeah", "yep", "sure", "ok", "okay", "certainly", "please", "yes please", "send it", "send them", "send details", "send me"}
+        # A clear refusal to a pending WhatsApp-permission question cancels only that message.
+        last_agent_lower = (last_agent_text or "").lower()
+        permission_question_pending = bool(
+            state.pending_action == "send_message"
+            and any(term in last_agent_lower for term in ("would you like", "may i send", "shall i send", "do you want me to send"))
+            and "whatsapp" in last_agent_lower
         )
-        if is_accepting_email_offer:
-            target_topic = state.get_slot("target_course")
-            if target_topic:
-                ask_email_resp = f"Sure. What email address should I send the {target_topic} details to?"
-            elif state.current_domain == DomainType.EDUSAAS or any(w in last_agent_text.lower() for w in ["course", "registration"]):
-                ask_email_resp = "Sure. What email address should I send the course details to?"
-            else:
-                ask_email_resp = "Sure. What email address should I send the details to?"
-            state.set_pending_action("send_email")
-            state.set_pending_question(ask_email_resp)
-            state.record_turn(TurnRole.CALLER, cleaned_msg)
-            state.record_turn(TurnRole.AGENT, ask_email_resp)
-            synthetic_decision = ConversationalDecision(
+        normalized_reply = self._normalize_confirmation_text(cleaned_msg)
+        if permission_question_pending and normalized_reply in {
+            "no", "nope", "no thanks", "no thank you", "not now", "don't", "dont", "please don't",
+            "please dont", "do not send it", "don't send it", "dont send it",
+        }:
+            state.update_slot("whatsapp_consent", False, sync_caller=True)
+            state.set_pending_action(None)
+            state.set_pending_question(None)
+            refusal_response = "No problem. I won't send anything on WhatsApp."
+            refusal_decision = ConversationalDecision(
                 detected_domain=state.current_domain,
-                detected_intent="request_brochure",
-                proposed_stage=ConversationStage.ACTION_CONFIRMATION,
-                user_facing_response=ask_email_resp,
+                detected_intent="whatsapp_refusal",
+                proposed_stage=ConversationStage.INFORMATION,
+                user_facing_response=refusal_response,
                 action_proposed=False,
                 proposed_action=None,
+                knowledge_required=False,
             )
+            state.record_turn(TurnRole.CALLER, cleaned_msg, intent="whatsapp_refusal")
+            state.record_turn(TurnRole.AGENT, refusal_response)
             return EngineTurnResult(
-                response_text=ask_email_resp,
-                decision=synthetic_decision,
+                response_text=refusal_response,
+                decision=refusal_decision,
                 conversation_active=True,
                 termination_occurred=False,
             )
 
+        # Handle accepting a WhatsApp or information offer from the agent
+        is_accepting_whatsapp_offer = bool(
+            not is_confirming_email
+            and last_agent_text
+            and any(w in last_agent_text.lower() for w in ["whatsapp", "brochure", "details", "information", "send"])
+            and any(w in last_agent_text.lower() for w in ["would you like", "should i send", "to your whatsapp", "on whatsapp", "by whatsapp"])
+            and self._normalize_confirmation_text(cleaned_msg) in {"yes", "yeah", "yep", "sure", "ok", "okay", "certainly", "please", "yes please", "send it", "send them", "send details", "send me"}
+        )
+        if is_accepting_whatsapp_offer:
+            state.update_slot("whatsapp_consent", True)
+            target_proj = state.get_slot("preferred_project")
+            if state.caller.phone:
+                v_ph, norm_ph, _ = validate_phone_number(state.caller.phone)
+                if v_ph:
+                    ask_resp = f"Sure! I will send the {target_proj or 'project'} brochure and details to your WhatsApp at {norm_ph}."
+                    state.set_pending_action("send_message")
+                    state.record_turn(TurnRole.CALLER, cleaned_msg)
+                    state.record_turn(TurnRole.AGENT, ask_resp)
+                    synthetic_decision = ConversationalDecision(
+                        detected_domain=state.current_domain,
+                        detected_intent="request_brochure",
+                        proposed_stage=ConversationStage.ACTION_CONFIRMATION,
+                        user_facing_response=ask_resp,
+                        action_proposed=True,
+                        proposed_action=ProposedAction(
+                            tool_name="send_message",
+                            arguments={"recipient": norm_ph, "project_name": target_proj, "consent_confirmed": True},
+                            confidence=1.0,
+                        ),
+                    )
+                    decision = synthetic_decision
+                else:
+                    ask_resp = f"Sure. What WhatsApp phone number should I send the {target_proj or 'project'} details to?"
+                    state.set_pending_action("send_message")
+                    state.set_pending_question(ask_resp)
+                    state.record_turn(TurnRole.CALLER, cleaned_msg)
+                    state.record_turn(TurnRole.AGENT, ask_resp)
+                    synthetic_decision = ConversationalDecision(
+                        detected_domain=state.current_domain,
+                        detected_intent="request_brochure",
+                        proposed_stage=ConversationStage.ACTION_CONFIRMATION,
+                        user_facing_response=ask_resp,
+                        action_proposed=False,
+                        proposed_action=None,
+                    )
+                    return EngineTurnResult(
+                        response_text=ask_resp,
+                        decision=synthetic_decision,
+                        conversation_active=True,
+                        termination_occurred=False,
+                    )
+            else:
+                ask_resp = f"Sure. What WhatsApp phone number should I send the {target_proj or 'project'} details to?"
+                state.set_pending_action("send_message")
+                state.set_pending_question(ask_resp)
+                state.record_turn(TurnRole.CALLER, cleaned_msg)
+                state.record_turn(TurnRole.AGENT, ask_resp)
+                synthetic_decision = ConversationalDecision(
+                    detected_domain=state.current_domain,
+                    detected_intent="request_brochure",
+                    proposed_stage=ConversationStage.ACTION_CONFIRMATION,
+                    user_facing_response=ask_resp,
+                    action_proposed=False,
+                    proposed_action=None,
+                )
+                return EngineTurnResult(
+                    response_text=ask_resp,
+                    decision=synthetic_decision,
+                    conversation_active=True,
+                    termination_occurred=False,
+                )
+
         # Handle unclear or invalid email attempt
-        if (is_asking_for_email_address or is_unclear_or_invalid_email_attempt(cleaned_msg)) and not extracted_email and not explicit_email_corr:
+        if state.current_domain != DomainType.INFRA_BUILDER and not is_whatsapp_context and (is_asking_for_email_address or is_unclear_or_invalid_email_attempt(cleaned_msg)) and not extracted_email and not explicit_email_corr:
             if is_unclear_or_invalid_email_attempt(cleaned_msg) or (
                 is_asking_for_email_address
                 and not any(w in cleaned_msg.lower() for w in ["cancel", "no", "never mind", "stop", "don't", "dont", "what", "why", "how"])
@@ -987,6 +1029,78 @@ class ConversationEngine:
             state.update_slot("email", extracted_email, sync_caller=True)
             state.caller.email = extracted_email
 
+        # Extract spoken phone number for WhatsApp
+        digits_match = re.search(r"\b(?:\+?91[\-\s]?)?\d{5,12}\b", cleaned_msg)
+        if digits_match:
+            candidate_raw = digits_match.group(0)
+            v_ph, n_ph, phone_err = validate_phone_number(candidate_raw)
+            if v_ph:
+                state.caller.phone = n_ph
+                state.update_slot("phone", n_ph, sync_caller=True)
+                state.update_slot("whatsapp_number", n_ph)
+                # A phone number is destination data, not consent to message it.
+                if (
+                    (state.pending_action == "send_message" or prior_pending_action == "send_message")
+                    and not any(
+                        phrase in cleaned_msg.lower()
+                        for phrase in (
+                            "don't send whatsapp", "dont send whatsapp", "do not send whatsapp",
+                            "no whatsapp", "i don't use whatsapp", "i dont use whatsapp",
+                            "do not message", "don't message", "dont message",
+                            "opt out", "stop messaging", "unsubscribe", "no messages",
+                        )
+                    )
+                ):
+                    if state.get_slot("whatsapp_consent") is True:
+                        target_proj = state.get_slot("preferred_project")
+                        decision.action_proposed = True
+                        decision.proposed_action = ProposedAction(
+                            tool_name="send_message",
+                            arguments={"recipient": n_ph, "project_name": target_proj, "consent_confirmed": True},
+                            confidence=1.0,
+                        )
+                    else:
+                        permission_question = f"Thanks. May I send the requested property information to your WhatsApp at {n_ph}?"
+                        state.set_pending_action("send_message")
+                        state.set_pending_question(permission_question)
+                        state.record_turn(TurnRole.CALLER, cleaned_msg)
+                        state.record_turn(TurnRole.AGENT, permission_question)
+                        permission_decision = ConversationalDecision(
+                            detected_domain=state.current_domain,
+                            detected_intent="whatsapp_consent",
+                            proposed_stage=ConversationStage.ACTION_CONFIRMATION,
+                            user_facing_response=permission_question,
+                            action_proposed=False,
+                            proposed_action=None,
+                            knowledge_required=False,
+                        )
+                        return EngineTurnResult(
+                            response_text=permission_question,
+                            decision=permission_decision,
+                            conversation_active=True,
+                            termination_occurred=False,
+                        )
+            elif is_whatsapp_context:
+                invalid_phone_resp = f"That phone number appears to be invalid or incomplete ({phone_err}). Could you please share a valid 10-digit WhatsApp number?"
+                state.set_pending_action("send_message")
+                state.set_pending_question("Could you please share a valid 10-digit WhatsApp number?")
+                state.record_turn(TurnRole.CALLER, cleaned_msg)
+                state.record_turn(TurnRole.AGENT, invalid_phone_resp)
+                synthetic_decision = ConversationalDecision(
+                    detected_domain=state.current_domain,
+                    detected_intent="provide_phone",
+                    proposed_stage=ConversationStage.ACTION_CONFIRMATION,
+                    user_facing_response=invalid_phone_resp,
+                    action_proposed=False,
+                    proposed_action=None,
+                )
+                return EngineTurnResult(
+                    response_text=invalid_phone_resp,
+                    decision=synthetic_decision,
+                    conversation_active=True,
+                    termination_occurred=False,
+                )
+
         # 7. Slot Updates
         for slot_key, slot_val in decision.extracted_slots.items():
             state.update_slot(slot_key, slot_val, sync_caller=True)
@@ -1010,123 +1124,201 @@ class ConversationEngine:
         # We record pending_action, but DO NOT claim tool success.
         action_proposed = decision.action_proposed and decision.proposed_action is not None
 
-        # Promote to calendar action if caller is requesting scheduling or answering pending date/time question
-        is_calendar_request = any(w in cleaned_msg.lower() for w in ["schedule", "consultation", "demo", "calendar", "book a slot"])
-        if not action_proposed and (
-            is_calendar_request
-            or prior_pending_action == "create_calendar_event"
-            or state.pending_action == "create_calendar_event"
-            or (
-                prior_pending_question
-                and any(w in prior_pending_question.lower() for w in ["date", "time slot", "time would", "work best", "schedule"])
-            )
-            or (
-                state.pending_question
-                and any(w in state.pending_question.lower() for w in ["date", "time slot", "time would", "work best", "schedule"])
-            )
-        ) and (extracted_pref or state.get_slot("meeting_preference")):
-            slot_to_book = extracted_pref or state.get_slot("meeting_preference")
-            decision.action_proposed = True
-            decision.proposed_action = ProposedAction(
-                tool_name="create_calendar_event",
-                arguments={"slot": slot_to_book, "confirmed": True},
-            )
-            action_proposed = True
+        # If the caller chooses one of the actual returned slots, confirm that exact slot before booking.
+        available_slots_for_selection = state.get_slot("available_slots") or []
+        if prior_pending_action == "create_calendar_event" and available_slots_for_selection:
+            def _slot_key(value: Any) -> str:
+                value = str(value or "").lower().strip()
+                value = re.sub(r"(?<=\d):00(?=\s*(?:am|pm)\b)", "", value)
+                return re.sub(r"[^a-z0-9]", "", value)
 
-        # Promote to email action if caller is requesting brochure/details or answering pending email request
-        target_email = explicit_email_corr or extracted_email
-        is_email_request = any(
-            phrase in cleaned_msg.lower()
-            for phrase in [
-                "course details",
-                "send me the details",
-                "send the details",
-                "send me details",
-                "send details",
-                "email me the details",
-                "email the details",
-                "send me the course details",
-                "send course details",
-                "send the syllabus",
-                "send me the syllabus",
-                "email me the syllabus",
-                "send brochure",
-                "send me the brochure",
-                "email me the brochure",
-                "email me",
-                "mail me",
-                "send me an email",
-                "send an email",
-            ]
-        )
-
-        if state.current_domain == DomainType.EDUSAAS:
-            from src.domains.edusaas.email import (
-                is_explicit_email_request,
-                is_vague_email_request,
-                detect_requested_topic,
+            caller_slot_key = _slot_key(cleaned_msg)
+            selected_slot = next(
+                (
+                    str(candidate)
+                    for candidate in available_slots_for_selection
+                    if _slot_key(candidate)
+                    and (
+                        _slot_key(candidate) in caller_slot_key
+                        or caller_slot_key in _slot_key(candidate)
+                    )
+                    and len(caller_slot_key) >= 3
+                ),
+                None,
             )
-
-            # Check if caller made a vague email request without specifying topic
-            if is_vague_email_request(cleaned_msg, state.history, state.get_slot("target_course")):
-                vague_ask = "Absolutely. What information would you like me to send you?"
-                state.set_pending_action("send_email")
-                state.set_pending_question(vague_ask)
+            if selected_slot:
+                state.update_slot("meeting_preference", selected_slot, sync_caller=True)
+                state.update_slot("visit_confirmation_pending", selected_slot)
+                state.update_slot("visit_confirmed", False)
+                response = f"Would you like me to book the site visit for {selected_slot}?"
+                state.set_pending_action("create_calendar_event")
+                state.set_pending_question(response)
                 state.record_turn(TurnRole.CALLER, cleaned_msg)
-                state.record_turn(TurnRole.AGENT, vague_ask)
-                synthetic_decision = ConversationalDecision(
+                state.record_turn(TurnRole.AGENT, response)
+                slot_decision = ConversationalDecision(
                     detected_domain=state.current_domain,
-                    detected_intent="request_brochure",
+                    detected_intent="site_visit_request",
                     proposed_stage=ConversationStage.ACTION_CONFIRMATION,
-                    user_facing_response=vague_ask,
+                    user_facing_response=response,
                     action_proposed=False,
                     proposed_action=None,
+                    knowledge_required=False,
                 )
                 return EngineTurnResult(
-                    response_text=vague_ask,
-                    decision=synthetic_decision,
+                    response_text=response,
+                    decision=slot_decision,
                     conversation_active=True,
                     termination_occurred=False,
                 )
 
-            # Detect requested topic from caller message (latest request wins)
-            topic_k, topic_name = detect_requested_topic(cleaned_msg, state.history, state.get_slot("target_course"))
-            if topic_name and (
-                ((is_explicit_email_request(cleaned_msg) or is_asking_for_topic) and not decision.extracted_slots.get("target_course"))
-                or (not decision.extracted_slots.get("target_course") and any(w in cleaned_msg.lower() for w in ["ai", "data science", "full stack", "cloud", "cyber", "dsa", "pricing", "admission", "fee", "course"]))
-            ):
-                state.update_slot("target_course", topic_name, sync_caller=True)
-                decision.extracted_slots["target_course"] = topic_name
+        # Promote to calendar action if caller is requesting scheduling or answering pending date/time question
+        is_calendar_request = any(
+            w in cleaned_msg.lower()
+            for w in ["schedule", "consultation", "demo", "calendar", "book a slot", "site visit", "visit", "tour"]
+        )
+        is_explicit_confirmation = self._normalize_confirmation_text(cleaned_msg) in {
+            "yes", "yeah", "yep", "sure", "confirm", "please book", "book it", "that works", "sounds good",
+            "yes please", "correct", "perfect"
+        } or any(cue in cleaned_msg.lower() for cue in ["confirm", "book it", "please book", "that works", "works for me"])
 
-            # Guard: If caller did not explicitly request email and is not answering email address/topic prompt,
-            # DO NOT allow LLM to trigger automatic email sending (TEST 14)
-            if not is_explicit_email_request(cleaned_msg) and not is_asking_for_email_address and not is_asking_for_topic and not explicit_email_corr and not (target_email and is_valid_email(target_email)):
-                if action_proposed and decision.proposed_action and decision.proposed_action.tool_name == "send_email":
-                    decision.action_proposed = False
-                    decision.proposed_action = None
-                    action_proposed = False
-                    decision.knowledge_required = True
-
-            is_email_act = is_explicit_email_request(cleaned_msg) or is_asking_for_email_address or is_asking_for_topic or bool(target_email and is_valid_email(target_email))
-        else:
-            is_email_act = is_email_context or is_email_request or bool(target_email and is_valid_email(target_email))
-
-        if not action_proposed and is_email_act:
-            subj = (
-                "Course Details & Curriculum"
-                if (state.current_domain == DomainType.EDUSAAS or "course" in cleaned_msg.lower())
-                else "Detailed Information & Overview"
+        if not action_proposed and (
+            is_calendar_request
+            or prior_pending_action in ("create_calendar_event", "find_available_slots")
+            or state.pending_action in ("create_calendar_event", "find_available_slots")
+            or (
+                prior_pending_question
+                and any(w in prior_pending_question.lower() for w in ["date", "time slot", "time would", "work best", "schedule", "site visit"])
             )
-            email_args: Dict[str, Any] = {"subject": subj}
-            if target_email and is_valid_email(target_email):
-                email_args["recipient"] = target_email
+            or (
+                state.pending_question
+                and any(w in state.pending_question.lower() for w in ["date", "time slot", "time would", "work best", "schedule", "site visit"])
+            )
+        ) and (extracted_pref or state.get_slot("meeting_preference")):
+            slot_to_book = extracted_pref or state.get_slot("meeting_preference")
+            proj_name = state.get_slot("preferred_project") or (decision.proposed_action.arguments.get("property_name") if decision.proposed_action else None)
+            # Invariant: confirmed is set to True ONLY if caller explicitly confirmed
+            if is_explicit_confirmation:
+                if prior_pending_action == "create_calendar_event":
+                    offered_slot = state.get_slot("visit_confirmation_pending")
+                    if offered_slot:
+                        slot_to_book = offered_slot
+                    state.update_slot("visit_confirmed", True)
+                decision.action_proposed = True
+                decision.proposed_action = ProposedAction(
+                    tool_name="create_calendar_event",
+                    arguments={"slot": slot_to_book, "property_name": proj_name, "confirmed": True},
+                )
+                action_proposed = True
+            else:
+                decision.action_proposed = True
+                decision.proposed_action = ProposedAction(
+                    tool_name="find_available_slots",
+                    arguments={"preferred_date": slot_to_book, "property_name": proj_name},
+                )
+                action_proposed = True
+
+        # Project identity must come from caller-stated/extracted data or trusted state.
+        # Do not infer a specific project from generic words such as "villa" or a location alone.
+
+        # WhatsApp sharing flow: asking for permission is a conversational step;
+        # the execution guard below independently enforces consent.
+        msg_lower = cleaned_msg.lower()
+        is_whatsapp_request = any(
+            phrase in msg_lower
+            for phrase in (
+                "whatsapp", "send brochure", "send me the brochure", "send details",
+                "send me details", "send the details", "send pricing", "send me pricing",
+                "share brochure", "share details", "send it on whatsapp", "share on whatsapp",
+            )
+        )
+        is_whatsapp_opt_out = any(
+            phrase in msg_lower
+            for phrase in (
+                "don't send whatsapp", "dont send whatsapp", "do not send whatsapp",
+                "no whatsapp", "i don't use whatsapp", "i dont use whatsapp",
+                "do not message", "don't message", "dont message", "opt out",
+                "stop messaging", "unsubscribe", "no messages",
+            )
+        )
+
+        if is_whatsapp_opt_out:
+            state.update_slot("whatsapp_consent", False, sync_caller=True)
+            decision.extracted_slots["whatsapp_consent"] = False
+            if action_proposed and decision.proposed_action and decision.proposed_action.tool_name == "send_message":
+                decision.action_proposed = False
+                decision.proposed_action = None
+                action_proposed = False
+            state.set_pending_action(None)
+            state.set_pending_question(None)
+
+        caller_phone = state.caller.phone or state.get_slot("phone") or state.get_slot("whatsapp_number")
+        if not caller_phone and is_whatsapp_request:
+            # If the caller included a number in the same request, retain it without treating it as consent.
+            phone_match = re.search(r"\b(?:\+?91[\-\s]?)?[6-9]\d{9}\b", cleaned_msg)
+            if phone_match:
+                valid, normalized, _ = validate_phone_number(phone_match.group(0))
+                if valid:
+                    caller_phone = normalized
+                    state.caller.phone = normalized
+                    state.update_slot("phone", normalized, sync_caller=True)
+                    state.update_slot("whatsapp_number", normalized)
+
+        if is_whatsapp_request and not is_whatsapp_opt_out:
+            consent = state.get_slot("whatsapp_consent")
+            if consent is not True:
+                number_suffix = f" at {caller_phone}" if caller_phone else ""
+                auth_question = f"Would you like me to send the requested property information to your WhatsApp{number_suffix}?"
+                state.set_pending_action("send_message")
+                state.set_pending_question(auth_question)
+                state.record_turn(TurnRole.CALLER, cleaned_msg)
+                state.record_turn(TurnRole.AGENT, auth_question)
+                consent_decision = ConversationalDecision(
+                    detected_domain=state.current_domain,
+                    detected_intent="whatsapp_consent",
+                    proposed_stage=ConversationStage.ACTION_CONFIRMATION,
+                    user_facing_response=auth_question,
+                    action_proposed=False,
+                    proposed_action=None,
+                    knowledge_required=False,
+                )
+                return EngineTurnResult(
+                    response_text=auth_question,
+                    decision=consent_decision,
+                    conversation_active=True,
+                    termination_occurred=False,
+                )
+            if not caller_phone:
+                ask_phone = "Which WhatsApp number should I send the requested property information to?"
+                state.set_pending_action("send_message")
+                state.set_pending_question(ask_phone)
+                state.record_turn(TurnRole.CALLER, cleaned_msg)
+                state.record_turn(TurnRole.AGENT, ask_phone)
+                ask_phone_decision = ConversationalDecision(
+                    detected_domain=state.current_domain,
+                    detected_intent="whatsapp_information_request",
+                    proposed_stage=ConversationStage.ACTION_CONFIRMATION,
+                    user_facing_response=ask_phone,
+                    action_proposed=False,
+                    proposed_action=None,
+                    knowledge_required=False,
+                )
+                return EngineTurnResult(
+                    response_text=ask_phone,
+                    decision=ask_phone_decision,
+                    conversation_active=True,
+                    termination_occurred=False,
+                )
             decision.action_proposed = True
             decision.proposed_action = ProposedAction(
-                tool_name="send_email",
-                arguments=email_args,
+                tool_name="send_message",
+                arguments={
+                    "recipient": str(caller_phone),
+                    "project_name": state.get_slot("preferred_project"),
+                    "consent_confirmed": True,
+                },
+                confidence=1.0,
             )
             action_proposed = True
-
 
         if action_proposed and decision.proposed_action:
             state.set_pending_action(decision.proposed_action.tool_name)
@@ -1148,7 +1340,7 @@ class ConversationEngine:
             action_proposed = True
 
         # Email safety gate: never send until the recipient has been explicitly confirmed.
-        if action_proposed and decision.proposed_action and decision.proposed_action.tool_name == "send_email":
+        if state.current_domain != DomainType.INFRA_BUILDER and action_proposed and decision.proposed_action and decision.proposed_action.tool_name == "send_email":
             candidate_email = (
                 explicit_email_corr
                 or extracted_email
@@ -1265,6 +1457,16 @@ class ConversationEngine:
             decision.knowledge_required = False
             decision.knowledge_query = None
 
+        if decision.knowledge_required and not self.knowledge_provider:
+            logger.warning("Knowledge was required but no knowledge provider is configured.")
+            final_response_text = (
+                "I don't have verified property details available right now. "
+                "I can help arrange a follow-up or assist with another question."
+            )
+            decision.user_facing_response = final_response_text
+            decision.knowledge_required = False
+            decision.knowledge_query = None
+
         if decision.knowledge_required and self.knowledge_provider:
             t_rag = time.perf_counter()
             if tracker:
@@ -1353,11 +1555,23 @@ class ConversationEngine:
 
         # 11. Handle External Action Execution & Verification (Phase 5)
         tool_exec_result: Optional[ToolExecutionResult] = None
+        if action_proposed and decision.proposed_action and not self.tool_provider:
+            action_name = decision.proposed_action.tool_name
+            action_proposed = False
+            decision.action_proposed = False
+            decision.proposed_action = None
+            state.set_pending_action(None)
+            final_response_text = (
+                "I can't complete that request automatically right now because the required service is unavailable. "
+                "I can still answer questions or help you with the next step."
+            )
+            decision.user_facing_response = final_response_text
+            logger.warning("Action %s was not executed: no tool provider configured", action_name)
         if action_proposed and decision.proposed_action and self.tool_provider:
             tool_name = decision.proposed_action.tool_name
             tool_args = dict(decision.proposed_action.arguments)
 
-            # Prohibited placeholders and sender emails that must never be used as recipient
+            # Prohibited placeholders and sender addresses that must never be used as recipient
             prohibited_vals = {
                 "default caller",
                 "caller@mail",
@@ -1366,158 +1580,256 @@ class ConversationEngine:
                 "jane doe",
                 "default@example.com",
                 "fallback@example.com",
-                "noreply@vayvora.com",
-                "noreply@edusaas.com",
-                "info@vayvora.com",
-                "info@edusaas.com",
-                "admin@vayvora.com",
-                "admin@edusaas.com",
+                "noreply@infrabuilder.com",
+                "info@infrabuilder.com",
+                "admin@infrabuilder.com",
+                "0000000000",
+                "9999999999",
+                "1234567890",
+                "9876543210",
                 "none",
                 "null",
                 "empty",
             }
-            if self.settings and self.settings.smtp_from_email:
-                prohibited_vals.add(self.settings.smtp_from_email.lower().strip())
 
             # Strip any hallucinated placeholders from tool arguments
-            for arg_k in ["caller_name", "candidate_name", "name", "recipient", "email", "caller_email"]:
+            for arg_k in ["caller_name", "candidate_name", "name", "recipient", "phone", "email", "caller_email"]:
                 if arg_k in tool_args and str(tool_args[arg_k]).strip().lower() in prohibited_vals:
                     tool_args.pop(arg_k, None)
 
             # Auto-populate caller profile details into arguments if absent
             if "caller_name" not in tool_args and state.caller.name and state.caller.name.strip().lower() not in prohibited_vals:
                 tool_args["caller_name"] = state.caller.name
-            if "caller_email" not in tool_args and state.caller.email and state.caller.email.strip().lower() not in prohibited_vals:
-                tool_args["caller_email"] = state.caller.email
-            if "email" not in tool_args and state.caller.email and state.caller.email.strip().lower() not in prohibited_vals:
-                tool_args["email"] = state.caller.email
-            if "recipient" not in tool_args and state.get_slot("email_confirmed") and state.caller.email and state.caller.email.strip().lower() not in prohibited_vals:
-                tool_args["recipient"] = state.caller.email
             if "caller_phone" not in tool_args and state.caller.phone and state.caller.phone.strip().lower() not in prohibited_vals:
                 tool_args["caller_phone"] = state.caller.phone
             if "domain" not in tool_args:
                 tool_args["domain"] = state.current_domain.value
 
-            # Guard 1: Deterministic Email Safety Guard
-            recipient = (tool_args.get("recipient") or tool_args.get("email") or (state.caller.email if state.get_slot("email_confirmed") else "") or "").strip()
-            if recipient.lower() in prohibited_vals:
-                recipient = ""
+            execute_action = True
 
-            recipient_valid = is_valid_email(recipient)
-            recipient_authorized = True
-
-            # Verify recipient authenticity (must be in profile, session state, or caller transcripts)
-            allowed_recipients = set()
-            if state.caller.email and is_valid_email(state.caller.email):
-                allowed_recipients.add(state.caller.email.strip().lower())
-            if getattr(state, "contact_email", None) and is_valid_email(state.contact_email):
-                allowed_recipients.add(state.contact_email.strip().lower())
-            for t in state.history:
-                if t.role == TurnRole.CALLER:
-                    t_email = extract_email_address(t.content)
-                    if t_email and is_valid_email(t_email):
-                        allowed_recipients.add(t_email.strip().lower())
-            if cleaned_msg:
-                m_email = extract_email_address(cleaned_msg)
-                if m_email and is_valid_email(m_email):
-                    allowed_recipients.add(m_email.strip().lower())
-            if explicit_email_corr and is_valid_email(explicit_email_corr):
-                allowed_recipients.add(explicit_email_corr.strip().lower())
-
-            if not recipient or recipient.lower() not in allowed_recipients:
-                recipient_authorized = False
-
-            if tool_name == "send_email" and (not recipient or not recipient_valid or not recipient_authorized):
-                # Recipient is missing, invalid, or unauthorized fallback!
-                # BLOCK send_email tool execution deterministically.
-                tool_args.pop("recipient", None)
-                tool_args.pop("email", None)
-                if state.current_domain == DomainType.EDUSAAS or any(w in cleaned_msg.lower() for w in ["course", "syllabus", "curriculum", "program", "data science", "ai"]):
-                    final_response_text = "Sure. What email address should I send the course details to?"
-                elif state.metadata.direction == CallDirection.OUTBOUND:
-                    final_response_text = "Sure. What email address should I send the details to?"
-                else:
-                    final_response_text = "Sure. What email address should I send them to? Could you please share your email address?"
-                decision.user_facing_response = final_response_text
-                state.set_pending_action("send_email")
-                state.set_pending_question("Could you please share your email address?")
-            # Guard 2: HR Followup / Candidate Safety - missing candidate name
-            elif tool_name == "create_hr_followup" and not (
-                tool_args.get("candidate_name") or tool_args.get("name") or state.caller.name
-            ):
-                final_response_text = "And may I have your name?"
-                decision.user_facing_response = final_response_text
-                state.set_pending_question("And may I have your name?")
-            # Guard 3: Calendar Safety - missing confirmed slot
-            elif tool_name == "create_calendar_event" and not (
-                tool_args.get("slot")
-                or tool_args.get("start_time")
-                or tool_args.get("time")
-                or state.get_slot("meeting_preference")
-            ):
+            allowed_tool_names = {
+                "find_available_slots",
+                "create_calendar_event",
+                "update_lead",
+                "send_message",
+                "update_business_status",
+            }
+            if state.current_domain == DomainType.INFRA_BUILDER and tool_name not in allowed_tool_names:
+                execute_action = False
+                action_proposed = False
+                decision.action_proposed = False
+                decision.proposed_action = None
+                state.set_pending_action(None)
                 final_response_text = (
-                    "I can certainly schedule that consultation. "
-                    "Which date or time slot would work best for you?"
+                    "I can't perform that action in this property-assistance workflow. "
+                    "I can help with verified property information or a site visit."
                 )
                 decision.user_facing_response = final_response_text
-                state.set_pending_question(
-                    "Which date or time slot would work best for you?"
+
+            # Action 1: send_message (WhatsApp)
+            if tool_name == "send_message":
+                recipient = (
+                    tool_args.get("recipient")
+                    or tool_args.get("phone")
+                    or state.caller.phone
+                    or state.get_slot("phone")
+                    or state.get_slot("whatsapp_number")
+                    or ""
                 )
-            else:
-                if tool_name == "send_email":
-                    tool_args["recipient"] = recipient
-                    tool_args["email"] = recipient
-                    if state.current_domain == DomainType.EDUSAAS:
-                        # RAG retrieval for EduSaaS email
-                        edusaas_rag_context = ""
-                        topic_title = state.get_slot("target_course")
+                if str(recipient).strip().lower() in prohibited_vals:
+                    recipient = ""
+
+                if not recipient:
+                    phone_match = re.search(r"\b(?:\+?91[\-\s]?)?[6-9]\d{9}\b", cleaned_msg)
+                    if phone_match:
+                        recipient = phone_match.group(0)
+
+                valid_phone, norm_phone, phone_err = validate_phone_number(str(recipient)) if recipient else (False, "", "Missing phone")
+
+                # Check opt-out
+                opt_out = any(phrase in cleaned_msg.lower() for phrase in ["no whatsapp", "don't message", "dont message", "stop messaging", "opt out", "unsubscribe", "no message"])
+                if opt_out:
+                    execute_action = False
+                    tool_args.pop("recipient", None)
+                    final_response_text = "Understood. I will not send any WhatsApp messages to your number."
+                    decision.user_facing_response = final_response_text
+                    state.set_pending_action(None)
+                    state.set_pending_question(None)
+                elif not valid_phone:
+                    execute_action = False
+                    tool_args.pop("recipient", None)
+                    final_response_text = "Sure, I can share the project brochure and details. What is your WhatsApp number?"
+                    decision.user_facing_response = final_response_text
+                    state.set_pending_action("send_message")
+                    state.set_pending_question("What is your WhatsApp number?")
+                else:
+                    # Check consent
+                    # Only trusted session state set by the explicit consent handler authorizes sending.
+                    # Tool arguments and keyword matches are not proof of consent.
+                    consent_confirmed = state.get_slot("whatsapp_consent") is True
+                    if not consent_confirmed:
+                        execute_action = False
+                        final_response_text = "Would you like me to send the project brochure and pricing to your WhatsApp?"
+                        decision.user_facing_response = final_response_text
+                        state.set_pending_action("send_message")
+                        state.set_pending_question("Would you like me to send the project brochure and pricing to your WhatsApp?")
+                    else:
+                        tool_args["recipient"] = norm_phone
+                        tool_args["consent_confirmed"] = True
+
+                        proj_name = tool_args.get("project_name") or state.get_slot("preferred_project")
+
+                        rag_ctx = ""
                         if self.knowledge_provider:
                             try:
                                 rag_query = RAGQuery(
-                                    domain=DomainType.EDUSAAS,
-                                    query_text=topic_title or cleaned_msg,
+                                    domain=DomainType.INFRA_BUILDER,
+                                    query_text=proj_name or cleaned_msg,
                                     top_k=self.settings.rag_top_k if self.settings else 3,
-                                    relevance_threshold=self.settings.rag_relevance_threshold if self.settings else 0.5,
+                                    relevance_threshold=self.settings.rag_relevance_threshold if self.settings else 0.4,
                                 )
                                 if hasattr(self.knowledge_provider, "retrieve_grounded_context"):
                                     rag_res = await self.knowledge_provider.retrieve_grounded_context(rag_query)
                                     if rag_res and rag_res.formatted_context:
-                                        edusaas_rag_context = rag_res.formatted_context
+                                        rag_ctx = rag_res.formatted_context
                                 else:
                                     chunks = await self.knowledge_provider.search(rag_query)
                                     if chunks:
-                                        edusaas_rag_context = "\n".join(c.content for c in chunks)
+                                        rag_ctx = "\n".join(c.content for c in chunks)
                             except Exception as err:
-                                logger.warning("RAG retrieval for EduSaaS email failed: %s", err)
+                                logger.warning("RAG retrieval for WhatsApp message failed: %s", err)
 
-                        from src.domains.edusaas.email import generate_edusaas_email
-                        edusaas_email = generate_edusaas_email(
-                            direction=state.metadata.direction,
-                            contact_name=state.caller.name or state.contact_name,
-                            agent_name=state.agent_name or (self.settings.agent_name if self.settings else None),
-                            topic_requested=topic_title,
-                            rag_context=edusaas_rag_context,
-                            conversation_history=state.history,
-                            campaign_context=getattr(state, "campaign_context", None) if state.metadata.direction == CallDirection.OUTBOUND else None,
-                            recipient=recipient,
-                            caller_message=cleaned_msg,
+                        if not rag_ctx.strip():
+                            execute_action = False
+                            final_response_text = (
+                                "I couldn't retrieve verified property information, so I haven't sent a WhatsApp message. "
+                                "Would you like me to try again or arrange a team follow-up?"
+                            )
+                            decision.user_facing_response = final_response_text
+                            state.set_pending_action(None)
+                            state.set_pending_question(None)
+                        else:
+                            tool_args["project_name"] = proj_name or "Infra Builder"
+                            tool_args["message"] = generate_infra_builder_whatsapp_message(
+                                project_name=proj_name,
+                                rag_context=rag_ctx,
+                                caller_name=state.caller.name,
+                            )
+
+            # Action 2: find_available_slots
+            elif tool_name == "find_available_slots":
+                prop_name = (
+                    tool_args.get("property_name")
+                    or tool_args.get("project_name")
+                    or state.get_slot("preferred_project")
+                )
+                pref_date = tool_args.get("preferred_date") or tool_args.get("date") or state.get_slot("meeting_preference")
+                if not prop_name or not pref_date:
+                    execute_action = False
+                    missing = "which property or project" if not prop_name else "which date you prefer"
+                    final_response_text = f"I can check actual site-visit availability. Could you tell me {missing}?"
+                    decision.user_facing_response = final_response_text
+                    state.set_pending_action("find_available_slots")
+                    state.set_pending_question(final_response_text)
+                else:
+                    tool_args["property_name"] = prop_name
+                    tool_args["preferred_date"] = pref_date
+
+            # Action 3: create_calendar_event
+            elif tool_name == "create_calendar_event":
+                slot = (
+                    tool_args.get("slot")
+                    or tool_args.get("start_time")
+                    or tool_args.get("time")
+                    or state.get_slot("meeting_preference")
+                )
+                is_confirmed = (
+                    tool_args.get("confirmed") is True
+                    and state.get_slot("visit_confirmation_pending") == slot
+                    and is_explicit_confirmation
+                )
+                available_slots = state.get_slot("available_slots") or []
+                slot_is_available = any(
+                    str(candidate).strip().casefold() == str(slot).strip().casefold()
+                    for candidate in available_slots
+                ) if slot else False
+                if not slot:
+                    execute_action = False
+                    action_proposed = False
+                    decision.action_proposed = False
+                    decision.proposed_action = None
+                    final_response_text = "I'd be happy to arrange a site visit. Which project and date would you prefer?"
+                    decision.user_facing_response = final_response_text
+                    state.set_pending_action("find_available_slots")
+                    state.set_pending_question(final_response_text)
+                elif not slot_is_available:
+                    # Never create a booking for a slot that was not returned by the availability tool.
+                    property_name = tool_args.get("property_name") or state.get_slot("preferred_project")
+                    if not property_name:
+                        execute_action = False
+                        action_proposed = False
+                        decision.action_proposed = False
+                        decision.proposed_action = None
+                        final_response_text = "Which property or project would you like to visit?"
+                        decision.user_facing_response = final_response_text
+                        state.set_pending_action("find_available_slots")
+                        state.set_pending_question(final_response_text)
+                    else:
+                        tool_name = "find_available_slots"
+                        tool_args = {
+                            "preferred_date": state.get_slot("meeting_preference") or slot,
+                            "property_name": property_name,
+                            "domain": DomainType.INFRA_BUILDER.value,
+                        }
+                        execute_action = True
+                        decision.action_proposed = True
+                        decision.proposed_action = ProposedAction(
+                            tool_name="find_available_slots",
+                            arguments=dict(tool_args),
                         )
-                        tool_args["subject"] = edusaas_email.subject
-                        tool_args["body"] = edusaas_email.body
-                        tool_args["html_body"] = edusaas_email.html_body
-                        tool_args["topic_display"] = edusaas_email.topic
-                elif tool_name == "create_calendar_event":
-                    slot = (
-                        tool_args.get("slot")
-                        or tool_args.get("start_time")
-                        or tool_args.get("time")
-                        or state.get_slot("meeting_preference")
-                    )
-                    if slot:
-                        tool_args["slot"] = slot
-                    tool_args.setdefault("confirmed", True)
+                        action_proposed = True
+                        final_response_text = "I'll check the actual availability for that date before confirming a visit."
+                        decision.user_facing_response = final_response_text
+                        state.set_pending_action("find_available_slots")
+                elif not is_confirmed:
+                    execute_action = False
+                    final_response_text = f"I found that slot in the availability results: {slot}. Would you like me to book it?"
+                    decision.user_facing_response = final_response_text
+                    state.set_pending_action("create_calendar_event")
+                    state.update_slot("visit_confirmation_pending", slot)
+                    state.set_pending_question(f"Would you like me to book the site visit for {slot}?")
+                else:
+                    tool_args["slot"] = slot
+                    tool_args["confirmed"] = True
+                    if "property_name" not in tool_args:
+                        tool_args["property_name"] = state.get_slot("preferred_project")
 
-                # Dispatch to tool provider
+            # Followup / consultation request guard
+            elif tool_name == "create_hr_followup":
+                name = (
+                    tool_args.get("name")
+                    or tool_args.get("candidate_name")
+                    or tool_args.get("caller_name")
+                    or state.caller.name
+                    or state.get_slot("name")
+                    or state.get_slot("caller_name")
+                )
+                if not name:
+                    execute_action = False
+                    final_response_text = "I would be happy to have our team follow up with you. And may I have your name?"
+                    decision.user_facing_response = final_response_text
+                    state.set_pending_action("create_hr_followup")
+                    state.set_pending_question("And may I have your name?")
+
+            # Retired email tool path
+            elif tool_name == "send_email":
+                execute_action = False
+                final_response_text = "I can share the requested property information through WhatsApp instead. Would you like me to send it that way?"
+                decision.user_facing_response = final_response_text
+                state.set_pending_action("send_message")
+                state.set_pending_question(final_response_text)
+
+            if execute_action:
                 tool_call_req = ToolCallRequest(
                     tool_name=tool_name,
                     arguments=tool_args,
@@ -1526,7 +1838,16 @@ class ConversationEngine:
                 t_tool = time.perf_counter()
                 if tracker:
                     tracker.mark_tool_start()
-                tool_exec_result = await self.tool_provider.execute_tool(tool_call_req)
+                try:
+                    tool_exec_result = await self.tool_provider.execute_tool(tool_call_req)
+                except Exception as tool_err:
+                    logger.exception("Tool execution raised for %s", tool_name)
+                    tool_exec_result = ToolExecutionResult(
+                        tool_name=tool_name,
+                        success=False,
+                        data={},
+                        error_message=f"Tool execution failed: {type(tool_err).__name__}",
+                    )
                 timing["tool_execution_ms"] = round((time.perf_counter() - t_tool) * 1000, 2)
                 if tracker:
                     tracker.mark_tool_end()
@@ -1541,58 +1862,36 @@ class ConversationEngine:
                         if new_status:
                             state.update_business_status(str(new_status))
 
-                    if tool_name == "send_email":
-                        if state.current_domain == DomainType.EDUSAAS:
-                            topic_disp = (tool_args.get("topic_display") or "").lower()
-                            msg_low = cleaned_msg.lower()
-                            if "data science" in msg_low or "data science" in topic_disp:
-                                speech_confirmation = f"I've sent the complete course details and enrollment link to {recipient}."
-                            elif bool(re.search(r"\b(ai|artificial intelligence|machine learning)\b", msg_low)) or "artificial intelligence" in topic_disp:
-                                speech_confirmation = f"I've sent the complete course details and enrollment link to {recipient}."
-                            elif "admission" in msg_low or "admission" in topic_disp:
-                                speech_confirmation = f"I've sent the complete course details and enrollment link to {recipient}."
-                            elif "pricing" in msg_low or "fee" in msg_low or "pricing" in topic_disp:
-                                speech_confirmation = f"I've sent the complete course details and enrollment link to {recipient}."
-                            else:
-                                speech_confirmation = f"I've sent the complete course details and enrollment link to {recipient}."
-                        else:
-                            speech_confirmation = f"I've sent the details to {recipient}."
-
-                    elif tool_name == "create_calendar_event":
-                        slot = tool_args.get("slot") or state.get_slot("meeting_preference") or "the requested time"
-                        speech_confirmation = f"I have scheduled your consultation for {slot}. Is there anything else I can assist you with?"
-                    else:
-                        # Synthesize verbal confirmation incorporating verified reference
-                        action_prompt = render_prompt(
-                            "tools/action_confirmation.txt",
-                            caller_message=cleaned_msg,
-                            tool_name=tool_name,
-                            verification_code=tool_exec_result.verification_code,
-                            data=tool_exec_result.data,
-                        ).strip()
-
-                        speech_confirmation = await self.llm.generate_response(
-                            prompt=action_prompt,
-                            system_instruction=load_prompt("tools/system.txt").strip(),
+                    if tool_name == "send_message":
+                        proj = tool_args.get("project_name") or state.get_slot("preferred_project") or "the requested property"
+                        recipient = tool_args.get("recipient")
+                        speech_confirmation = (
+                            f"The WhatsApp message for {proj} was accepted by the messaging service for {recipient}. "
+                            "I can't confirm recipient delivery unless the service reports it. Is there anything else I can help with?"
                         )
-                        try:
-                            from src.core.llm import extract_json_block
-                            import json
-                            clean = extract_json_block(speech_confirmation)
-                            parsed = json.loads(clean)
-                            if isinstance(parsed, dict) and "user_facing_response" in parsed:
-                                speech_confirmation = parsed["user_facing_response"]
-                            elif isinstance(parsed, dict) and "response" in parsed:
-                                speech_confirmation = parsed["response"]
-                        except Exception:
-                            pass
-
-                        if (
-                            not speech_confirmation
-                            or speech_confirmation == "Mock default response."
-                            or speech_confirmation.strip().startswith("{")
-                        ):
-                            speech_confirmation = "I have completed that request for you. Is there anything else I can assist you with?"
+                    elif tool_name == "find_available_slots":
+                        slots = tool_exec_result.data.get("available_slots") or tool_exec_result.data.get("slots") or []
+                        proj = tool_args.get("property_name") or state.get_slot("preferred_project") or "that property"
+                        date_str = tool_args.get("preferred_date") or "the requested date"
+                        if slots:
+                            state.update_slot("available_slots", [str(item) for item in slots])
+                            slots_str = ", ".join(str(item) for item in slots[:3])
+                            speech_confirmation = f"For {proj}, the available site-visit times on {date_str} are {slots_str}. Which one would you prefer?"
+                            state.set_pending_action("create_calendar_event")
+                            state.set_pending_question(f"Which available time would you prefer for {proj}?")
+                        else:
+                            state.update_slot("available_slots", [])
+                            state.update_slot("visit_confirmation_pending", None)
+                            state.update_slot("visit_confirmed", False)
+                            speech_confirmation = f"I couldn't find an available site-visit time for {proj} on {date_str}. Would you like me to check another date?"
+                            state.set_pending_action("find_available_slots")
+                            state.set_pending_question("Would you like me to check another date?")
+                    elif tool_name == "create_calendar_event":
+                        slot = tool_args.get("slot") or tool_args.get("start_time") or "your requested time"
+                        proj = tool_args.get("property_name") or state.get_slot("preferred_project") or "the property"
+                        speech_confirmation = f"Your site visit to {proj} has been confirmed for {slot}. We look forward to welcoming you! Is there anything else I can assist you with?"
+                    else:
+                        speech_confirmation = "I have completed that request for you. Is there anything else I can assist you with?"
 
                     final_response_text = speech_confirmation.strip()
                     decision.user_facing_response = final_response_text
@@ -1600,11 +1899,20 @@ class ConversationEngine:
                     # Execution or verification failed
                     state.pending_action = None
                     state.last_tool_result = tool_exec_result
-                    err_msg = tool_exec_result.error_message or "action could not be verified"
-                    if tool_name == "send_email":
+                    if tool_name == "send_message":
                         final_response_text = (
-                            "I attempted to send the email, but encountered a system issue and couldn't send the email right now. "
-                            "I have noted this down so our team can follow up with you directly."
+                            "I attempted to send the WhatsApp message, but encountered a system issue. "
+                            "I have noted this down so our property team can share the details with you directly."
+                        )
+                    elif tool_name == "create_calendar_event":
+                        final_response_text = (
+                            "I attempted to confirm your site visit, but that slot could not be booked. "
+                            "Would you like to check other available times?"
+                        )
+                    elif tool_name == "find_available_slots":
+                        final_response_text = (
+                            "I was unable to retrieve available site visit slots right now. "
+                            "Would you like to try another date?"
                         )
                     else:
                         final_response_text = (

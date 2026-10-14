@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Vayvora AI - Real-Time Voice Pipeline Testing</title>
+  <title>Infra Builder AI - Real-Time Voice Pipeline Testing</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -612,7 +612,7 @@
     <div class="header-left">
       <div class="logo-icon">🎙️</div>
       <div class="header-titles">
-        <h1>VAYVORA <span class="brand-accent">VOICE TEST</span></h1>
+        <h1>INFRA BUILDER <span class="brand-accent">VOICE TEST</span></h1>
         <p>End-to-End Real-Time Pipeline: Browser Mic ➔ VAD ➔ STT ➔ Gemini ➔ TTS ➔ Speakers</p>
       </div>
     </div>
@@ -658,10 +658,9 @@
   <div class="controls-card">
     <div class="config-grid">
       <div class="form-group">
-        <label for="sel-domain">Target Domain</label>
-        <select id="sel-domain" class="form-control">
-          <option value="edusaas" selected>🎓 EduSaaS (Courses & AI Training)</option>
-          <option value="vayvora">🏢 Vayvora (Enterprise AI & Automation)</option>
+        <label for="sel-domain">Active Domain</label>
+        <select id="sel-domain" class="form-control" disabled>
+          <option value="infra_builder" selected>🏢 Infra Builder (Real Estate AI)</option>
         </select>
       </div>
 
@@ -1343,7 +1342,7 @@
 
     const label = document.createElement("span");
     label.className = "chat-speaker";
-    label.textContent = speaker === "user" ? "YOU (Caller)" : "AGENT (Vayvora AI)";
+    label.textContent = speaker === "user" ? "YOU (Caller)" : "AGENT (Infra Builder AI)";
 
     const bubble = document.createElement("div");
     bubble.className = "chat-bubble";
@@ -1466,7 +1465,7 @@
   });
 
   // Initial Log Entry
-  log("SYSTEM", "Vayvora Voice Test UI ready. Press START SESSION to begin.", "info");
+  log("SYSTEM", "Infra Builder Voice Test UI ready. Press START SESSION to begin.", "info");
 </script>
 
 </body>

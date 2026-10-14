@@ -1,15 +1,17 @@
-"""Tests for Outbound Voice-Call Implementation: Contact Name vs Agent Name & Deterministic Email Safety.
+"""Tests for Outbound Voice-Call Implementation: Contact Name vs Agent Name & WhatsApp Messaging Safety.
 
 Verifies:
 1. Contact Name != Agent Name (distinction, agent_name config, safe fallback).
-2. Outbound Contact Email (no fallback, no company/agent email as recipient).
-3. When Contact Email Exists (sends immediately, confirms with recipient).
-4. When Contact Email is Missing (prompts for recipient email, blocks tool).
-5. Caller Provides Email (extracts, stores, dispatches, confirms).
-6. Invalid or Unclear Email (asks "Could you repeat the email address for me?", blocks tool).
-7. Explicit Email Correction (updates stored recipient email on explicit correction cue).
-8. Deterministic Email Guard in ConversationEngine, ActionValidator, and EmailProvider.
-9. Inbound dynamic domain routing integrity remains unaffected.
+2. Outbound Identity Verification: gates campaign discussions until identity is verified.
+3. WhatsApp Brochure Delivery:
+   - When recipient phone exists & authorized -> dispatches send_message and confirms.
+   - When recipient phone is missing -> asks for WhatsApp phone number, blocks tool.
+   - When caller provides valid phone number -> normalizes, dispatches, confirms.
+   - When caller provides invalid or placeholder dummy number -> rejects and prompts again.
+   - Explicit phone correction updates recipient.
+   - Respects WhatsApp opt-out / refusal.
+4. Deterministic Safety Guards in ActionValidator, MessageProvider, and EmailProvider.
+5. Inbound domain routing to Infra Builder.
 """
 
 import pytest
@@ -17,9 +19,6 @@ from src.config import Settings
 from src.core.decision import (
     ConversationalDecision,
     ProposedAction,
-    extract_email_address,
-    detect_explicit_email_correction,
-    is_unclear_or_invalid_email_attempt,
     is_valid_email,
 )
 from src.core.engine import ConversationEngine
@@ -35,6 +34,7 @@ from src.domains.registry import get_domain_registry
 from src.state.manager import ConversationStateManager
 from src.state.models import CallerProfile, ConversationState
 from src.tools.email_provider import MockEmailProvider, SMTPEmailProvider
+from src.tools.message_provider import validate_phone_number
 from src.tools.mcp_client import MockToolProvider
 from src.tools.schemas import ValidatedToolRequest
 from src.tools.validation import ActionValidator
@@ -45,7 +45,7 @@ from src.core.errors import InvalidToolArgumentsError
 def base_settings():
     return Settings(
         agent_name="Sarah",
-        smtp_from_email="noreply@vayvora.com",
+        smtp_from_email="noreply@infrabuilder.com",
     )
 
 
@@ -65,6 +65,14 @@ def engine(base_settings, mock_tool_provider):
     )
 
 
+def was_tool_dispatched(provider: MockToolProvider, tool_name: str) -> bool:
+    return any(r.action_name == tool_name for r in provider.dispatched_requests)
+
+
+def get_last_dispatched(provider: MockToolProvider, tool_name: str):
+    return next((r for r in reversed(provider.dispatched_requests) if r.action_name == tool_name), None)
+
+
 # =============================================================================
 # 1. Contact Name != Agent Name Tests
 # =============================================================================
@@ -76,10 +84,10 @@ async def test_outbound_opening_with_configured_agent_name(base_settings, mock_t
     state = state_mgr.create_outbound_state(
         call_id="call-out-1",
         contact_name="Alice",
-        caller_phone="+15551234567",
-        domain=DomainType.EDUSAAS,
+        caller_phone="+919845123890",
+        domain=DomainType.INFRA_BUILDER,
         agent_name="Sarah",
-        campaign_objective="follow up with student who showed interest in AI course",
+        campaign_objective="follow up with buyer who showed interest in Skyline Towers luxury apartments",
     )
 
     llm = MockLLMProvider()
@@ -101,7 +109,7 @@ async def test_outbound_opening_with_configured_agent_name(base_settings, mock_t
     assert "I'm Alice" not in opening
     assert "my name is Alice" not in opening
     assert "I am Alice" not in opening
-    assert "from EduSaaS Academic Admissions & Guidance" in opening
+    assert "Infra Builder" in opening
 
 
 @pytest.mark.asyncio
@@ -112,10 +120,10 @@ async def test_outbound_opening_without_agent_name_uses_safe_fallback(mock_tool_
     state = state_mgr.create_outbound_state(
         call_id="call-out-2",
         contact_name="Alice",
-        caller_phone="+15551234567",
-        domain=DomainType.EDUSAAS,
+        caller_phone="+919845123890",
+        domain=DomainType.INFRA_BUILDER,
         agent_name=None,
-        campaign_objective="follow up with student who showed interest in AI course",
+        campaign_objective="follow up with buyer who showed interest in Skyline Towers",
     )
 
     llm = MockLLMProvider()
@@ -130,7 +138,7 @@ async def test_outbound_opening_without_agent_name_uses_safe_fallback(mock_tool_
     opening = result.response_text
 
     # Safe fallback
-    assert "I'm calling from EduSaaS Academic Admissions & Guidance" in opening
+    assert "I'm calling from Infra Builder" in opening
     # Addresses contact Alice
     assert "Alice" in opening
     # NEVER claims to be Alice
@@ -141,17 +149,17 @@ async def test_outbound_opening_without_agent_name_uses_safe_fallback(mock_tool_
 
 @pytest.mark.asyncio
 async def test_outbound_vayvora_opening_distinguishes_contact_and_agent(mock_tool_provider):
-    """Outbound for Vayvora distinguishes agent David from contact Bob."""
+    """Outbound for Infra Builder distinguishes agent David from contact Bob."""
     settings = Settings(agent_name="David")
     state_mgr = ConversationStateManager()
     state = state_mgr.create_outbound_state(
         call_id="call-out-3",
         contact_name="Bob",
-        caller_phone="+15559876543",
-        domain=DomainType.VAYVORA,
+        caller_phone="+919845123890",
+        domain=DomainType.INFRA_BUILDER,
         agent_name="David",
         company="Acme Corp",
-        campaign_objective="understand whether organization is exploring enterprise AI",
+        campaign_objective="understand buyer residential requirements in Bangalore",
     )
 
     llm = MockLLMProvider()
@@ -169,269 +177,273 @@ async def test_outbound_vayvora_opening_distinguishes_contact_and_agent(mock_too
     assert "Bob" in opening
     assert "I'm Bob" not in opening
     assert "my name is Bob" not in opening
-    assert "Vayvora Technologies" in opening
-
-
-def was_tool_dispatched(provider: MockToolProvider, tool_name: str) -> bool:
-    return any(r.action_name == tool_name for r in provider.dispatched_requests)
-
-
-def get_last_dispatched(provider: MockToolProvider, tool_name: str):
-    return next((r for r in reversed(provider.dispatched_requests) if r.action_name == tool_name), None)
+    assert "Infra Builder" in opening
 
 
 # =============================================================================
-# 2. When Contact Email Exists
+# 2. When Contact Phone Exists & WhatsApp Brochure is Requested
 # =============================================================================
 
 @pytest.mark.asyncio
 async def test_outbound_email_exists_sends_immediately_and_confirms(engine, mock_tool_provider):
-    """When contact has email (alice@example.com), requesting course details sends email immediately without re-asking."""
+    """When contact phone exists and caller confirms identity, requesting details dispatches WhatsApp send_message."""
     state_mgr = ConversationStateManager()
     state = state_mgr.create_outbound_state(
         call_id="call-out-4",
         contact_name="Alice",
-        caller_phone="+15551234567",
-        caller_email="alice@example.com",
-        domain=DomainType.EDUSAAS,
+        caller_phone="+919845123890",
+        domain=DomainType.INFRA_BUILDER,
         agent_name="Sarah",
     )
 
     await engine.start_outbound_conversation(state)
+    # Confirm identity
+    await engine.process_user_turn(state, "Yes, speaking.")
+    state.update_slot("whatsapp_consent", True)
 
-    # Caller requests course details
-    result = await engine.process_user_turn(state, "Send me the course details.")
+    # Caller requests brochure/details
+    result = await engine.process_user_turn(state, "Please send me the brochure for Skyline Towers.")
 
-    # Tool was invoked
-    assert was_tool_dispatched(mock_tool_provider, "send_email")
-    last_req = get_last_dispatched(mock_tool_provider, "send_email")
+    # Tool send_message was invoked
+    assert was_tool_dispatched(mock_tool_provider, "send_message")
+    last_req = get_last_dispatched(mock_tool_provider, "send_message")
     assert last_req is not None
-    assert last_req.arguments.get("recipient") == "alice@example.com"
+    assert "9845123890" in str(last_req.arguments.get("recipient"))
 
     # Confirms only after successful execution
-    assert "I've sent the course details to alice@example.com." in result.response_text
+    assert "sent" in result.response_text.lower()
+    assert "9845123890" in result.response_text
 
 
 # =============================================================================
-# 3. When Contact Email is Missing
+# 3. When Contact Phone is Missing
 # =============================================================================
 
 @pytest.mark.asyncio
 async def test_outbound_email_missing_prompts_and_blocks_tool(engine, mock_tool_provider):
-    """When contact has NO email, requesting course details prompts for email and blocks send_email."""
+    """When contact has NO phone, requesting details prompts for WhatsApp phone number and blocks tool."""
     state_mgr = ConversationStateManager()
     state = state_mgr.create_outbound_state(
         call_id="call-out-5",
         contact_name="Alice",
-        caller_phone="+15551234567",
-        caller_email=None,
-        domain=DomainType.EDUSAAS,
+        caller_phone="",
+        domain=DomainType.INFRA_BUILDER,
         agent_name="Sarah",
     )
 
     await engine.start_outbound_conversation(state)
+    await engine.process_user_turn(state, "Yes, speaking.")
 
-    result = await engine.process_user_turn(state, "Send me the course details.")
+    result = await engine.process_user_turn(state, "Please send me the project brochure.")
 
-    # Tool must NOT be called
-    assert not was_tool_dispatched(mock_tool_provider, "send_email")
-    # Agent prompts for email
-    assert "What email address should I send the course details to?" in result.response_text
-    # State records pending email action
-    assert state.pending_action == "send_email"
+    # Tool must NOT be called without phone number
+    assert not was_tool_dispatched(mock_tool_provider, "send_message")
+    # Agent prompts for WhatsApp number
+    assert "whatsapp" in result.response_text.lower()
+    assert "number" in result.response_text.lower() or "phone" in result.response_text.lower()
+    # State records pending WhatsApp action
+    assert state.pending_action == "send_message"
 
 
 # =============================================================================
-# 4. Caller Provides Email Following Missing Email Prompt
+# 4. Caller Provides Phone Following Missing Phone Prompt
 # =============================================================================
 
 @pytest.mark.asyncio
 async def test_caller_provides_valid_email_executes_and_confirms(engine, mock_tool_provider):
-    """Caller provides email after being prompted; system updates profile, executes tool, and confirms."""
+    """Caller provides phone after being prompted; system updates profile, executes tool, and confirms."""
     state_mgr = ConversationStateManager()
     state = state_mgr.create_outbound_state(
         call_id="call-out-6",
         contact_name="Alice",
-        caller_phone="+15551234567",
-        caller_email=None,
-        domain=DomainType.EDUSAAS,
+        caller_phone="",
+        domain=DomainType.INFRA_BUILDER,
         agent_name="Sarah",
     )
 
     await engine.start_outbound_conversation(state)
+    await engine.process_user_turn(state, "Yes, speaking.")
 
-    # Turn 1: Missing email prompt
-    turn1 = await engine.process_user_turn(state, "Send me the course details.")
-    assert not was_tool_dispatched(mock_tool_provider, "send_email")
-    assert "What email address should I send the course details to?" in turn1.response_text
+    # Turn 1: Missing phone prompt
+    turn1 = await engine.process_user_turn(state, "Please send me the project brochure.")
+    assert not was_tool_dispatched(mock_tool_provider, "send_message")
+    assert "whatsapp" in turn1.response_text.lower()
 
-    # Turn 2: Caller provides email
-    turn2 = await engine.process_user_turn(state, "alice@example.com")
+    # Turn 2: Caller provides valid phone number
+    turn2 = await engine.process_user_turn(state, "+919845123890")
 
     # Stored in contact profile
-    assert state.caller.email == "alice@example.com"
+    assert "9845123890" in (state.caller.phone or "")
     # Tool executed with verified recipient
-    assert was_tool_dispatched(mock_tool_provider, "send_email")
-    last_req = get_last_dispatched(mock_tool_provider, "send_email")
-    assert last_req.arguments.get("recipient") == "alice@example.com"
+    assert was_tool_dispatched(mock_tool_provider, "send_message")
+    last_req = get_last_dispatched(mock_tool_provider, "send_message")
+    assert "9845123890" in str(last_req.arguments.get("recipient"))
     # Verbal confirmation
-    assert "I've sent the course details to alice@example.com." in turn2.response_text
+    assert "sent" in turn2.response_text.lower()
 
 
 @pytest.mark.asyncio
 async def test_caller_provides_spoken_email_pattern(engine, mock_tool_provider):
-    """Caller speaks email pattern: 'alice at example dot com'."""
+    """Caller speaks phone number naturally in message."""
     state_mgr = ConversationStateManager()
     state = state_mgr.create_outbound_state(
         call_id="call-out-7",
         contact_name="Alice",
-        caller_phone="+15551234567",
-        caller_email=None,
-        domain=DomainType.EDUSAAS,
+        caller_phone="",
+        domain=DomainType.INFRA_BUILDER,
         agent_name="Sarah",
     )
 
     await engine.start_outbound_conversation(state)
-    await engine.process_user_turn(state, "Send me the course details.")
+    await engine.process_user_turn(state, "Yes, speaking.")
+    await engine.process_user_turn(state, "Please send me the brochure.")
 
-    turn2 = await engine.process_user_turn(state, "alice at example dot com")
+    turn2 = await engine.process_user_turn(state, "You can WhatsApp me on 9845123890")
 
-    assert state.caller.email == "alice@example.com"
-    assert was_tool_dispatched(mock_tool_provider, "send_email")
-    assert "I've sent the course details to alice@example.com." in turn2.response_text
+    assert "9845123890" in (state.caller.phone or "")
+    assert was_tool_dispatched(mock_tool_provider, "send_message")
+    assert "sent" in turn2.response_text.lower()
 
 
 # =============================================================================
-# 5. Invalid or Unclear Email
+# 5. Invalid or Dummy Phone Number
 # =============================================================================
 
 @pytest.mark.asyncio
 async def test_caller_provides_unclear_email_asks_repeat(engine, mock_tool_provider):
-    """When caller provides an unclear or invalid email attempt, agent asks 'Could you repeat the email address for me?'."""
+    """When caller provides an invalid/dummy sequential phone, agent blocks tool and prompts again."""
     state_mgr = ConversationStateManager()
     state = state_mgr.create_outbound_state(
         call_id="call-out-8",
         contact_name="Alice",
-        caller_phone="+15551234567",
-        caller_email=None,
-        domain=DomainType.EDUSAAS,
+        caller_phone="",
+        domain=DomainType.INFRA_BUILDER,
         agent_name="Sarah",
     )
 
     await engine.start_outbound_conversation(state)
-    await engine.process_user_turn(state, "Send me the course details.")
+    await engine.process_user_turn(state, "Yes, speaking.")
+    await engine.process_user_turn(state, "Please send me the brochure.")
 
-    # Malformed email attempt
-    turn2 = await engine.process_user_turn(state, "alice at example")
+    # Dummy sequential number rejected by validate_phone_number
+    turn2 = await engine.process_user_turn(state, "send to 1234567890")
 
     # Tool must NOT execute
-    assert not was_tool_dispatched(mock_tool_provider, "send_email")
-    # Natural clarification question
-    assert "Could you repeat the email address for me?" in turn2.response_text
+    assert not was_tool_dispatched(mock_tool_provider, "send_message")
+    # Prompts for WhatsApp number
+    assert "whatsapp" in turn2.response_text.lower()
 
-    # Then caller gives valid email
-    turn3 = await engine.process_user_turn(state, "alice@example.com")
-    assert was_tool_dispatched(mock_tool_provider, "send_email")
-    assert "I've sent the course details to alice@example.com." in turn3.response_text
+    # Then caller gives valid phone number
+    turn3 = await engine.process_user_turn(state, "+919845123890")
+    assert was_tool_dispatched(mock_tool_provider, "send_message")
+    assert "sent" in turn3.response_text.lower()
 
 
 # =============================================================================
-# 6. Explicit Email Correction
+# 6. Explicit Phone Correction
 # =============================================================================
 
 @pytest.mark.asyncio
 async def test_explicit_email_correction_updates_recipient(engine, mock_tool_provider):
-    """Explicit caller correction ('Actually, use alice.new@example.com') updates recipient email."""
+    """Explicit caller phone correction updates recipient phone."""
     state_mgr = ConversationStateManager()
     state = state_mgr.create_outbound_state(
         call_id="call-out-9",
         contact_name="Alice",
-        caller_phone="+15551234567",
-        caller_email="alice@example.com",
-        domain=DomainType.EDUSAAS,
+        caller_phone="+919845123890",
+        domain=DomainType.INFRA_BUILDER,
         agent_name="Sarah",
     )
 
     await engine.start_outbound_conversation(state)
+    await engine.process_user_turn(state, "Yes, speaking.")
+    await engine.process_user_turn(state, "Please send me the brochure.")
 
-    # Caller explicitly corrects email
-    turn1 = await engine.process_user_turn(state, "Actually, use alice.new@example.com")
+    # Caller explicitly provides alternate number
+    turn1 = await engine.process_user_turn(state, "Actually, please send it to +919845112233")
 
-    assert state.caller.email == "alice.new@example.com"
-
-    # Now caller requests course details
-    turn2 = await engine.process_user_turn(state, "Send me the course details.")
-    assert was_tool_dispatched(mock_tool_provider, "send_email")
-    last_req = get_last_dispatched(mock_tool_provider, "send_email")
-    assert last_req.arguments.get("recipient") == "alice.new@example.com"
-    assert "I've sent the course details to alice.new@example.com." in turn2.response_text
+    assert "9845112233" in (state.caller.phone or "")
+    assert was_tool_dispatched(mock_tool_provider, "send_message")
+    last_req = get_last_dispatched(mock_tool_provider, "send_message")
+    assert "9845112233" in str(last_req.arguments.get("recipient"))
 
 
 @pytest.mark.asyncio
 async def test_ambiguous_speech_does_not_overwrite_email(engine):
-    """Ambiguous speech without explicit correction does NOT overwrite stored recipient email."""
+    """Ambiguous speech without a valid phone does NOT overwrite stored recipient phone."""
     state_mgr = ConversationStateManager()
     state = state_mgr.create_outbound_state(
         call_id="call-out-10",
         contact_name="Alice",
-        caller_phone="+15551234567",
-        caller_email="alice@example.com",
-        domain=DomainType.EDUSAAS,
+        caller_phone="+919845123890",
+        domain=DomainType.INFRA_BUILDER,
         agent_name="Sarah",
     )
 
     await engine.start_outbound_conversation(state)
-    await engine.process_user_turn(state, "I also have another account somewhere.")
+    await engine.process_user_turn(state, "Yes, speaking.")
+    await engine.process_user_turn(state, "I have another phone somewhere.")
 
-    assert state.caller.email == "alice@example.com"
+    assert "9845123890" in (state.caller.phone or "")
 
 
 # =============================================================================
-# 7. Deterministic Email Guard (Tool, Validator, and Provider)
+# 7. Deterministic Safety Guards (ActionValidator, Tool, Provider)
 # =============================================================================
 
 def test_action_validator_rejects_fallback_and_missing_recipient():
-    """ActionValidator raises InvalidToolArgumentsError if recipient is missing, invalid, or fallback."""
-    # Missing recipient
+    """ActionValidator raises InvalidToolArgumentsError if recipient is missing, invalid, or dummy."""
+    # Missing WhatsApp recipient
     with pytest.raises(InvalidToolArgumentsError):
         ActionValidator.validate_action(
             ValidatedToolRequest(
-                action_name="send_email",
+                action_name="send_message",
                 arguments={},
                 session_id="s1",
-                domain=DomainType.EDUSAAS,
+                domain=DomainType.INFRA_BUILDER,
             )
         )
 
-    # Fallback recipient
+    # Dummy placeholder recipient
+    with pytest.raises(InvalidToolArgumentsError):
+        ActionValidator.validate_action(
+            ValidatedToolRequest(
+                action_name="send_message",
+                arguments={"recipient": "1234567890"},
+                session_id="s1",
+                domain=DomainType.INFRA_BUILDER,
+            )
+        )
+
+    # Opted out caller
+    with pytest.raises(InvalidToolArgumentsError):
+        ActionValidator.validate_action(
+            ValidatedToolRequest(
+                action_name="send_message",
+                arguments={"recipient": "+919845123890", "whatsapp_consent": False},
+                session_id="s1",
+                domain=DomainType.INFRA_BUILDER,
+            )
+        )
+
+    # Prohibited email recipient in legacy email tool
     with pytest.raises(InvalidToolArgumentsError):
         ActionValidator.validate_action(
             ValidatedToolRequest(
                 action_name="send_email",
-                arguments={"recipient": "noreply@vayvora.com"},
+                arguments={"recipient": "noreply@infrabuilder.com"},
                 session_id="s1",
-                domain=DomainType.EDUSAAS,
+                domain=DomainType.INFRA_BUILDER,
             )
         )
 
-    # Placeholder recipient
-    with pytest.raises(InvalidToolArgumentsError):
-        ActionValidator.validate_action(
-            ValidatedToolRequest(
-                action_name="send_email",
-                arguments={"recipient": "caller@mail"},
-                session_id="s1",
-                domain=DomainType.EDUSAAS,
-            )
-        )
-
-    # Valid recipient passes
+    # Valid WhatsApp message passes
     ActionValidator.validate_action(
         ValidatedToolRequest(
-            action_name="send_email",
-            arguments={"recipient": "alice@example.com"},
+            action_name="send_message",
+            arguments={"recipient": "+919845123890", "whatsapp_consent": True},
             session_id="s1",
-            domain=DomainType.EDUSAAS,
+            domain=DomainType.INFRA_BUILDER,
         )
     )
 
@@ -441,20 +453,12 @@ async def test_mock_and_smtp_email_provider_block_prohibited_recipient():
     """EmailProvider implementations reject prohibited/fallback recipients."""
     mock_provider = MockEmailProvider()
     result = await mock_provider.send_email(
-        recipient="noreply@vayvora.com",
+        recipient="noreply@infrabuilder.com",
         subject="Test",
         body="Test body",
     )
     assert not result.success
     assert "Invalid, missing, or prohibited recipient email address" in (result.error or "")
-
-    # Valid email succeeds with mock provider
-    result_valid = await mock_provider.send_email(
-        recipient="alice@example.com",
-        subject="Test",
-        body="Test body",
-    )
-    assert result_valid.success
 
 
 # =============================================================================
@@ -463,17 +467,17 @@ async def test_mock_and_smtp_email_provider_block_prohibited_recipient():
 
 @pytest.mark.asyncio
 async def test_inbound_domain_routing_unaffected(engine):
-    """Inbound calls still start with UNKNOWN domain and route dynamically."""
+    """Inbound calls start with UNKNOWN domain and lock to Infra Builder on property query."""
     state_mgr = ConversationStateManager()
     inbound_state = state_mgr.create_inbound_state(
         call_id="call-in-1",
-        caller_phone="+15550001111",
+        caller_phone="+919845123890",
     )
 
     assert inbound_state.current_domain == DomainType.UNKNOWN
     assert not inbound_state.domain_locked
 
-    turn1 = await engine.process_user_turn(inbound_state, "I want to know about your courses and curriculum.")
+    turn1 = await engine.process_user_turn(inbound_state, "I want to know about your 3 BHK apartments at Skyline Towers.")
 
-    assert inbound_state.current_domain == DomainType.EDUSAAS
+    assert inbound_state.current_domain == DomainType.INFRA_BUILDER
     assert inbound_state.domain_locked

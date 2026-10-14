@@ -51,37 +51,28 @@ class RAGRetriever:
         """Semantically enrich voice queries with domain context."""
         normalized = query.lower().strip().rstrip("?!.,;:")
 
-        domain_cues = (
-            "services", "capabilities", "pricing", "price", "cost", "rates", "rate",
-            "fee", "fees", "course", "courses", "training", "bootcamp",
-            "refund", "sla", "uptime", "contact", "headquarters",
-            "office", "cloud", "aws", "mobile", "ai", "genai",
-            "product", "products", "solution", "solutions",
-            "voice", "agent", "agents", "bot", "bots",
-            "intelligence", "artificial intelligence",
-            "apply", "applying", "career", "careers", "job", "jobs", "role", "roles",
-            "hiring", "hire", "internship", "intern", "resume", "cv", "vacancy", "vacancies",
-            "assessment", "assessments", "interview", "interviews", "exam", "exams",
+        real_estate_cues = (
+            "project", "projects", "property", "properties", "apartment", "apartments",
+            "flat", "flats", "villa", "villas", "bhk", "amenities", "pricing", "price",
+            "cost", "possession", "rera", "location", "site visit", "visit", "tour",
+            "payment plan", "booking", "down payment", "loan", "developer", "builder",
+            "whitefield", "sarjapur", "electronic city", "urban heights", "skyline towers",
+            "green valley", "brochure", "whatsapp",
         )
         dom_val = domain.value.lower() if hasattr(domain, "value") else (str(domain).lower() if domain else "")
-        if dom_val == "edusaas":
-            if any(cue in normalized for cue in domain_cues) and "edusaas" not in normalized:
-                return f"{query} EduSaaS engineering technical courses curriculum"
-        else:
-            if any(cue in normalized for cue in domain_cues) and "vayvora" not in normalized and "edusaas" not in normalized:
-                return f"{query} Vayvora Technology enterprise software AI consultancy"
+        if dom_val in ("infra_builder", "default", ""):
+            if any(cue in normalized for cue in real_estate_cues) and "infra builder" not in normalized:
+                return f"{query} Infra Builder real estate apartments villas Bangalore projects"
 
         company_queries = {
-            "what is vayvora",
-            "tell me about vayvora",
-            "who is vayvora",
-            "what is vayvora technology",
-            "tell me about vayvora technology",
-            "about vayvora",
-            "about vayvora technology",
+            "what is infra builder",
+            "tell me about infra builder",
+            "who is infra builder",
+            "about infra builder",
+            "infra builder overview",
         }
         if normalized in company_queries:
-            return f"{query} Vayvora Technology company overview about company vision services"
+            return f"{query} Infra Builder company overview real estate developer experience RERA"
 
         return query
 

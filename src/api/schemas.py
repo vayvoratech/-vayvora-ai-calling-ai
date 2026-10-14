@@ -15,7 +15,7 @@ class ChatRequest(BaseModel):
     user_input: Optional[str] = Field(default=None, description="Current query or transcription from caller")
     message: Optional[str] = Field(default=None, description="Alternative alias for user_input")
     session_id: str = Field(default="default_session", description="Unique session identifier")
-    domain: Optional[str] = Field(default="edusaas", description="Domain: 'edusaas' or 'vayvora'")
+    domain: Optional[str] = Field(default="infra_builder", description="Domain: 'infra_builder'")
     tenant_id: Optional[str] = Field(default="default", description="Tenant or organization identifier")
     messages: List[ChatMessage] = Field(default_factory=list, description="Prior conversation history")
     slots: Dict[str, Any] = Field(default_factory=dict, description="Extracted entity slots")
@@ -48,8 +48,8 @@ class ConfigResponse(BaseModel):
     model: str = "gemini-3.5-flash-lite"
     model_name: str = "gemini-3.5-flash-lite"
     llm_provider: str
-    default_domain: str = "edusaas"
-    supported_domains: List[str] = Field(default_factory=lambda: ["edusaas", "vayvora"])
+    default_domain: str = "infra_builder"
+    supported_domains: List[str] = Field(default_factory=lambda: ["infra_builder"])
     audio_sample_rate: int = 16000
     relevance_threshold: float
     stt_provider: str
@@ -59,7 +59,7 @@ class ConfigResponse(BaseModel):
 
 class SessionStartRequest(BaseModel):
     session_id: Optional[str] = Field(default=None, description="Optional custom session ID")
-    domain: str = Field(default="edusaas", description="Domain: 'edusaas' or 'vayvora'")
+    domain: str = Field(default="infra_builder", description="Domain: 'infra_builder'")
     direction: str = Field(default="inbound", description="Call direction: 'inbound' or 'outbound'")
     caller_phone: Optional[str] = Field(default=None, description="Caller phone number (if verified)")
     caller_name: Optional[str] = Field(default=None, description="Caller name (if verified)")

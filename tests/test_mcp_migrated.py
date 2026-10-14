@@ -67,7 +67,7 @@ class TestFastMCPServerProtocol:
 
     @pytest.mark.asyncio
     async def test_server_instance_and_registered_tools(self, test_mcp: FastMCP):
-        assert test_mcp.name == "Vayvora-AI-MCP"
+        assert test_mcp.name == "InfraBuilder-AI-MCP"
         tools = await test_mcp.list_tools()
         tool_names = {t.name for t in tools}
 
@@ -95,7 +95,7 @@ class TestFastMCPServerProtocol:
         resp = await test_mcp.handle_jsonrpc(req)
         assert resp is not None
         assert resp["id"] == 1
-        assert resp["result"]["serverInfo"]["name"] == "Vayvora-AI-MCP"
+        assert resp["result"]["serverInfo"]["name"] == "InfraBuilder-AI-MCP"
         assert "tools" in resp["result"]["capabilities"]
 
     @pytest.mark.asyncio
@@ -361,7 +361,7 @@ class TestFastAPIMCPIntegration:
         assert resp.status_code == 200
         data = resp.json()
         assert data["id"] == 10
-        assert data["result"]["serverInfo"]["name"] == "Vayvora-AI-MCP"
+        assert data["result"]["serverInfo"]["name"] == "InfraBuilder-AI-MCP"
 
     def test_fastapi_mcp_tools_list(self, client: TestClient):
         payload = {"jsonrpc": "2.0", "id": 11, "method": "tools/list", "params": {}}

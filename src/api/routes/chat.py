@@ -23,7 +23,7 @@ async def get_config() -> ConfigResponse:
     return ConfigResponse(
         model_name=cfg.gemini_model,
         llm_provider=cfg.llm_provider,
-        default_domain="edusaas",
+        default_domain="infra_builder",
         relevance_threshold=cfg.rag_relevance_threshold,
         stt_provider=cfg.stt_provider,
         tts_provider=cfg.tts_provider,
@@ -40,8 +40,8 @@ async def chat_endpoint(
 ) -> ChatResponse:
     """Process a single conversational turn via REST and return structured decision telemetry."""
     session_id = payload.session_id or "default_session"
-    raw_domain = (payload.domain or "edusaas").lower()
-    domain = DomainType.VAYVORA if raw_domain == "vayvora" else DomainType.EDUSAAS
+    raw_domain = (payload.domain or "infra_builder").lower()
+    domain = DomainType.INFRA_BUILDER
 
     # Retrieve or create session state
     state = state_manager.get(session_id)

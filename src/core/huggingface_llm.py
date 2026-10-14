@@ -232,8 +232,7 @@ class HuggingFaceLLMProvider(LLMProvider):
 
             "detected_domain":
                 exactly one of:
-                "edusaas"
-                "vayvora"
+                "infra_builder"
                 "general"
 
             "proposed_stage":
@@ -268,9 +267,9 @@ class HuggingFaceLLMProvider(LLMProvider):
                 when knowledge_required is true, provide a concise, retrieval-optimized search query.
                 Rules:
                 - Preserve the caller's actual information need.
-                - Include domain, product, service, and technical keywords implied by the caller.
-                - Do NOT copy conversational wording (e.g. avoid 'What AI solutions does Vayvora provide?').
-                - Do NOT invent facts or products.
+                - Include domain, property, project, amenities, and location keywords implied by the caller.
+                - Do NOT copy conversational wording (e.g. avoid 'What real estate projects does Infra Builder have?').
+                - Do NOT invent facts or properties.
                 - If knowledge_required is false, set to null.
 
             "action_proposed":
@@ -279,12 +278,11 @@ class HuggingFaceLLMProvider(LLMProvider):
             "proposed_action":
                 an action object or null.
                 If present, "tool_name" MUST be strictly one of:
-                "send_email"
+                "send_message"
                 "find_available_slots"
                 "create_calendar_event"
                 "update_lead"
                 "create_hr_followup"
-                "send_message"
                 "update_business_status"
                 Never invent tool names like "connect_advisor". For advisor callbacks or consultations, use "create_hr_followup" (requires caller contact details) or assist conversationally.
                 Never claim that an action has already executed.
@@ -304,24 +302,23 @@ class HuggingFaceLLMProvider(LLMProvider):
 
             IMPORTANT DOMAIN RULES:
 
-            - Vayvora is represented only by "vayvora".
-            - EduSaaS is represented only by "edusaas".
+            - Infra Builder is represented only by "infra_builder".
             - General/unknown requests use "general".
-            - Never use descriptions such as "Technology/AI Services" as a domain.
+            - Never use descriptions such as "Real Estate Services" as a domain.
             - Never use descriptions such as "Initial information request" as a stage.
             - Use the exact enum strings above.
 
             EXAMPLE:
 
             {{
-                "detected_domain": "vayvora",
-                "detected_intent": "ai_solution",
-                "detected_sub_intent": "general_ai_solution",
-                "extracted_slots": {{}},
+                "detected_domain": "infra_builder",
+                "detected_intent": "property_inquiry",
+                "detected_sub_intent": "project_overview",
+                "extracted_slots": {{"project_name": "Skyline Towers"}},
                 "proposed_stage": "information",
-                "user_facing_response": "Vayvora provides enterprise AI solutions, autonomous agent workflows, and intelligent software engineering.",
+                "user_facing_response": "Skyline Towers in Whitefield offers premium 2 and 3 BHK luxury apartments starting from 1.2 Crores with modern amenities and possession by December 2026.",
                 "knowledge_required": true,
-                "knowledge_query": "Vayvora enterprise AI solutions RAG structured entity extraction",
+                "knowledge_query": "Skyline Towers Whitefield 2 BHK 3 BHK pricing amenities possession",
                 "action_proposed": false,
                 "proposed_action": null,
                 "needs_clarification": false,

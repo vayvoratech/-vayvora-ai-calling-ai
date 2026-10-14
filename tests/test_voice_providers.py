@@ -75,7 +75,7 @@ class TestGroqWhisperSTTProvider:
             mock_client = MagicMock()
             mock_groq_class.return_value = mock_client
 
-            mock_transcription = "What AI courses does EduSaaS provide?"
+            mock_transcription = "What properties does Infra Builder offer?"
             mock_client.audio.transcriptions.create.return_value = mock_transcription
 
             stt = GroqWhisperSTT(api_key="gsk_test_api_key_12345")
@@ -84,12 +84,12 @@ class TestGroqWhisperSTTProvider:
             dummy_pcm16 = b"\x00\x10" * 8000
             result = stt.transcribe_pcm16(dummy_pcm16)
 
-            assert result == "What AI courses does EduSaaS provide?"
+            assert result == "What properties does Infra Builder offer?"
             mock_client.audio.transcriptions.create.assert_called_once()
             call_kwargs = mock_client.audio.transcriptions.create.call_args[1]
             assert call_kwargs["model"] == "whisper-large-v3-turbo"
             assert call_kwargs["language"] == "en"
-            assert "Vayvora" in call_kwargs["prompt"]
+            assert "Infra Builder" in call_kwargs["prompt"]
             assert call_kwargs["response_format"] == "text"
 
     def test_02b_groq_stt_error_handling(self):
@@ -129,10 +129,18 @@ class TestDeepgramTTSProvider:
     async def test_04_deepgram_streaming_chunks(self):
         """Verify Deepgram TTS sends text and dispatches audio chunks via callback."""
         mock_ws = AsyncMock()
+        mock_ws.closed = False
+        mock_ws.open = True
+        mock_ws.close_code = None
+        mock_ws.state.name = "OPEN"
 
         async def empty_stream():
-            if False:
-                yield b""
+            try:
+                while True:
+                    await asyncio.sleep(3600)
+                    yield b""
+            except asyncio.CancelledError:
+                pass
 
         mock_ws.__aiter__.side_effect = empty_stream
 

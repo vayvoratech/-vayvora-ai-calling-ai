@@ -143,13 +143,13 @@ class TestGeminiLLMProvider:
         provider = GeminiLLMProvider(settings=settings)
 
         decision_data = {
-            "detected_domain": "edusaas",
-            "detected_intent": "course_information",
-            "extracted_slots": {"target_course": "AI Engineering"},
+            "detected_domain": "infra_builder",
+            "detected_intent": "project_inquiry",
+            "extracted_slots": {"preferred_project": "Skyline Towers"},
             "proposed_stage": "information",
-            "user_facing_response": "We have an extensive AI Engineering curriculum.",
+            "user_facing_response": "Skyline Towers offers luxury 2 and 3 BHK apartments in Whitefield.",
             "knowledge_required": True,
-            "knowledge_query": "AI Engineering syllabus prerequisites",
+            "knowledge_query": "Skyline Towers pricing and floor plans",
             "action_proposed": False,
             "needs_clarification": False,
             "suggested_termination": False,
@@ -165,9 +165,9 @@ class TestGeminiLLMProvider:
         }
         mock_resp = httpx.Response(status_code=200, json=mock_payload)
         with patch("httpx.AsyncClient.post", return_value=mock_resp):
-            decision = await provider.generate_decision("Tell me about AI course", "system prompt")
-            assert decision.detected_domain == DomainType.EDUSAAS
-            assert decision.detected_intent == "course_information"
+            decision = await provider.generate_decision("Tell me about Skyline Towers", "system prompt")
+            assert decision.detected_domain == DomainType.INFRA_BUILDER
+            assert decision.detected_intent == "project_inquiry"
             assert decision.knowledge_required is True
 
 
@@ -177,17 +177,17 @@ class TestMockLLMProvider:
     @pytest.mark.asyncio
     async def test_mock_canned_decision(self):
         canned = ConversationalDecision(
-            detected_domain=DomainType.VAYVORA,
-            detected_intent="company_location",
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="project_location",
             proposed_stage=ConversationStage.INFORMATION,
-            user_facing_response="Vayvora is headquartered in Bangalore, India.",
+            user_facing_response="Infra Builder properties are located across prime hubs in Bangalore.",
         )
         provider = MockLLMProvider(canned_decisions=[canned])
 
-        decision = await provider.generate_decision("Where are you located?", "system")
-        assert decision.detected_domain == DomainType.VAYVORA
-        assert decision.detected_intent == "company_location"
-        assert decision.user_facing_response == "Vayvora is headquartered in Bangalore, India."
+        decision = await provider.generate_decision("Where are your properties located?", "system")
+        assert decision.detected_domain == DomainType.INFRA_BUILDER
+        assert decision.detected_intent == "project_location"
+        assert decision.user_facing_response == "Infra Builder properties are located across prime hubs in Bangalore."
 
     @pytest.mark.asyncio
     async def test_mock_streaming(self):

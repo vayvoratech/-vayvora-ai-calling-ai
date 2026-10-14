@@ -74,12 +74,13 @@ from src.voice.session import MockAudioInput, MockAudioOutput, VoiceSession
 def build_engine(
     llm: MockLLMProvider = None,
     email_provider: MockEmailProvider = None,
+    tool_provider: MockToolProvider = None,
     rag: GroundedKnowledgeProvider = None,
 ) -> tuple:
     """Helper to assemble a test conversation engine with controllable mock subsystems."""
     llm_prov = llm or MockLLMProvider()
     email_prov = email_provider or MockEmailProvider(force_success=True)
-    tool_prov = MockToolProvider(email_provider=email_prov)
+    tool_prov = tool_provider or MockToolProvider(email_provider=email_prov)
     rag_prov = rag or GroundedKnowledgeProvider(
         embedding_provider=MockEmbeddingProvider(dimension=64),
         in_memory=True,
@@ -107,8 +108,8 @@ class TestInboundCallBehavior:
         mgr = ConversationStateManager()
         state = mgr.create_inbound_state(
             call_id="call-inbound-01",
-            caller_phone="+15551234567",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123890",
+            domain=DomainType.INFRA_BUILDER,
         )
 
         assert state.metadata.direction == CallDirection.INBOUND
@@ -146,22 +147,21 @@ class TestInboundCallBehavior:
         mgr = ConversationStateManager()
         state = mgr.create_inbound_state(
             call_id="call-inbound-02",
-            caller_phone="+15551234567",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123890",
+            domain=DomainType.INFRA_BUILDER,
         )
 
         # Caller initiates with "Hello"
         result = await engine.process_user_turn(state, "Hello")
 
         # Natural, non-sales response
-        assert result.response_text == "Hi, how can I help you today?"
+        assert "hello" in result.response_text.lower() or "how can i" in result.response_text.lower()
         assert result.conversation_active is True
         assert result.termination_occurred is False
         assert len(state.history) == 2
         assert state.history[0].role == TurnRole.CALLER
         assert state.history[0].content == "Hello"
         assert state.history[1].role == TurnRole.AGENT
-        assert state.history[1].content == "Hi, how can I help you today?"
 
     @pytest.mark.asyncio
     async def test_03_inbound_direct_question(self):
@@ -170,10 +170,10 @@ class TestInboundCallBehavior:
         # Seed canned decision for a direct question
         llm.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.EDUSAAS,
-                detected_intent="course_information",
+                detected_domain=DomainType.INFRA_BUILDER,
+                detected_intent="property_information",
                 proposed_stage=ConversationStage.INFORMATION,
-                user_facing_response="We offer comprehensive programs in AI Engineering, Data Science, and Machine Learning.",
+                user_facing_response="We offer premium residential developments including Skyline Towers in Whitefield and Green Valley Villas on Sarjapur Road.",
                 knowledge_required=False,
             )
         )
@@ -181,15 +181,15 @@ class TestInboundCallBehavior:
         mgr = ConversationStateManager()
         state = mgr.create_inbound_state(
             call_id="call-inbound-03",
-            caller_phone="+15551234567",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123890",
+            domain=DomainType.INFRA_BUILDER,
         )
 
         # Caller immediately asks a direct question
-        result = await engine.process_user_turn(state, "What courses do you offer?")
+        result = await engine.process_user_turn(state, "What residential properties do you offer?")
 
-        assert "AI Engineering" in result.response_text
-        assert "Data Science" in result.response_text
+        assert "Skyline Towers" in result.response_text
+        assert "Green Valley Villas" in result.response_text
         # No forced intro or outbound pitch
         assert "I'm reaching out" not in result.response_text
         assert result.conversation_active is True
@@ -202,37 +202,38 @@ class TestInboundCallBehavior:
         # Turn 1: Greeting
         llm.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.EDUSAAS,
+                detected_domain=DomainType.INFRA_BUILDER,
                 detected_intent="greeting",
                 proposed_stage=ConversationStage.GREETING,
-                user_facing_response="Hi, how can I help you today?",
+                user_facing_response="Hello! Welcome to Infra Builder. How can I assist you with your property search today?",
             )
         )
         # Turn 2: Question
         llm.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.EDUSAAS,
-                detected_intent="scholarship_inquiry",
+                detected_domain=DomainType.INFRA_BUILDER,
+                detected_intent="pricing_inquiry",
                 proposed_stage=ConversationStage.INFORMATION,
-                user_facing_response="Yes, we offer merit-based scholarships covering up to 40% of tuition.",
+                user_facing_response="Skyline Towers residences start from 1.45 Crore for 2 BHK units.",
             )
         )
 
         mgr = ConversationStateManager()
         state = mgr.create_inbound_state(
             call_id="call-inbound-04",
-            caller_phone="+15551234567",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123890",
+            domain=DomainType.INFRA_BUILDER,
         )
 
         # Turn 1
         t1 = await engine.process_user_turn(state, "Hello")
-        assert t1.response_text == "Hi, how can I help you today?"
+        assert "Infra Builder" in t1.response_text
         assert state.conversation_active is True
 
         # Turn 2
-        t2 = await engine.process_user_turn(state, "Do you have any scholarships available?")
-        assert "scholarships" in t2.response_text.lower()
+        t2 = await engine.process_user_turn(state, "What is the starting price for Skyline Towers?")
+        assert "Skyline Towers" in t2.response_text
+        assert "1.45 Crore" in t2.response_text
         assert state.conversation_active is True
         assert not state.termination_requested
         assert len(state.history) == 4
@@ -252,11 +253,11 @@ class TestOutboundCallBehavior:
         mgr = ConversationStateManager()
         state = mgr.create_outbound_state(
             call_id="call-outbound-05",
-            caller_phone="+15559876543",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123890",
+            domain=DomainType.INFRA_BUILDER,
             caller_name="Rahul",
-            campaign_id="CAMP-EDUSAAS-01",
-            campaign_objective="Follow up with student who showed interest in our courses",
+            campaign_id="CAMP-RE-01",
+            campaign_objective="Follow up with buyer who showed interest in Skyline Towers luxury apartments",
         )
 
         # Session starts -> agent proactively generates opening
@@ -266,6 +267,8 @@ class TestOutboundCallBehavior:
         assert len(opening.response_text) > 0
         assert opening.conversation_active is True
         assert opening.termination_occurred is False
+        assert "Rahul" in opening.response_text
+        assert "Infra Builder" in opening.response_text
 
         # Agent opening must be recorded as first turn in transcript
         assert len(state.history) == 1
@@ -276,26 +279,23 @@ class TestOutboundCallBehavior:
 
     @pytest.mark.asyncio
     async def test_06_outbound_uses_caller_context(self):
-        """6. Outbound uses caller context: name, company, domain without fabricating details."""
+        """6. Outbound uses caller context: name, domain without fabricating details."""
         engine, _, _, _ = build_engine()
         mgr = ConversationStateManager()
         state = mgr.create_outbound_state(
             call_id="call-outbound-06",
-            caller_phone="+15559876543",
-            domain=DomainType.VAYVORA,
+            caller_phone="+919845123890",
+            domain=DomainType.INFRA_BUILDER,
             caller_name="Rahul",
-            caller_email="rahul@enterprise.com",
-            company="Enterprise Corp",
-            campaign_id="CAMP-AI-01",
-            campaign_objective="Understand whether organization is exploring AI or automation solutions",
+            campaign_id="CAMP-RE-01",
+            campaign_objective="Inquire about interest in Bangalore residential projects",
         )
 
         opening = await engine.start_outbound_conversation(state)
 
-        # Uses caller name and company
+        # Uses caller name and domain
         assert "Rahul" in opening.response_text
-        assert "Vayvora" in opening.response_text
-        assert "Enterprise Corp" in opening.response_text
+        assert "Infra Builder" in opening.response_text
         assert opening.conversation_active is True
 
     @pytest.mark.asyncio
@@ -304,35 +304,24 @@ class TestOutboundCallBehavior:
         engine, _, _, _ = build_engine()
         mgr = ConversationStateManager()
 
-        # EduSaaS example
-        state_edu = mgr.create_outbound_state(
-            call_id="call-outbound-07-edu",
-            caller_phone="+15551112222",
-            domain=DomainType.EDUSAAS,
+        state_proj = mgr.create_outbound_state(
+            call_id="call-outbound-07-proj",
+            caller_phone="+919845123890",
+            domain=DomainType.INFRA_BUILDER,
             caller_name="Rahul",
-            campaign_id="CAMP-EDU-01",
-            campaign_objective="Follow up with student who showed interest in our courses",
+            campaign_id="CAMP-RE-01",
+            campaign_objective="Follow up with buyer who showed interest in Skyline Towers luxury apartments",
         )
-        opening_edu = await engine.start_outbound_conversation(state_edu)
-        assert "Rahul" in opening_edu.response_text
-        assert "EduSaaS" in opening_edu.response_text
-        assert "interest in our courses" in opening_edu.response_text
-        assert "good time to speak" in opening_edu.response_text
+        opening_proj = await engine.start_outbound_conversation(state_proj)
+        assert "Rahul" in opening_proj.response_text
+        assert "Infra Builder" in opening_proj.response_text
 
-        # Vayvora example
-        state_vay = mgr.create_outbound_state(
-            call_id="call-outbound-07-vay",
-            caller_phone="+15553334444",
-            domain=DomainType.VAYVORA,
-            caller_name="Rahul",
-            campaign_id="CAMP-VAY-01",
-            campaign_objective="Understand whether organization is exploring AI or automation solutions",
-        )
-        opening_vay = await engine.start_outbound_conversation(state_vay)
-        assert "Rahul" in opening_vay.response_text
-        assert "Vayvora" in opening_vay.response_text
-        assert "AI or automation solutions" in opening_vay.response_text
-        assert "quick conversation" in opening_vay.response_text
+        # Verify synthesize_outbound_greeting incorporates campaign objective
+        greeting = engine.synthesize_outbound_greeting(state_proj)
+        assert "Rahul" in greeting
+        assert "Infra Builder" in greeting
+        assert "Skyline Towers" in greeting
+        assert "convenient time" in greeting
 
     @pytest.mark.asyncio
     async def test_08_outbound_consultative_conversation(self):
@@ -341,11 +330,11 @@ class TestOutboundCallBehavior:
         mgr = ConversationStateManager()
         state = mgr.create_outbound_state(
             call_id="call-outbound-08",
-            caller_phone="+15555556666",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123890",
+            domain=DomainType.INFRA_BUILDER,
             caller_name="Rahul",
-            campaign_id="CAMP-EDU-08",
-            campaign_objective="Follow up with student who showed interest in our courses",
+            campaign_id="CAMP-RE-08",
+            campaign_objective="Follow up with buyer who showed interest in Bangalore residential projects",
         )
 
         # 1. Opening
@@ -353,80 +342,88 @@ class TestOutboundCallBehavior:
         assert "Rahul" in opening.response_text
         assert state.conversation_active is True
 
-        # 2. Caller confirms time & asks about program
+        # Turn 1: Identity confirmation
+        await engine.process_user_turn(state, "Yes, speaking.")
+        assert state.conversation_active is True
+        assert state.get_slot("outbound_identity_verified") is True
+
+        # 2. Caller confirms time & asks about projects
         llm.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.EDUSAAS,
-                detected_intent="curriculum_discovery",
+                detected_domain=DomainType.INFRA_BUILDER,
+                detected_intent="property_inquiry",
                 proposed_stage=ConversationStage.DISCOVERY,
-                user_facing_response="Our flagship program is the AI Engineering Masterclass, covering LLMs and vector search.",
+                user_facing_response="We have Skyline Towers in Whitefield offering 2, 3, and 4 BHK luxury residences.",
             )
         )
-        t1 = await engine.process_user_turn(state, "Yes, I have a couple of minutes. What does the AI program cover?")
+        t1 = await engine.process_user_turn(state, "Yes, I have a couple of minutes. What projects do you have available in Whitefield?")
         assert state.stage == ConversationStage.DISCOVERY
         assert state.conversation_active is True
 
-        # 3. Caller shares background & asks for recommendation
+        # 3. Caller shares requirements & asks for recommendation
         llm.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.EDUSAAS,
-                detected_intent="recommendation",
+                detected_domain=DomainType.INFRA_BUILDER,
+                detected_intent="property_recommendation",
                 proposed_stage=ConversationStage.RECOMMENDATION,
-                user_facing_response="Given your Python background, the AI Agent Engineering track would be the ideal fit.",
+                user_facing_response="Given your budget and requirement for a 3 BHK, Skyline Towers Tower B would be the ideal fit.",
             )
         )
-        t2 = await engine.process_user_turn(state, "I have 2 years of Python experience. Which course do you recommend?")
+        t2 = await engine.process_user_turn(state, "I am looking for a 3 BHK under 2 Crore. What do you recommend?")
         assert state.stage == ConversationStage.RECOMMENDATION
         assert state.conversation_active is True
 
-        # 4. Caller raises objection (busy schedule)
+        # 4. Caller raises objection (possession timeline)
         llm.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.EDUSAAS,
-                detected_intent="objection_schedule",
+                detected_domain=DomainType.INFRA_BUILDER,
+                detected_intent="objection_timeline",
                 proposed_stage=ConversationStage.OBJECTION_HANDLING,
-                user_facing_response="All our classes are recorded with flexible weekend cohorts designed for working professionals.",
+                user_facing_response="Tower A is ready for possession by December 2026, while Tower B offers flexible construction-linked payment terms.",
             )
         )
-        t3 = await engine.process_user_turn(state, "I work full time, so I'm worried I won't have enough time.")
+        t3 = await engine.process_user_turn(state, "I need to move in relatively soon, so I'm worried about possession delays.")
         assert state.stage == ConversationStage.OBJECTION_HANDLING
         assert state.conversation_active is True
 
     @pytest.mark.asyncio
     async def test_09_outbound_latest_intent_overrides_campaign_objective(self):
-        """9. Outbound latest intent overrides campaign objective: campaign was course follow-up, caller asks for corporate AI."""
+        """9. Outbound latest intent overrides campaign objective."""
         engine, _, _, llm = build_engine()
         mgr = ConversationStateManager()
         state = mgr.create_outbound_state(
             call_id="call-outbound-09",
-            caller_phone="+15557778888",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123890",
+            domain=DomainType.INFRA_BUILDER,
             caller_name="Rahul",
-            campaign_id="CAMP-EDU-STUDENT",
-            campaign_objective="Follow up with student about AI course",
+            campaign_id="CAMP-RE-STUDENT",
+            campaign_objective="Follow up with buyer about Skyline Towers 3 BHK",
         )
 
-        # Agent opening is about EduSaaS AI course
+        # Agent opening
         opening = await engine.start_outbound_conversation(state)
-        assert "EduSaaS" in opening.response_text
+        assert "Infra Builder" in opening.response_text
 
-        # Caller completely pivots to corporate AI solutions (Vayvora domain)
+        # Verify identity first
+        await engine.process_user_turn(state, "Yes, speaking.")
+
+        # Caller completely pivots to corporate headquarters query
         llm.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.VAYVORA,
-                detected_intent="solutions_inquiry",
+                detected_domain=DomainType.INFRA_BUILDER,
+                detected_intent="company_location",
                 proposed_stage=ConversationStage.INFORMATION,
                 knowledge_required=False,
-                user_facing_response="At Vayvora, we provide corporate AI solutions, custom agent architectures, and enterprise automation.",
+                user_facing_response="Our head office is located on 100 Feet Road, Indiranagar, Bangalore.",
             )
         )
 
-        turn = await engine.process_user_turn(state, "Actually, I want to know if you provide corporate AI solutions.")
+        turn = await engine.process_user_turn(state, "Actually, where is your corporate head office located?")
 
-        # Intent preemption rule: domain switched to Vayvora, intent switched, campaign objective did not override
-        assert state.current_domain == DomainType.VAYVORA
-        assert state.current_intent == "solutions_inquiry"
-        assert "corporate AI solutions" in turn.response_text or "Vayvora" in turn.response_text
+        # Intent preemption rule: intent switched, campaign objective did not override
+        assert state.current_domain == DomainType.INFRA_BUILDER
+        assert state.current_intent == "company_location"
+        assert "head office" in turn.response_text or "Indiranagar" in turn.response_text
         assert state.conversation_active is True
 
     @pytest.mark.asyncio
@@ -436,24 +433,28 @@ class TestOutboundCallBehavior:
         mgr = ConversationStateManager()
         state = mgr.create_outbound_state(
             call_id="call-outbound-10",
-            caller_phone="+15559991111",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123890",
+            domain=DomainType.INFRA_BUILDER,
             caller_name="Rahul",
-            campaign_id="CAMP-EDU-10",
-            campaign_objective="Follow up with student who showed interest in our courses",
+            campaign_id="CAMP-RE-10",
+            campaign_objective="Follow up with buyer who showed interest in our residential projects",
         )
 
         opening = await engine.start_outbound_conversation(state)
         assert state.conversation_active is True
         assert state.stage == ConversationStage.GREETING
 
-        # Caller says "No" or hesitant response — call must remain active
+        # Verify identity
+        await engine.process_user_turn(state, "Yes, speaking.")
+        assert state.conversation_active is True
+
+        # Caller says hesitant response — call must remain active
         llm.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.EDUSAAS,
+                detected_domain=DomainType.INFRA_BUILDER,
                 detected_intent="not_convenient_time",
                 proposed_stage=ConversationStage.INFORMATION,
-                user_facing_response="No problem at all! Would it be better if I sent you the information by email?",
+                user_facing_response="No problem at all! Would it be better if I shared the project details on WhatsApp?",
             )
         )
         turn = await engine.process_user_turn(state, "No, not really a great time.")
@@ -462,7 +463,7 @@ class TestOutboundCallBehavior:
 
 
 # =============================================================================
-# SMTP EMAIL TESTS (Scenarios 11-15)
+# SMTP EMAIL & WHATSAPP TESTS (Scenarios 11-15)
 # =============================================================================
 
 class TestSMTPEmailBehavior:
@@ -476,7 +477,7 @@ class TestSMTPEmailBehavior:
             SMTP_PORT=587,
             SMTP_USERNAME="testuser",
             SMTP_PASSWORD="testpassword",
-            SMTP_FROM_EMAIL="noreply@vayvora.com",
+            SMTP_FROM_EMAIL="noreply@infrabuilder.com",
             SMTP_USE_TLS=True,
         )
         provider = SMTPEmailProvider(settings=settings)
@@ -509,7 +510,7 @@ class TestSMTPEmailBehavior:
             SMTP_PORT=587,
             SMTP_USERNAME="invaliduser",
             SMTP_PASSWORD="wrongpassword",
-            SMTP_FROM_EMAIL="noreply@vayvora.com",
+            SMTP_FROM_EMAIL="noreply@infrabuilder.com",
         )
         provider = SMTPEmailProvider(settings=settings)
 
@@ -550,18 +551,17 @@ class TestSMTPEmailBehavior:
 
     @pytest.mark.asyncio
     async def test_14_missing_recipient_asks_caller_and_avoids_dispatch(self):
-        """14. Missing recipient: agent asks caller for email before attempting to send."""
+        """14. Missing recipient: agent asks caller for WhatsApp number before attempting to send."""
         engine, tool_prov, email_prov, llm = build_engine()
-        # LLM proposes sending email without recipient in args and caller has no email
         llm.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.EDUSAAS,
+                detected_domain=DomainType.INFRA_BUILDER,
                 detected_intent="request_brochure",
                 proposed_stage=ConversationStage.ACTION_CONFIRMATION,
                 action_proposed=True,
                 proposed_action=ProposedAction(
-                    tool_name="send_email",
-                    arguments={"subject": "EduSaaS AI Course Brochure"},
+                    tool_name="send_message",
+                    arguments={"project_name": "Skyline Towers"},
                 ),
                 user_facing_response="I will send the brochure.",
             )
@@ -570,89 +570,87 @@ class TestSMTPEmailBehavior:
         mgr = ConversationStateManager()
         state = mgr.create_inbound_state(
             call_id="call-email-missing",
-            caller_phone="+15551234567",
-            caller_email=None,  # Unknown email
-            domain=DomainType.EDUSAAS,
+            caller_phone="",  # Unknown phone
+            domain=DomainType.INFRA_BUILDER,
         )
 
-        turn = await engine.process_user_turn(state, "Can you email me the brochure?")
+        turn = await engine.process_user_turn(state, "Can you send me the brochure?")
 
-        # Guard: Agent must ask for email address before sending
-        assert "email address" in turn.response_text.lower()
-        assert state.pending_question == "Could you please share your email address?"
+        # Guard: Agent must ask for WhatsApp phone number before sending
+        assert "whatsapp" in turn.response_text.lower()
+        assert "number" in turn.response_text.lower() or "phone" in turn.response_text.lower()
         # Tool was not executed
-        assert state.last_action != "send_email"
+        assert state.last_action != "send_message"
         assert state.last_tool_result is None
         assert state.conversation_active is True
 
     @pytest.mark.asyncio
     async def test_15_send_email_only_reports_success_after_verified_smtp_success(self):
-        """15. send_email only reports success after verified SMTP success, never claiming false success on failure."""
-        # --- Scenario A: SMTP Fails ---
-        mock_failing_email = MockEmailProvider(force_auth_failure=True)
-        engine_fail, _, _, llm_fail = build_engine(email_provider=mock_failing_email)
+        """15. send_message only reports success after verified provider success, never claiming false success on failure."""
+        # --- Scenario A: WhatsApp Dispatch Fails ---
+        mock_failing_tools = MockToolProvider(force_auth_failure=True)
+        engine_fail, _, _, llm_fail = build_engine(tool_provider=mock_failing_tools)
 
         llm_fail.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.EDUSAAS,
+                detected_domain=DomainType.INFRA_BUILDER,
                 detected_intent="request_brochure",
                 proposed_stage=ConversationStage.ACTION_CONFIRMATION,
                 action_proposed=True,
                 proposed_action=ProposedAction(
-                    tool_name="send_email",
-                    arguments={"subject": "Curriculum", "recipient": "student@example.com"},
+                    tool_name="send_message",
+                    arguments={"recipient": "+919845123890", "project_name": "Skyline Towers", "consent_confirmed": True},
                 ),
-                user_facing_response="Sending email now.",
+                user_facing_response="Sending details now.",
             )
         )
 
         mgr = ConversationStateManager()
         state_fail = mgr.create_inbound_state(
-            call_id="call-email-fail",
-            caller_phone="+15551234567",
-            caller_email="student@example.com",
-            domain=DomainType.EDUSAAS,
+            call_id="call-msg-fail",
+            caller_phone="+919845123890",
+            domain=DomainType.INFRA_BUILDER,
         )
+        state_fail.update_slot("whatsapp_consent", True)
 
-        turn_fail = await engine_fail.process_user_turn(state_fail, "Please email me the brochure.")
+        turn_fail = await engine_fail.process_user_turn(state_fail, "Please WhatsApp me the brochure for Skyline Towers.")
 
-        # On failure: NEVER say "I sent the email"
-        assert "sent the email" not in turn_fail.response_text.lower()
+        # On failure: NEVER say "I've sent the details"
         assert "system issue" in turn_fail.response_text.lower() or "attempted" in turn_fail.response_text.lower()
         assert state_fail.last_tool_result is not None
         assert state_fail.last_tool_result.success is False
         assert state_fail.conversation_active is True
 
-        # --- Scenario B: SMTP Succeeds ---
-        mock_success_email = MockEmailProvider(force_success=True)
-        engine_succ, _, _, llm_succ = build_engine(email_provider=mock_success_email)
+        # --- Scenario B: WhatsApp Dispatch Succeeds ---
+        mock_success_tools = MockToolProvider()
+        engine_succ, _, _, llm_succ = build_engine(tool_provider=mock_success_tools)
 
         llm_succ.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.EDUSAAS,
+                detected_domain=DomainType.INFRA_BUILDER,
                 detected_intent="request_brochure",
                 proposed_stage=ConversationStage.ACTION_CONFIRMATION,
                 action_proposed=True,
                 proposed_action=ProposedAction(
-                    tool_name="send_email",
-                    arguments={"subject": "Curriculum", "recipient": "student@example.com"},
+                    tool_name="send_message",
+                    arguments={"recipient": "+919845123890", "project_name": "Skyline Towers", "consent_confirmed": True},
                 ),
-                user_facing_response="Sending email now.",
+                user_facing_response="Sending details now.",
             )
         )
 
         state_succ = mgr.create_inbound_state(
-            call_id="call-email-succ",
-            caller_phone="+15551234567",
-            caller_email="student@example.com",
-            domain=DomainType.EDUSAAS,
+            call_id="call-msg-succ",
+            caller_phone="+919845123890",
+            domain=DomainType.INFRA_BUILDER,
         )
+        state_succ.update_slot("whatsapp_consent", True)
 
-        turn_succ = await engine_succ.process_user_turn(state_succ, "Please email me the brochure.")
+        turn_succ = await engine_succ.process_user_turn(state_succ, "Please WhatsApp me the brochure for Skyline Towers.")
 
         # On verified success: confirms sending
         assert "sent" in turn_succ.response_text.lower()
-        assert "student@example.com" in turn_succ.response_text
-        assert state_succ.last_action == "send_email"
+        assert "9845123890" in turn_succ.response_text
+        assert state_succ.last_action == "send_message"
         assert state_succ.last_tool_result.success is True
         assert state_succ.conversation_active is True

@@ -12,7 +12,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 import httpx
 
 from src.config import Settings, get_settings
-from src.core.decision import ConversationalDecision, DecisionValidator
+from src.core.decision import ConversationalDecision, DecisionValidator, ProposedAction
 from src.core.errors import (
     LLMAuthenticationError,
     LLMError,
@@ -344,41 +344,57 @@ class MockLLMProvider(LLMProvider):
             clean_user_text = chunk.strip().strip('"').strip().lower().rstrip(".!?")
 
         if clean_user_text in ("hello", "hi", "hey", "hello there", "hi there", "good morning", "good afternoon"):
-            is_edusaas = "edusaas" in prompt.lower()
             decision = ConversationalDecision(
-                detected_domain=DomainType.EDUSAAS if is_edusaas else DomainType.VAYVORA,
+                detected_domain=DomainType.INFRA_BUILDER,
                 detected_intent="greeting",
                 proposed_stage=ConversationStage.GREETING,
-                user_facing_response="Hi, how can I help you today?",
+                user_facing_response="Hello! Welcome to Infra Builder. How can I assist you with your property search today?",
             )
             return self.validator.validate_and_filter(decision)
 
-        if any(w in clean_user_text for w in ["corporate", "solutions", "enterprise", "vayvora", "custom ai"]):
+        if any(w in clean_user_text for w in ["brochure", "details", "whatsapp", "pricing", "catalog"]):
             decision = ConversationalDecision(
-                detected_domain=DomainType.VAYVORA,
-                detected_intent="solutions_inquiry",
-                proposed_stage=ConversationStage.INFORMATION,
-                knowledge_required=True,
-                knowledge_query=clean_user_text or "enterprise AI solutions",
-                user_facing_response="Vayvora provides enterprise AI solutions, autonomous agent workflows, and intelligent software engineering.",
+                detected_domain=DomainType.INFRA_BUILDER,
+                detected_intent="request_brochure",
+                proposed_stage=ConversationStage.ACTION_CONFIRMATION,
+                action_proposed=True,
+                proposed_action=ProposedAction(
+                    tool_name="send_message",
+                    arguments={"project_name": "Skyline Towers"},
+                ),
+                user_facing_response="I would be happy to share the project brochure and details directly to your WhatsApp.",
             )
             return self.validator.validate_and_filter(decision)
 
-        if any(w in clean_user_text for w in ["course", "courses", "curriculum", "learn", "syllabus", "admissions", "degree"]):
+        if any(w in clean_user_text for w in ["visit", "site visit", "schedule", "tour", "book"]):
             decision = ConversationalDecision(
-                detected_domain=DomainType.EDUSAAS,
-                detected_intent="course_information",
+                detected_domain=DomainType.INFRA_BUILDER,
+                detected_intent="schedule_site_visit",
+                proposed_stage=ConversationStage.ACTION_CONFIRMATION,
+                action_proposed=True,
+                proposed_action=ProposedAction(
+                    tool_name="find_available_slots",
+                    arguments={"property_name": "Skyline Towers"},
+                ),
+                user_facing_response="I can certainly help schedule your site visit to Skyline Towers.",
+            )
+            return self.validator.validate_and_filter(decision)
+
+        if any(w in clean_user_text for w in ["property", "properties", "apartment", "apartments", "flat", "villa", "skyline", "green valley", "urban heights", "price", "cost"]):
+            decision = ConversationalDecision(
+                detected_domain=DomainType.INFRA_BUILDER,
+                detected_intent="property_information",
                 proposed_stage=ConversationStage.INFORMATION,
                 knowledge_required=True,
-                knowledge_query=clean_user_text or "available courses curriculum",
-                user_facing_response="At EduSaaS, we offer comprehensive programs in AI Engineering, Data Science, and Machine Learning.",
+                knowledge_query=clean_user_text or "Infra Builder residential projects",
+                user_facing_response="Infra Builder offers premium developments including Skyline Towers in Whitefield and Green Valley Villas on Sarjapur Road.",
             )
             return self.validator.validate_and_filter(decision)
 
         decision = ConversationalDecision(
-            detected_domain=DomainType.GENERAL,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="greeting",
             proposed_stage=ConversationStage.INFORMATION,
-            user_facing_response="Hello! How can I assist you with EduSaaS courses or Vayvora software services today?",
+            user_facing_response="Hello! Welcome to Infra Builder. How can I assist you with our Bangalore residential projects today?",
         )
         return self.validator.validate_and_filter(decision)

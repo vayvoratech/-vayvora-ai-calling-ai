@@ -25,6 +25,9 @@ class RAGConfig:
     redis_url: str = field(
         default_factory=lambda: os.getenv("REDIS_URL", "redis://localhost:6379/0")
     )
+    redis_infra_builder_index: str = field(
+        default_factory=lambda: os.getenv("REDIS_INFRA_BUILDER_INDEX", "idx:infra_builder_vdb")
+    )
     redis_edusaas_index: str = field(
         default_factory=lambda: os.getenv("REDIS_EDUSAAS_INDEX", "idx:edusaas_vdb")
     )

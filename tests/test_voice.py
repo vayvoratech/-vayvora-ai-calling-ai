@@ -119,7 +119,7 @@ def build_test_voice_components(
     state = mgr.create_inbound_state(
         call_id=session_id,
         caller_phone="+15551234567",
-        domain=DomainType.EDUSAAS,
+        domain=DomainType.INFRA_BUILDER,
     )
 
     # Core engine dependencies
@@ -603,32 +603,33 @@ class TestRaceConditions:
     async def test_26_mcp_action_continues_through_interruption(self) -> None:
         """External MCP tool actions execute and verify safely without aborting underlying mutation."""
         dec = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="request_brochure",
             proposed_stage=ConversationStage.ACTION_CONFIRMATION,
             action_proposed=True,
             proposed_action=ProposedAction(
-                tool_name="send_email",
-                arguments={"recipient": "caller@example.com", "subject": "Syllabus"},
+                tool_name="send_message",
+                arguments={"recipient": "+919845123456", "message": "Here is the project brochure.", "consent": True},
             ),
-            user_facing_response="I have sent the curriculum.",
+            user_facing_response="I have sent the project brochure via WhatsApp.",
         )
         session, pipeline, _, _, _, _, tools = build_test_voice_components(
             vad_probabilities=[0.9, 0.05],
-            stt_transcriptions=["Please email me the syllabus"],
+            stt_transcriptions=["Please send me the brochure on WhatsApp"],
             llm_canned_decisions=[dec],
             min_speech_duration=0.2,
             min_silence_duration=0.2,
         )
-        session.conversation_state.caller.email = "caller@example.com"
+        session.conversation_state.caller.phone = "+919845123456"
+        session.conversation_state.update_slot("whatsapp_consent", True)
         session.start()
         await session.process_audio_chunk(make_speech_chunk(duration=0.2))
-        await session.process_audio_chunk(make_silence_chunk(duration=0.2))
+        _, _, tts_res = await session.process_audio_chunk(make_silence_chunk(duration=0.2))
 
         # Tool was executed and verified
         assert len(tools.dispatched_requests) == 1
-        assert tools.dispatched_requests[0].action_name == "send_email"
-        assert session.conversation_state.last_action == "send_email"
+        assert tools.dispatched_requests[0].action_name == "send_message"
+        assert session.conversation_state.last_action == "send_message"
         assert session.conversation_state.last_tool_result.success is True
 
 
@@ -685,67 +686,67 @@ class TestVoiceConversationSemantics:
     async def test_29_intent_switching_works(self) -> None:
         """Caller mid-call intent switch is recognized and tracked."""
         dec = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
-            detected_intent="fee_inquiry",
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="pricing_inquiry",
             proposed_stage=ConversationStage.INFORMATION,
-            user_facing_response="Our courses are competitively priced.",
+            user_facing_response="Our apartments start from 75 Lakhs.",
         )
         session, pipeline, _, _, _, _, _ = build_test_voice_components(
             vad_probabilities=[0.9, 0.05],
-            stt_transcriptions=["Actually, what are the fees?"],
+            stt_transcriptions=["Actually, what are the prices?"],
             llm_canned_decisions=[dec],
             min_speech_duration=0.2,
             min_silence_duration=0.2,
         )
         session.start()
-        session.conversation_state.current_intent = "curriculum_inquiry"
+        session.conversation_state.current_intent = "project_inquiry"
 
         await session.process_audio_chunk(make_speech_chunk(duration=0.2))
         await session.process_audio_chunk(make_silence_chunk(duration=0.2))
 
-        assert session.conversation_state.current_intent == "fee_inquiry"
+        assert session.conversation_state.current_intent == "pricing_inquiry"
 
     @pytest.mark.asyncio
     async def test_30_domain_switching_works(self) -> None:
-        """Caller switching from EduSaaS to Vayvora updates current_domain."""
+        """Infra Builder remains the sole stable active domain."""
         dec = ConversationalDecision(
-            detected_domain=DomainType.VAYVORA,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="solutions_inquiry",
             proposed_stage=ConversationStage.INFORMATION,
-            user_facing_response="Vayvora builds enterprise AI platforms.",
+            user_facing_response="Infra Builder develops premium residential communities.",
         )
         session, pipeline, _, _, _, _, _ = build_test_voice_components(
             vad_probabilities=[0.9, 0.05],
-            stt_transcriptions=["Tell me about Vayvora software services."],
+            stt_transcriptions=["Tell me about Infra Builder properties."],
             llm_canned_decisions=[dec],
             min_speech_duration=0.2,
             min_silence_duration=0.2,
         )
         session.start()
-        assert session.conversation_state.current_domain == DomainType.EDUSAAS
+        assert session.conversation_state.current_domain == DomainType.INFRA_BUILDER
 
         await session.process_audio_chunk(make_speech_chunk(duration=0.2))
         await session.process_audio_chunk(make_silence_chunk(duration=0.2))
 
-        assert session.conversation_state.current_domain == DomainType.VAYVORA
+        assert session.conversation_state.current_domain == DomainType.INFRA_BUILDER
 
     @pytest.mark.asyncio
     async def test_31_business_status_does_not_terminate_call(self) -> None:
-        """Updating lead business status to 'qualified' keeps conversation active."""
+        """Updating lead business status keeps conversation active."""
         dec = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
-            detected_intent="enrollment_interest",
+            detected_domain=DomainType.INFRA_BUILDER,
+            detected_intent="site_visit_interest",
             proposed_stage=ConversationStage.INFORMATION,
             action_proposed=True,
             proposed_action=ProposedAction(
                 tool_name="update_business_status",
                 arguments={"status": "interested"},
             ),
-            user_facing_response="I have marked you as interested. Let us discuss dates.",
+            user_facing_response="I have marked your interest for a site visit.",
         )
         session, pipeline, _, _, _, _, _ = build_test_voice_components(
             vad_probabilities=[0.9, 0.05],
-            stt_transcriptions=["I want to enroll next month."],
+            stt_transcriptions=["I want to visit next weekend."],
             llm_canned_decisions=[dec],
             min_speech_duration=0.2,
             min_silence_duration=0.2,

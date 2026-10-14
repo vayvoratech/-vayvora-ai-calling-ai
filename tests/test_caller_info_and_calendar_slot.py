@@ -1,12 +1,12 @@
-"""Tests for Caller Information & Calendar Slot Handling (Bug 1 & Bug 2).
+"""Tests for Caller Information & Calendar Slot Handling for Infra Builder.
 
 Verifies:
 1. Complete elimination of sample/fallback caller data (no Alice, no dummy emails/phones).
 2. Unknown inbound and partial outbound caller profiles remain cleanly None/empty.
-3. Canonical 'meeting_preference' slot validation across all domains (EduSaaS, Vayvora, General).
+3. Canonical 'meeting_preference' slot validation in Infra Builder and General domains.
 4. Date/time extraction (e.g. 'today by 12 PM', 'Tomorrow at 10 AM') into 'meeting_preference'.
 5. Persistence of 'meeting_preference' across conversational turns.
-6. Calendar tool execution guard automatically reusing 'meeting_preference' without repeatedly asking.
+6. Site visit booking safety invariant: checks available slots before booking, obtains confirmation, confirms only after verified success.
 7. Slot revision when caller updates preference ('actually, make it 2 PM instead').
 """
 
@@ -51,7 +51,7 @@ class TestBug1RemoveSampleCallerData:
         state = state_manager.create_inbound_state(
             call_id="call-inbound-anon",
             caller_phone=None,
-            domain=DomainType.VAYVORA,
+            domain=DomainType.INFRA_BUILDER,
             caller_name=None,
             caller_email=None,
             caller_company=None,
@@ -70,18 +70,18 @@ class TestBug1RemoveSampleCallerData:
         """Outbound call with partial target contact data must NOT invent missing fields."""
         state = state_manager.create_outbound_state(
             call_id="call-outbound-partial",
-            caller_phone="+14155552671",
-            domain=DomainType.EDUSAAS,
+            caller_phone="+919845123890",
+            domain=DomainType.INFRA_BUILDER,
             caller_name="Dr. John Doe",
-            campaign_id="CAMP-TEST-01",
-            campaign_objective="Discuss Masterclass",
+            campaign_id="CAMP-RE-01",
+            campaign_objective="Discuss Skyline Towers residences",
             caller_email=None,
             company=None,
             known_purpose=None,
         )
 
         assert state.caller.name == "Dr. John Doe"
-        assert state.caller.phone == "+14155552671"
+        assert state.caller.phone == "+919845123890"
         assert state.caller.email is None
         assert state.caller.company is None
         assert state.caller.known_purpose is None
@@ -102,7 +102,7 @@ class TestBug1RemoveSampleCallerData:
         """Calling create_session endpoint without caller info creates an anonymous session."""
         req = CreateSessionRequest(
             direction="inbound",
-            domain="vayvora",
+            domain="infra_builder",
         )
         resp = await create_session(req)
         assert resp["session_id"] is not None
@@ -118,17 +118,17 @@ class TestBug1RemoveSampleCallerData:
     async def test_missing_email_action_does_not_invent_sample_email(
         self, state_manager: ConversationStateManager, tool_provider: MockToolProvider
     ):
-        """When email is missing, the engine asks the caller for it instead of inventing a dummy."""
+        """When brochure is requested, the engine directs to WhatsApp instead of inventing dummy email."""
         mock_llm = MockLLMProvider()
         mock_llm.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.VAYVORA,
+                detected_domain=DomainType.INFRA_BUILDER,
                 detected_intent="request_brochure",
                 proposed_stage=ConversationStage.ACTION_CONFIRMATION,
                 action_proposed=True,
                 proposed_action=ProposedAction(
-                    tool_name="send_email",
-                    arguments={"subject": "Brochure"},
+                    tool_name="send_message",
+                    arguments={"project_name": "Skyline Towers"},
                 ),
                 user_facing_response="I will send over the brochure.",
             )
@@ -136,13 +136,13 @@ class TestBug1RemoveSampleCallerData:
         engine = ConversationEngine(llm_provider=mock_llm, tool_provider=tool_provider)
         state = state_manager.create_inbound_state(
             call_id="call-email-guard",
-            domain=DomainType.VAYVORA,
+            domain=DomainType.INFRA_BUILDER,
         )
 
         turn_result = await engine.process_user_turn(state, "Please send me the brochure.")
 
-        # Email guard should intercept and request email without executing tool
-        assert "Could you please share your email address?" in turn_result.response_text
+        # WhatsApp flow intercepts and asks for WhatsApp phone number
+        assert "whatsapp" in turn_result.response_text.lower()
         assert state.caller.email is None
         assert "alice" not in turn_result.response_text.lower()
         assert "example.com" not in turn_result.response_text.lower()
@@ -165,17 +165,17 @@ class TestBug2CalendarSlotHandling:
         assert extract_datetime_preference("next Tuesday at 10 AM IST") == "next Tuesday at 10 AM IST"
         assert extract_datetime_preference("actually, make it 2 PM instead") == "2 PM"
         assert extract_datetime_preference("can we do 2:00 PM") == "2:00 PM"
-        assert extract_datetime_preference("What courses do you offer?") is None
+        assert extract_datetime_preference("What properties do you offer?") is None
         assert extract_datetime_preference("Hello") is None
 
     def test_decision_validator_preserves_meeting_preference_in_all_domains(
         self, decision_validator: DecisionValidator
     ):
-        """DecisionValidator must never strip meeting_preference in EduSaaS, Vayvora, or General."""
-        for domain in [DomainType.EDUSAAS, DomainType.VAYVORA, DomainType.GENERAL]:
+        """DecisionValidator must never strip meeting_preference in Infra Builder or General."""
+        for domain in [DomainType.INFRA_BUILDER, DomainType.GENERAL]:
             decision = ConversationalDecision(
                 detected_domain=domain,
-                detected_intent="meeting_request" if domain == DomainType.VAYVORA else "course_information",
+                detected_intent="meeting_request" if domain == DomainType.INFRA_BUILDER else "property_information",
                 extracted_slots={"meeting_preference": "today by 12 PM"},
                 user_facing_response="Understood, 12 PM works.",
             )
@@ -188,7 +188,7 @@ class TestBug2CalendarSlotHandling:
     ):
         """DecisionValidator maps slot/time/date aliases to 'meeting_preference'."""
         decision = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
+            detected_domain=DomainType.INFRA_BUILDER,
             detected_intent="general_inquiry",
             extracted_slots={"slot": "Friday 4 PM"},
             user_facing_response="I noted Friday at 4 PM.",
@@ -205,26 +205,26 @@ class TestBug2CalendarSlotHandling:
         # Turn 1: Caller says "Can we schedule for today by 12 PM?"
         mock_llm.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.VAYVORA,
+                detected_domain=DomainType.INFRA_BUILDER,
                 detected_intent="schedule_consultation",
                 extracted_slots={"meeting_preference": "today by 12 PM"},
                 user_facing_response="I can certainly help you schedule that for today by 12 PM.",
             )
         )
-        # Turn 2: Caller asks unrelated question "Do you offer voice bots?"
+        # Turn 2: Caller asks unrelated question "Do you offer villas?"
         mock_llm.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.VAYVORA,
-                detected_intent="solutions_inquiry",
+                detected_domain=DomainType.INFRA_BUILDER,
+                detected_intent="property_inquiry",
                 extracted_slots={},
-                user_facing_response="Yes, Vayvora specializes in real-time voice AI agents.",
+                user_facing_response="Yes, Infra Builder offers luxury villas at Green Valley on Sarjapur Road.",
             )
         )
 
         engine = ConversationEngine(llm_provider=mock_llm, tool_provider=tool_provider)
         state = state_manager.create_inbound_state(
             call_id="call-persist-slot",
-            domain=DomainType.VAYVORA,
+            domain=DomainType.INFRA_BUILDER,
         )
 
         # Turn 1
@@ -232,7 +232,7 @@ class TestBug2CalendarSlotHandling:
         assert state.get_slot("meeting_preference") == "today by 12 PM"
 
         # Turn 2: Unrelated topic
-        res2 = await engine.process_user_turn(state, "Do you offer voice bots?")
+        res2 = await engine.process_user_turn(state, "Do you offer villas?")
         # Must STILL be present in state
         assert state.get_slot("meeting_preference") == "today by 12 PM"
 
@@ -240,12 +240,12 @@ class TestBug2CalendarSlotHandling:
     async def test_calendar_guard_populates_slot_from_state_and_executes(
         self, state_manager: ConversationStateManager, tool_provider: MockToolProvider
     ):
-        """When meeting_preference is in state, calendar execution does NOT ask again."""
+        """When meeting_preference is in state, explicit caller confirmation books slot without asking again."""
         mock_llm = MockLLMProvider()
         # LLM proposes action without duplicating slot in arguments
         mock_llm.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.VAYVORA,
+                detected_domain=DomainType.INFRA_BUILDER,
                 detected_intent="schedule_consultation",
                 proposed_stage=ConversationStage.ACTION_CONFIRMATION,
                 action_proposed=True,
@@ -253,27 +253,27 @@ class TestBug2CalendarSlotHandling:
                     tool_name="create_calendar_event",
                     arguments={},  # Slot missing in arguments!
                 ),
-                user_facing_response="Scheduling your consultation.",
+                user_facing_response="Scheduling your site visit.",
             )
         )
 
         engine = ConversationEngine(llm_provider=mock_llm, tool_provider=tool_provider)
         state = state_manager.create_inbound_state(
             call_id="call-guard-reuse",
-            domain=DomainType.VAYVORA,
+            domain=DomainType.INFRA_BUILDER,
         )
         # Pre-existing preference in state
         state.update_slot("meeting_preference", "today by 12 PM")
 
         turn_result = await engine.process_user_turn(state, "Please confirm the booking.")
 
-        # Guard must NOT ask "Which date or time slot would work best for you?"
-        assert "Which date or time slot would work best for you?" not in turn_result.response_text
+        # Guard must NOT ask for date/time again
+        assert "Which date and time slot works best for you?" not in turn_result.response_text
         # Must execute tool and confirm
         assert state.last_action == "create_calendar_event"
         assert state.last_tool_result.success is True
         assert state.last_tool_result.data.get("slot") == "today by 12 PM"
-        assert "today by 12 PM" in turn_result.response_text
+        assert "12 PM" in turn_result.response_text
 
     @pytest.mark.asyncio
     async def test_calendar_guard_asks_only_when_no_slot_anywhere(
@@ -283,7 +283,7 @@ class TestBug2CalendarSlotHandling:
         mock_llm = MockLLMProvider()
         mock_llm.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.EDUSAAS,
+                detected_domain=DomainType.INFRA_BUILDER,
                 detected_intent="schedule_consultation",
                 proposed_stage=ConversationStage.ACTION_CONFIRMATION,
                 action_proposed=True,
@@ -291,21 +291,21 @@ class TestBug2CalendarSlotHandling:
                     tool_name="create_calendar_event",
                     arguments={},
                 ),
-                user_facing_response="I will schedule your consultation.",
+                user_facing_response="I will schedule your site visit.",
             )
         )
 
         engine = ConversationEngine(llm_provider=mock_llm, tool_provider=tool_provider)
         state = state_manager.create_inbound_state(
             call_id="call-guard-ask",
-            domain=DomainType.EDUSAAS,
+            domain=DomainType.INFRA_BUILDER,
         )
 
-        turn_result = await engine.process_user_turn(state, "I want to schedule a demo.")
+        turn_result = await engine.process_user_turn(state, "I want to schedule a site visit.")
 
         # Guard must intercept and ask for date/time
-        assert "Which date or time slot would work best for you?" in turn_result.response_text
-        assert state.pending_question == "Which date or time slot would work best for you?"
+        assert "Which date and time slot works best for you?" in turn_result.response_text
+        assert state.pending_question == "Which date and time slot works best for you?"
         # Tool must NOT have been executed yet
         assert state.last_action is None
 
@@ -313,32 +313,45 @@ class TestBug2CalendarSlotHandling:
     async def test_caller_answering_pending_slot_question_completes_booking(
         self, state_manager: ConversationStateManager, tool_provider: MockToolProvider
     ):
-        """When caller answers pending slot question, slot is captured, tool is executed."""
+        """When caller answers pending slot question, slot is captured, availability is checked, and confirmed upon caller confirmation."""
         mock_llm = MockLLMProvider()
-        # MockLLM generates default response without proposed action
         mock_llm.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.EDUSAAS,
+                detected_domain=DomainType.INFRA_BUILDER,
                 detected_intent="schedule_consultation",
                 proposed_stage=ConversationStage.ACTION_CONFIRMATION,
-                user_facing_response="Great, booking that now.",
+                user_facing_response="Checking availability now.",
             )
         )
 
         engine = ConversationEngine(llm_provider=mock_llm, tool_provider=tool_provider)
         state = state_manager.create_inbound_state(
             call_id="call-answer-slot",
-            domain=DomainType.EDUSAAS,
+            domain=DomainType.INFRA_BUILDER,
         )
-        state.set_pending_question("Which date or time slot would work best for you?")
+        state.set_pending_question("Which date and time slot works best for you?")
 
-        turn_result = await engine.process_user_turn(state, "today by 12 PM")
+        # Turn 1: Caller specifies date/time
+        turn_result1 = await engine.process_user_turn(state, "today by 12 PM")
 
         assert state.get_slot("meeting_preference") == "today by 12 PM"
+        # Safety: Checks available slots first
+        assert state.last_action == "find_available_slots"
+        assert state.last_tool_result.success is True
+
+        # Turn 2: Caller confirms the booking
+        mock_llm.add_decision(
+            ConversationalDecision(
+                detected_domain=DomainType.INFRA_BUILDER,
+                detected_intent="confirm_booking",
+                proposed_stage=ConversationStage.ACTION_CONFIRMATION,
+                user_facing_response="Booking your site visit for 12 PM.",
+            )
+        )
+        turn_result2 = await engine.process_user_turn(state, "Yes, please confirm 12 PM.")
         assert state.last_action == "create_calendar_event"
         assert state.last_tool_result.success is True
-        assert state.last_tool_result.data.get("slot") == "today by 12 PM"
-        assert state.pending_question is None
+        assert state.last_tool_result.data.get("status") == "confirmed"
 
     @pytest.mark.asyncio
     async def test_slot_revision_updates_state_and_subsequent_action(
@@ -348,7 +361,7 @@ class TestBug2CalendarSlotHandling:
         mock_llm = MockLLMProvider()
         mock_llm.add_decision(
             ConversationalDecision(
-                detected_domain=DomainType.VAYVORA,
+                detected_domain=DomainType.INFRA_BUILDER,
                 detected_intent="schedule_consultation",
                 proposed_stage=ConversationStage.ACTION_CONFIRMATION,
                 action_proposed=True,
@@ -363,7 +376,7 @@ class TestBug2CalendarSlotHandling:
         engine = ConversationEngine(llm_provider=mock_llm, tool_provider=tool_provider)
         state = state_manager.create_inbound_state(
             call_id="call-revision",
-            domain=DomainType.VAYVORA,
+            domain=DomainType.INFRA_BUILDER,
         )
         # Prior slot was 10 AM
         state.update_slot("meeting_preference", "Tomorrow at 10 AM")
@@ -372,7 +385,12 @@ class TestBug2CalendarSlotHandling:
             state, "Actually, make it 2 PM instead."
         )
 
+        # Slot updated to 2 PM
         assert state.get_slot("meeting_preference") == "2 PM"
+        assert "2 PM" in turn_result.response_text
+
+        # Caller confirms new slot
+        turn_confirm = await engine.process_user_turn(state, "Yes, please confirm 2 PM.")
         assert state.last_action == "create_calendar_event"
         assert state.last_tool_result.data.get("slot") == "2 PM"
-        assert "2 PM" in turn_result.response_text
+        assert state.last_tool_result.success is True

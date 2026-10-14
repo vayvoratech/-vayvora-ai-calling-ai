@@ -1,6 +1,6 @@
-# Streamlit Testing Workbench (Phase 6)
+# Testing Workbench
 
-A developer-facing interactive testing and evaluation workbench for pair-testing the unified AI voice agent across **EduSaaS** and **Vayvora** business domains before connecting real audio, VAD, STT/TTS, or telephony pipelines.
+An interactive testing and evaluation workbench for pair-testing the **Infra Builder Real Estate AI Calling Agent** across inbound and outbound calls before connecting real audio, VAD, STT/TTS, or telephony pipelines.
 
 ---
 
@@ -16,7 +16,7 @@ By default, the application opens in your browser at `http://localhost:8501`.
 
 ### Runtime Modes
 The application displays an explicit status badge in the sidebar:
-* **MOCK Mode (🟡 `MOCK`)**: Uses `InteractiveMockLLMProvider`, in-memory vector store seeded with documents from `knowledge_base/`, and verified mock MCP tools. Does not require API keys or external server dependencies.
+* **MOCK Mode (🟡 `MOCK`)**: Uses `InteractiveMockLLMProvider`, in-memory vector store seeded with documents from `knowledge_base/infra_builder/`, and verified mock MCP tools. Does not require API keys or external server dependencies.
 * **LIVE Mode (🟢 `LIVE`)**: Activated when valid credentials and services are reachable:
   * Gemini LLM (`GEMINI_API_KEY`)
   * Redis Stack Vector Search (`REDIS_HOST`, `REDIS_PORT`)
@@ -27,15 +27,16 @@ The application displays an explicit status badge in the sidebar:
 
 ## 2. Interactive Features
 
-1. **Company & Direction Switcher**: Seamlessly switch between EduSaaS and Vayvora, and between Inbound (unknown/new callers) and Outbound (enriched campaign context).
-2. **Text vs Voice Mode**: Full Text Mode active. Voice Mode is visibly marked as *Coming in Phase 7/8* (do not implement audio or telephony until subsequent phases).
+1. **Company & Direction**: Infra Builder is the sole active business domain. Switch between Inbound (unknown/new callers) and Outbound (campaign outreach context).
+2. **Text vs Voice Mode**: Full Text Mode active. Voice test panel available for voice pipeline evaluation.
 3. **Turn-by-Turn Conversational Interface**: Preserves transcript history, manages turns sequentially, and keeps the call active across tool invocations.
 4. **Real-Time Debug & Diagnostic Inspection**:
-   * **Session & Lifecycle**: Tracks session ID, domain, call direction, active state, conversation stage, and business status.
+   * **Session & Lifecycle**: Tracks session ID, domain (`infra_builder`), call direction, active state, conversation stage, and business status.
    * **Intent & Dialogue**: Displays active intent, sub-intent, complete intent history stack, and pending agent questions.
-   * **Caller & Entities**: Displays extracted slots and caller profile without exposing secrets.
-   * **Grounded RAG**: Details query, knowledge availability, retrieved chunk IDs, and grounded citations.
+   * **Caller & Entities**: Displays extracted real estate slots (project name, configuration, budget, location, visit date/time) and caller profile without exposing secrets.
+   * **Grounded RAG**: Details query, knowledge availability, retrieved chunk IDs, and grounded real estate citations (Skyline Towers, Green Valley Villas, Urban Heights).
    * **MCP Tools**: Clearly distinguishes **Proposed**, **Executed**, and **Verified** statuses with external tracking references. Never displays success merely because an action was proposed.
+   * **WhatsApp Messaging**: Displays WhatsApp action status (`accepted`, `delivered`, `failed`) and phone normalization.
    * **Errors & Diagnostics**: Non-fatal error reporting and subsystem health.
 5. **Session Reset**: "New Session" and "Reset Call" controls create clean, unpolluted conversation sessions.
 
@@ -43,73 +44,56 @@ The application displays an explicit status badge in the sidebar:
 
 ## 3. Manual Testing Scenarios
 
-### Scenario A — EduSaaS Inbound (Course Inquiries)
-1. In the sidebar, select **Company: EduSaaS**, **Call Direction: Inbound**.
+### Scenario A — Inbound Property Inquiry
+1. In the sidebar, verify **Company: Infra Builder**, **Call Direction: Inbound**.
 2. Click **🚀 New Session**.
 3. **Caller**:
-   > *"Hi"*
-   * **Agent Response**: Courteous greeting introducing EduSaaS AI & Data Science courses.
-4. **Caller**:
-   > *"I want to know about your courses."*
-   * **Agent Response**: Explains available programs (AI Engineering, Data Science). In the debug panel under **Grounded RAG**, observe `knowledge_required: True` and retrieved course chunks.
-5. **Caller**:
-   > *"What course would be suitable for me?"*
-   * **Agent Response**: Offers recommendations based on background or asks about beginner vs advanced experience.
+   > *"Hi, can you tell me about Skyline Towers in Whitefield?"*
+   * **Agent Response**: Grounded overview of Skyline Towers 2 & 3 BHK luxury apartments starting from ₹1.2 Crores with clubhouse, swimming pool, and December 2026 possession. Under **Grounded RAG**, observe `knowledge_required: True` and retrieved project chunks.
 
 ---
 
-### Scenario B — Vayvora Corporate (Enterprise Consultation)
-1. Select **Company: Vayvora**, **Call Direction: Inbound**.
-2. Click **🚀 New Session**.
+### Scenario B — Site Visit Scheduling Flow
+1. In an active Infra Builder call:
+2. **Caller**:
+   > *"I would like to schedule a site visit for Skyline Towers tomorrow at 10 AM."*
+   * **Agent Response**: Agent runs `find_available_slots`, confirms slot availability, and asks for caller's explicit confirmation.
 3. **Caller**:
-   > *"We are looking for an AI solution for our company."*
-   * **Agent Response**: Introduces Vayvora enterprise AI workflows and software engineering solutions.
-4. **Caller**:
-   > *"Can we schedule a meeting?"*
-   * **Agent Response**: Confirms scheduling for Tomorrow at 10:00 AM.
+   > *"Yes, please confirm that slot."*
+   * **Agent Response**: Agent invokes `create_calendar_event` with `confirmed=True`, verifies booking (`evt_site_visit_...`), and confirms to caller.
    * **Debug Panel Verification**: Open **⚡ MCP Tool Layer**:
-     * **Proposed Action**: `create_calendar_event`
+     * **Action**: `create_calendar_event`
+     * **Confirmed**: `True`
      * **Status**: `succeeded`
      * **Verification Status**: `verified`
-     * **External Reference**: `evt_cal_987654`
 
 ---
 
-### Scenario C — Domain & Intent Preemption (Mid-Call Switching)
-1. Start an Inbound **EduSaaS** session.
+### Scenario C — WhatsApp Brochure Delivery
+1. In an active Infra Builder call:
 2. **Caller**:
-   > *"Tell me about courses."*
-   * Agent replies regarding EduSaaS courses (Domain: `edusaas`, Intent: `course_information`).
-3. **Caller**:
-   > *"Actually, I want to know about Vayvora careers."*
-   * **Agent Response**: Acknowledges engineering opportunities at Vayvora and queues recruiter follow-up.
-   * **Debug Panel Verification**:
-     * **Domain**: Dynamically switched to `vayvora`.
-     * **Intent**: Preempted to `career_inquiry`.
-     * **Intent History**: `["course_information", "career_inquiry"]`.
+   > *"Can you send me the brochure on WhatsApp? My number is +91 98765 43210."*
+   * **Agent Response**: Agent validates phone number, invokes `send_message`, and confirms WhatsApp brochure dispatch.
+   * **Verification**: Tool dispatches `send_message` with recipient `+919876543210` and real estate brochure payload.
 
 ---
 
 ### Scenario D — Action Failure & Safety Verification
-1. Propose an email without a recipient or simulate an unreachable MCP tool server.
+1. Propose WhatsApp delivery without a verified phone number:
 2. **Caller**:
-   > *"Please email me the brochure."* (with no caller email configured).
+   > *"Please WhatsApp me the floor plans."* (with no phone number provided).
    * **Agent Response**:
-     > *"I would be happy to email those details to you. Could you please share your email address?"*
+     > *"I would be happy to send the floor plans via WhatsApp. Could you please share your WhatsApp phone number?"*
    * **Verification**: The tool is NOT dispatched; agent does NOT fabricate delivery success; conversation remains open (`conversation_active: True`).
-3. In case of server error:
-   * **Agent Response**: Explains system issue politely.
-   * **Verification Status**: Displays `unverified` / `failed`; does not claim success; call remains active.
 
 ---
 
 ### Scenario E — Explicit Termination vs Non-Terminating Negatives
 1. In an active call:
    **Caller**:
-   > *"No thanks."*
-   * **Agent Response**: Confirms understanding and asks if any other assistance is needed.
-   * **State**: `conversation_active` remains **True**; `termination_requested` is **False**.
+   > *"No thanks, that will be all for now."*
+   * **Agent Response**: Polite closing or assistance check.
 2. **Caller**:
-   > *"That's all, thank you. Goodbye."*
+   > *"Goodbye."*
    * **Agent Response**: Warm farewell.
    * **State**: `conversation_active` changes to **False**; `stage` updates to `COMPLETED`; call concludes cleanly.

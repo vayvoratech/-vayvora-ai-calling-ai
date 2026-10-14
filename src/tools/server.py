@@ -48,7 +48,7 @@ class FastMCP:
     Provides tool registration, enumeration, JSON-RPC 2.0 handling, and stdio loop.
     """
 
-    def __init__(self, name: str = "Vayvora-AI-MCP"):
+    def __init__(self, name: str = "InfraBuilder-AI-MCP"):
         self.name = name
         self._tools: Dict[str, Tool] = {}
 
@@ -241,15 +241,15 @@ def create_mcp_server(
             logger.debug("PostgresRepository not initialized for MCP server: %s", exc)
             db_repo = None
 
-    server = FastMCP(name="Vayvora-AI-MCP")
+    server = FastMCP(name="InfraBuilder-AI-MCP")
 
     # -------------------------------------------------------------------------
     # 1. Email Tools (send_email & mail_send, mail_read_recent)
     # -------------------------------------------------------------------------
-    @server.tool(name="send_email", description="Dispatch an email containing course information or corporate materials.")
+    @server.tool(name="send_email", description="Dispatch an email containing property information or real estate materials.")
     async def send_email(
         recipient: str,
-        subject: str = "Information from Vayvora",
+        subject: str = "Information from Infra Builder",
         body: str = "",
         html_body: Optional[str] = None,
         email: Optional[str] = None,
@@ -261,7 +261,7 @@ def create_mcp_server(
 
         res = await mail.send_email(
             recipient=target,
-            subject=subject or "Information from Vayvora",
+            subject=subject or "Information from Infra Builder",
             body=body or "Hello, here are the requested details.",
             html_body=html_body,
         )
@@ -334,25 +334,25 @@ def create_mcp_server(
     async def calendar_get_month_view(year: int, month: int, **kwargs: Any) -> str:
         return cal.get_month_view(year=year, month=month)
 
-    @server.tool(name="create_calendar_event", description="Book a confirmed calendar slot.")
+    @server.tool(name="create_calendar_event", description="Book a confirmed property site visit slot on the calendar.")
     async def create_calendar_event(
         slot: Optional[str] = None,
         start_time: Optional[str] = None,
         time: Optional[str] = None,
-        title: Optional[str] = "Consultation Meeting",
+        title: Optional[str] = "Property Site Visit",
         attendee_name: Optional[str] = None,
         attendee_email: Optional[str] = None,
-        confirmed: bool = True,
+        confirmed: bool = False,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         target_slot = slot or start_time or time
         if not target_slot:
             raise ValueError("Calendar Safety Violation: Cannot create calendar event without a specified time slot.")
-        if not confirmed:
-            raise ValueError("Calendar Safety Violation: Cannot create calendar event before caller confirms the slot.")
+        if confirmed is not True:
+            raise ValueError("Calendar Safety Violation: Cannot create calendar event before caller explicitly confirms the slot.")
 
         res = cal.add_event(
-            title=title or "Consultation Meeting",
+            title=title or "Property Site Visit",
             slot=target_slot,
             attendee_name=attendee_name,
             attendee_email=attendee_email,
@@ -363,7 +363,7 @@ def create_mcp_server(
             "external_reference": res["event_id"],
             "status": "confirmed",
             "slot": target_slot,
-            "message": res.get("message", f"Successfully scheduled consultation for {target_slot}."),
+            "message": res.get("message", f"Successfully scheduled site visit for {target_slot}."),
         }
 
     @server.tool(name="calendar_add_event", description="Alias for scheduling calendar appointment with date and time strings.")
@@ -391,11 +391,12 @@ def create_mcp_server(
     # -------------------------------------------------------------------------
     # 3. WhatsApp & Messaging Tools (send_message & whatsapp_send_message)
     # -------------------------------------------------------------------------
-    @server.tool(name="send_message", description="Send an SMS or WhatsApp instant message confirmation.")
+    @server.tool(name="send_message", description="Send an authorized WhatsApp message to the caller containing verified property details or confirmation.")
     async def send_message(
         recipient: Optional[str] = None,
         phone: Optional[str] = None,
         message: Optional[str] = None,
+        whatsapp_consent: Optional[bool] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
         target_phone = recipient or phone
@@ -403,6 +404,8 @@ def create_mcp_server(
             raise ValueError("Action 'send_message' requires a recipient phone number.")
         if not message:
             raise ValueError("Message content cannot be empty.")
+        if whatsapp_consent is False:
+            raise ValueError("WhatsApp Safety Violation: Caller has not authorized WhatsApp messaging.")
 
         res = await msg.send_message(recipient=target_phone, message=message)
         if not res.success or not res.message_id:
@@ -414,7 +417,7 @@ def create_mcp_server(
             "external_reference": res.message_id,
             "status": res.status,
             "recipient": res.recipient,
-            "message": f"Successfully dispatched message to {res.recipient}.",
+            "message": f"Successfully dispatched WhatsApp message to {res.recipient}.",
         }
 
     @server.tool(name="whatsapp_send_message", description="Alias for sending WhatsApp message.")

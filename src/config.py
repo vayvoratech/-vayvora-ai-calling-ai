@@ -154,15 +154,20 @@ class Settings(BaseSettings):
         alias="REDIS_PASSWORD",
         description="Redis authentication password if configured",
     )
+    redis_infra_builder_index: str = Field(
+        default="idx:infra_builder_vdb",
+        alias="REDIS_INFRA_BUILDER_INDEX",
+        description="Redis search index for Infra Builder real estate documents",
+    )
     redis_edusaas_index: str = Field(
         default="idx:edusaas_vdb",
         alias="REDIS_EDUSAAS_INDEX",
-        description="Redis search index for EduSaaS documents",
+        description="Redis search index for EduSaaS documents (compatibility)",
     )
     redis_vayvora_index: str = Field(
         default="idx:vayvora_vdb",
         alias="REDIS_VAYVORA_INDEX",
-        description="Redis search index for Vayvora documents",
+        description="Redis search index for Vayvora documents (compatibility)",
     )
     rag_embedding_model: str = Field(
         default="sentence-transformers/all-MiniLM-L6-v2",
@@ -238,7 +243,7 @@ class Settings(BaseSettings):
         description="SMTP authentication password",
     )
     smtp_from_email: str = Field(
-        default="noreply@vayvora.com",
+        default="noreply@infrabuilder.com",
         alias="SMTP_FROM_EMAIL",
         description="Default sender email address",
     )

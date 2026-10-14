@@ -77,7 +77,7 @@ def get_service() -> WorkbenchService:
 
 class CreateSessionRequest(BaseModel):
     direction: str = Field(default="inbound", description="Call direction: 'inbound' or 'outbound'")
-    domain: str = Field(default="vayvora", description="Domain: 'vayvora' or 'edusaas'")
+    domain: str = Field(default="infra_builder", description="Domain: 'infra_builder'")
     caller_name: Optional[str] = Field(default=None, description="Caller/Customer name")
     contact_name: Optional[str] = Field(default=None, description="Contact/lead name being called (outbound)")
     agent_name: Optional[str] = Field(default=None, description="Configured agent name (outbound)")
@@ -168,7 +168,7 @@ async def create_session(req: CreateSessionRequest) -> Dict[str, Any]:
     try:
         domain = DomainType(req.domain.lower())
     except ValueError:
-        domain = DomainType.VAYVORA
+        domain = DomainType.INFRA_BUILDER
 
     # Resolve direction enum
     try:

@@ -31,9 +31,9 @@ class IngestionPipeline:
     ) -> None:
         self.provider = knowledge_provider
         self.chunker = chunker or MarkdownChunker()
-        self.loader = loader or MarkdownDocumentLoader(base_dir=base_dir)
-        self.manifest = manifest or ManifestStore()
         self.base_dir = Path(base_dir or rag_config.knowledge_base_dir)
+        self.loader = loader or MarkdownDocumentLoader(base_dir=self.base_dir)
+        self.manifest = manifest or ManifestStore()
 
     def run(self, tenant_id: str = "default") -> List[DocumentChunk]:
         """Synchronously load and chunk knowledge documents for a tenant/domain."""
@@ -50,6 +50,8 @@ class IngestionPipeline:
         """Ingest all documents for a specific business domain into knowledge provider."""
         domain_name = domain.value
         domain_dir = self.base_dir / domain_name
+        if not domain_dir.is_dir() and self.base_dir.is_dir():
+            domain_dir = self.base_dir
 
         if not domain_dir.is_dir():
             logger.warning("Domain knowledge directory does not exist: %s", domain_dir)
@@ -82,7 +84,7 @@ class IngestionPipeline:
     async def ingest_all(self) -> Dict[DomainType, Dict[str, int]]:
         """Ingest documents across all supported domains."""
         summary: Dict[DomainType, Dict[str, int]] = {}
-        for domain in [DomainType.EDUSAAS, DomainType.VAYVORA]:
+        for domain in [DomainType.INFRA_BUILDER]:
             summary[domain] = await self.ingest_domain(domain)
         return summary
 
@@ -98,9 +100,8 @@ async def async_main(drop_existing: bool = False):
     if hasattr(provider, "store") and provider.store is not None:
         if await provider.store.health_check():
             print(f"Connected to Redis Stack at {provider.store.redis_url}")
-            print("Creating/verifying RediSearch vector indexes (idx:edusaas_vdb, idx:vayvora_vdb)...")
-            await provider.store.create_index(DomainType.EDUSAAS, drop_existing=drop_existing)
-            await provider.store.create_index(DomainType.VAYVORA, drop_existing=drop_existing)
+            print("Creating/verifying RediSearch vector indexes (idx:infra_builder_vdb)...")
+            await provider.store.create_index(DomainType.INFRA_BUILDER, drop_existing=drop_existing)
             print("RediSearch vector indexes ready.")
         else:
             print(f"Notice: Redis is not reachable on {provider.store.redis_url}. Ingesting to local keyword index only.")

@@ -32,7 +32,7 @@ class TestVoiceTestPage:
 
         html = response.text
         # Verify title and branding
-        assert "Vayvora AI" in html
+        assert "Infra Builder" in html
         assert "VOICE TEST" in html
 
         # Verify essential interactive controls

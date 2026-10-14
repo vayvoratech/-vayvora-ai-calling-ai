@@ -45,7 +45,7 @@ class MarkdownChunker:
             document_id=document_id,
         )
 
-        if doc_tenant.lower() == "edusaas" and (category == "courses" or "catalog" in source.lower()):
+        if doc_tenant.lower() in ("infra_builder", "edusaas") and (category in ("projects", "courses") or "catalog" in source.lower()):
             catalog_chunk = self._extract_catalog_overview_chunk(
                 text=text,
                 tenant_id=doc_tenant,
@@ -79,7 +79,7 @@ class MarkdownChunker:
             document_id=path.stem.lower().replace(" ", "_"),
         )
 
-        if tenant_val.lower() == "edusaas" and (inferred_category == "courses" or "catalog" in path.name.lower()):
+        if tenant_val.lower() in ("infra_builder", "edusaas") and (inferred_category in ("projects", "courses") or "catalog" in path.name.lower()):
             catalog_chunk = self._extract_catalog_overview_chunk(
                 text=raw_text,
                 tenant_id=tenant_val,
@@ -336,71 +336,38 @@ class MarkdownChunker:
     def _extract_catalog_overview_chunk(
         self,
         text: str,
-        tenant_id: str = "edusaas",
-        source_file: str = "edusaas/courses/overview_catalog.md",
+        tenant_id: str = "infra_builder",
+        source_file: str = "infra_builder/projects/overview_catalog.md",
     ) -> Optional[DocumentChunk]:
-        """Extract a dedicated course catalog chunk containing all EduSaaS courses."""
-        course_pattern = re.compile(r"###\s+(\d+\.\s+[^\n]+)(.*?)(?=(?:###|\Z|---))", re.DOTALL)
-        courses = []
-        for match in course_pattern.finditer(text):
-            title = match.group(1).strip()
-            body = match.group(2).strip()
-            courses.append((title, body))
-
-        if not courses:
-            return None
-
-        lines = [
-            "# EduSaaS Complete Course Catalog & Available Programs",
-            "",
-            "EduSaaS offers six comprehensive engineering training programs:",
-            "",
-        ]
-        for title, body in courses:
-            lines.append(f"### {title}")
-            for b_line in body.splitlines():
-                b_str = b_line.strip()
-                if any(b_str.startswith(p) for p in ("- **Focus**:", "- **Key Stack**:", "- **Tuition Fee**:")):
-                    lines.append(b_str)
-            lines.append("")
-
-        lines.extend([
-            "### Program Details & Enrollment",
-            "- **Tuition Fee**: ₹5,000 INR per program track",
-            "- **Learning Tracks**: Student Track (with placement preparation and resume building) and Working Professional Track (evening/weekend cohorts)",
-            "- **Official Enrollment Portal**: edusaas.vayvora.com",
-            "- **Official Email**: info@edusaas.vayvora.com",
-        ])
-
-        catalog_text = "\n".join(lines).strip()
-        chunk_id = f"{tenant_id}:courses:course_catalog"
-        doc_id = "course_catalog"
-        title = "EduSaaS Complete Course Catalog & Available Programs"
-        section = "Available Courses"
+        """Extract a dedicated catalog chunk containing all project developments."""
+        chunk_id = f"{tenant_id}:projects:overview_catalog"
+        doc_id = "overview_catalog"
+        title = "Infra Builder Residential Projects Overview & Catalog"
+        section = "Active Developments"
 
         metadata = {
             "tenant_id": tenant_id,
             "domain": tenant_id,
-            "category": "courses",
-            "document_type": "course_catalog",
+            "category": "projects",
+            "document_type": "project_catalog",
             "source_file": source_file,
             "source": source_file,
             "document_id": doc_id,
             "title": title,
             "section": section,
-            "char_length": len(catalog_text),
+            "char_length": len(text),
             "chunk_index": 0,
             "total_chunks": 1,
         }
 
         return DocumentChunk(
             chunk_id=chunk_id,
-            text=catalog_text,
+            text=text,
             tenant_id=tenant_id,
             document_id=doc_id,
             source=source_file,
-            category="courses",
-            document_type="course_catalog",
+            category="projects",
+            document_type="project_catalog",
             section=section,
             chunk_index=0,
             total_chunks=1,
