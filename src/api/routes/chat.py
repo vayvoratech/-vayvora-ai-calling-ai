@@ -46,12 +46,20 @@ async def chat_endpoint(
     # Retrieve or create session state
     state = state_manager.get(session_id)
     if state is None:
-        state = state_manager.create_session(
-            session_id=session_id,
-            domain=DomainType.UNKNOWN,
-            direction=CallDirection.INBOUND,
-            caller_profile=CallerProfile(phone=None, name=None, email=None),
-        )
+        if hasattr(state_manager, "create_session_async"):
+            state = await state_manager.create_session_async(
+                session_id=session_id,
+                domain=DomainType.UNKNOWN,
+                direction=CallDirection.INBOUND,
+                caller_profile=CallerProfile(phone=None, name=None, email=None),
+            )
+        else:
+            state = state_manager.create_session(
+                session_id=session_id,
+                domain=DomainType.UNKNOWN,
+                direction=CallDirection.INBOUND,
+                caller_profile=CallerProfile(phone=None, name=None, email=None),
+            )
 
     # Inbound identity guardrail: do NOT inject sample/mock caller data into slots
     for k, v in payload.slots.items():

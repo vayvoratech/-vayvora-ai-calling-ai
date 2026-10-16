@@ -272,29 +272,28 @@ class TestTwentyFiveIntegrationScenarios:
     async def test_08_intent_switching(self):
         """8. New explicit caller intent preempts previous pending agent questions."""
         dec1 = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
-            detected_intent="course_information",
-            proposed_stage=ConversationStage.DISCOVERY,
+            detected_domain=DomainType.GENERAL,
+            detected_intent="general_inquiry",
+            proposed_stage=ConversationStage.PURPOSE_DISCOVERY,
             user_facing_response="Would you like weekend or weekday batches?",
             needs_clarification=True,
-            clarification_question="Would you like weekend or weekday batches?",
         )
         dec2 = ConversationalDecision(
-            detected_domain=DomainType.EDUSAAS,
-            detected_intent="pricing",
+            detected_domain=DomainType.GENERAL,
+            detected_intent="help",
             proposed_stage=ConversationStage.INFORMATION,
-            user_facing_response="The total fee for the program is $1,200.",
+            user_facing_response="I can assist you with that request.",
         )
         mock_llm = MockLLMProvider(canned_decisions=[dec1, dec2])
         engine = ConversationEngine(llm_provider=mock_llm)
         mgr = ConversationStateManager()
-        state = mgr.create_inbound_state("call-s08", "+15551234567", domain=DomainType.EDUSAAS)
+        state = mgr.create_inbound_state("call-s08", "+15551234567", domain=DomainType.GENERAL)
 
-        await engine.process_user_turn(state, "Tell me about the course.")
+        await engine.process_user_turn(state, "I have a question about the schedule.")
         assert state.pending_question == "Would you like weekend or weekday batches?"
 
-        await engine.process_user_turn(state, "Actually, how much does it cost?")
-        assert state.current_intent == "pricing"
+        await engine.process_user_turn(state, "Can you help me with something else?")
+        assert state.current_intent == "help"
         assert state.pending_question is None
 
     @pytest.mark.asyncio

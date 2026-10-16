@@ -22,7 +22,7 @@ from fastapi.testclient import TestClient
 
 from src.config import Settings, get_settings
 from src.database.connection import DatabasePool, check_postgres_health, get_db_pool
-from src.database.repository import PostgresRepository
+from src.database.repository import PostgresRepository, mask_phone_number, normalize_lead_phone
 from src.telephony.models import CallSummary
 from src.telephony.repository import MockCallSessionRepository, PostgresCallSessionRepository
 from src.tools.server import create_mcp_server
@@ -151,6 +151,185 @@ class TestPostgresRepositoryOperations:
         assert len(found) == 1
         assert found[0]["name"] == "Robert Taylor"
         assert found[0]["status"] == "queued"
+
+    @pytest.mark.asyncio
+    async def test_missing_phone_never_generates_synthetic_lead(self, repo: PostgresRepository):
+        """Missing or placeholder phone numbers must return None and NEVER create a synthetic lead."""
+        leads_before = await repo.list_leads(limit=100)
+        count_before = len(leads_before)
+
+        # 1. None phone
+        res_none = await repo.upsert_lead(name="No Phone Caller", phone_number=None)
+        assert res_none is None
+
+        # 2. Empty string
+        res_empty = await repo.upsert_lead(name="Empty Phone Caller", phone_number="")
+        assert res_empty is None
+
+        # 3. Whitespace string
+        res_ws = await repo.upsert_lead(name="Whitespace Phone", phone_number="   ")
+        assert res_ws is None
+
+        # 4. Prohibited placeholder strings
+        for ph in ["default caller", "john doe", "unknown", "n/a", "none"]:
+            res_ph = await repo.upsert_lead(name="Placeholder", phone_number=ph)
+            assert res_ph is None
+
+        # Verify no rows were added or fabricated with +1555...
+        leads_after = await repo.list_leads(limit=100)
+        assert len(leads_after) == count_before
+
+    @pytest.mark.asyncio
+    async def test_get_lead_by_phone_present_and_absent(self, repo: PostgresRepository):
+        """Lookup returns correct lead when present and None when absent or invalid."""
+        ts = int(datetime.now(timezone.utc).timestamp())
+        phone = f"+1555{((ts + 77777) % 9000000 + 1000000):07d}"
+        email = f"lead_lookup_{ts}@example.com"
+
+        # 1. Absent lookup returns None
+        absent = await repo.get_lead_by_phone(phone)
+        assert absent is None
+
+        # 2. Insert lead
+        lead_id = await repo.upsert_lead(
+            name="Lookup Target",
+            phone_number=phone,
+            email=email,
+            status="contacted",
+            interested_in="Pristine City",
+            metadata={"priority": "high"},
+        )
+        assert lead_id is not None
+
+        # 3. Present lookup returns complete record
+        found = await repo.get_lead_by_phone(phone)
+        assert found is not None
+        assert found["id"] == lead_id
+        assert found["name"] == "Lookup Target"
+        assert found["phone_number"] == phone
+        assert found["email"] == email
+        assert found["status"] == "contacted"
+        assert found["interested_in"] == "Pristine City"
+        assert isinstance(found["metadata"], dict)
+        assert found["metadata"]["priority"] == "high"
+
+        # 4. Invalid or placeholder lookups return None safely
+        assert await repo.get_lead_by_phone(None) is None
+        assert await repo.get_lead_by_phone("") is None
+        assert await repo.get_lead_by_phone("default caller") is None
+        assert await repo.get_lead_by_phone("0000000000") is None
+
+    @pytest.mark.asyncio
+    async def test_missing_values_do_not_erase_existing_non_null_details(self, repo: PostgresRepository):
+        """Subsequent upserts omitting non-null fields preserve existing values and merge metadata."""
+        ts = int(datetime.now(timezone.utc).timestamp())
+        phone = f"+1555{ts % 10000000:07d}"
+
+        # 1. Initial insert with full details
+        initial_id = await repo.upsert_lead(
+            name="Original Name",
+            phone_number=phone,
+            email="original@example.com",
+            status="initial",
+            interested_in="Original Project",
+            metadata={"field1": "val1", "shared": "old"},
+        )
+        assert initial_id is not None
+
+        # 2. Update providing only status and new metadata (name, email, interested_in are None)
+        updated_id = await repo.upsert_lead(
+            name=None,
+            phone_number=phone,
+            email=None,
+            status="updated_status",
+            interested_in=None,
+            metadata={"field2": "val2", "shared": "new"},
+        )
+        assert updated_id == initial_id
+
+        # 3. Fetch and verify non-null fields were preserved
+        lead = await repo.get_lead_by_phone(phone)
+        assert lead is not None
+        assert lead["name"] == "Original Name"
+        assert lead["email"] == "original@example.com"
+        assert lead["interested_in"] == "Original Project"
+        assert lead["status"] == "updated_status"
+        # Metadata must be merged
+        assert lead["metadata"]["field1"] == "val1"
+        assert lead["metadata"]["field2"] == "val2"
+        assert lead["metadata"]["shared"] == "new"
+
+    @pytest.mark.asyncio
+    async def test_invalid_phone_numbers_do_not_trigger_unsafe_identity_matching(self, repo: PostgresRepository):
+        """Invalid, dummy repeating, or sequential numbers are rejected from upsert and lookup."""
+        invalid_numbers = [
+            "0000000000",
+            "9999999999",
+            "1234567890",
+            "0987654321",
+            "123",
+            "abc-def-ghij",
+            "9999",
+        ]
+        for num in invalid_numbers:
+            assert await repo.upsert_lead(name="Bad Phone Lead", phone_number=num) is None
+            assert await repo.get_lead_by_phone(num) is None
+
+    def test_phone_normalization_and_masking_utility(self):
+        """Phone normalization preserves leading +, strips delimiters, and masks logs."""
+        # Normalization
+        assert normalize_lead_phone("+1 555-123-4567") == "+15551234567"
+        assert normalize_lead_phone("9849012345") == "9849012345"
+        assert normalize_lead_phone("+91-98490-12345") == "+919849012345"
+        assert normalize_lead_phone("  +15559871234  ") == "+15559871234"
+        assert normalize_lead_phone(None) is None
+        assert normalize_lead_phone("") is None
+        assert normalize_lead_phone("default caller") is None
+        assert normalize_lead_phone("0000000000") is None
+        assert normalize_lead_phone("1234567890") is None
+
+        # Masking
+        assert mask_phone_number("+15551234567") == "***-4567"
+        assert mask_phone_number("9849012345") == "***-2345"
+        assert mask_phone_number(None) == "<none>"
+        assert mask_phone_number("") == "<none>"
+
+    @pytest.mark.asyncio
+    async def test_get_latest_interaction_summary(self, repo: PostgresRepository):
+        """Retrieve latest summary interaction for a session."""
+        session_id = f"test_sum_{int(datetime.now(timezone.utc).timestamp())}"
+        await repo.save_call_interaction(session_id, "caller", "Hello, I want details.")
+        await repo.save_call_interaction(session_id, "agent", "Here are the details.")
+        await repo.save_call_interaction(
+            session_id,
+            "system",
+            "Call completed. Domain: infra_builder, Intent: property_inquiry, Duration: 30s",
+        )
+
+        summary = await repo.get_latest_interaction_summary(session_id)
+        assert summary is not None
+        assert "Call completed." in summary
+        assert "infra_builder" in summary
+
+        # Non-existent session returns None
+        assert await repo.get_latest_interaction_summary("non_existent_session_id") is None
+
+    def test_sql_uses_parameterized_placeholders(self, repo: PostgresRepository):
+        """Verify repository SQL queries use asyncpg $ parameter placeholders."""
+        import inspect
+
+        source = inspect.getsource(repo.upsert_lead)
+        assert "$1" in source
+        assert "$2" in source
+        assert "ON CONFLICT (phone_number) DO UPDATE" in source
+        # Must not contain format string interpolation into SQL
+        assert "f\"INSERT" not in source
+        assert "f'''INSERT" not in source
+        assert "f\"\"\"INSERT" not in source
+
+        get_source = inspect.getsource(repo.get_lead_by_phone)
+        assert "$1" in get_source
+        assert "f\"SELECT" not in get_source
 
 
 # =============================================================================

@@ -63,10 +63,14 @@ def get_voice_session_manager() -> VoiceSessionManager:
         state_mgr = get_state_manager()
         stt = get_stt_service()
         tts = get_tts_service()
+        from src.telephony.repository import PostgresCallSessionRepository
+        call_repo = PostgresCallSessionRepository()
         _voice_session_manager = VoiceSessionManager(
             engine=engine,
             state_manager=state_mgr,
             stt_service=stt,
             tts_service=tts,
+            call_repository=call_repo,
         )
     return _voice_session_manager
+

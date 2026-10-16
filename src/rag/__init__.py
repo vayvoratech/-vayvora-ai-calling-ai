@@ -13,6 +13,7 @@ from src.rag.embeddings import (
     EmbeddingProvider,
     FastEmbedProvider,
     MockEmbeddingProvider,
+    clear_embedding_provider_cache,
     get_embedding_provider,
 )
 from src.rag.redis_client import RedisVectorStore
@@ -55,6 +56,7 @@ __all__ = [
     "FastEmbedProvider",
     "MockEmbeddingProvider",
     "get_embedding_provider",
+    "clear_embedding_provider_cache",
     "RedisVectorStore",
     "RAGVectorStore",
     "BM25Retriever",

@@ -18,6 +18,7 @@ from src.config import Settings, get_settings
 from src.logging import get_logger
 
 logger = get_logger("tools.message_provider")
+from src.database.repository import mask_phone_number
 
 
 _idempotency_cache: Dict[str, Tuple[float, Any]] = {}
@@ -158,7 +159,7 @@ class WhatsAppMessageProvider(MessageProvider):
         # 1. Phone number validation
         is_valid, clean_num, err_msg = validate_phone_number(recipient)
         if not is_valid:
-            logger.warning("WhatsApp recipient validation failed for '%s': %s", recipient, err_msg)
+            logger.warning("WhatsApp recipient validation failed for '%s': %s", mask_phone_number(recipient), err_msg)
             return MessageSendResult(
                 success=False,
                 recipient=recipient,
@@ -191,7 +192,7 @@ class WhatsAppMessageProvider(MessageProvider):
         now = time.time()
         cached_result = _get_cached_result(idempotency_key, now)
         if cached_result is not None:
-            logger.info("Idempotency guard: duplicate WhatsApp message to %s suppressed.", clean_num)
+            logger.info("Idempotency guard: duplicate WhatsApp message to %s suppressed.", mask_phone_number(clean_num))
             return cached_result
 
         chat_id = f"{clean_num}@c.us"
@@ -227,7 +228,7 @@ class WhatsAppMessageProvider(MessageProvider):
                     "text": message.strip(),
                 }
 
-                logger.info("Dispatching WhatsApp via %s to %s", url, chat_id)
+                logger.info("Dispatching WhatsApp via %s to %s", url, f"{mask_phone_number(clean_num)}@c.us")
                 response = await client.post(url, json=payload, headers=headers)
 
                 if response.status_code in (200, 201):
@@ -235,7 +236,7 @@ class WhatsAppMessageProvider(MessageProvider):
                     if not isinstance(resp_json, dict):
                         resp_json = {}
                     ext_id = resp_json.get("id") or resp_json.get("messageId") or f"msg_wa_{uuid.uuid4().hex[:12]}"
-                    logger.info("WhatsApp message successfully accepted by gateway for %s (id: %s)", clean_num, ext_id)
+                    logger.info("WhatsApp message successfully accepted by gateway for %s (id: %s)", mask_phone_number(clean_num), ext_id)
                     res = MessageSendResult(
                         success=True,
                         message_id=ext_id,
@@ -262,7 +263,7 @@ class WhatsAppMessageProvider(MessageProvider):
                     )
 
         except httpx.TimeoutException:
-            logger.error("WhatsApp delivery to %s timed out after %.1fs", clean_num, self.timeout)
+            logger.error("WhatsApp delivery to %s timed out after %.1fs", mask_phone_number(clean_num), self.timeout)
             return MessageSendResult(
                 success=False,
                 recipient=clean_num,
@@ -278,7 +279,7 @@ class WhatsAppMessageProvider(MessageProvider):
                 status="connection_failed",
             )
         except Exception as exc:
-            logger.error("Unexpected exception dispatching WhatsApp to %s: %s", clean_num, exc)
+            logger.error("Unexpected exception dispatching WhatsApp to %s: %s", mask_phone_number(clean_num), exc)
             return MessageSendResult(
                 success=False,
                 recipient=clean_num,

@@ -45,7 +45,18 @@ class MarkdownChunker:
             document_id=document_id,
         )
 
-        if doc_tenant.lower() in ("infra_builder", "edusaas") and (category in ("projects", "courses") or "catalog" in source.lower()):
+        # Infra Builder's dedicated catalog must be the only source of the
+        # shared project_catalog ID. Individual project files must never
+        # generate this same ID, or they can overwrite the catalog in Redis.
+        is_infra_catalog = (
+            doc_tenant.lower() == "infra_builder"
+            and Path(source).name.lower() == "overview_catalog.md"
+        )
+        is_legacy_edusaas_catalog = (
+            doc_tenant.lower() == "edusaas"
+            and (category in ("projects", "courses") or "catalog" in source.lower())
+        )
+        if is_infra_catalog or is_legacy_edusaas_catalog:
             catalog_chunk = self._extract_catalog_overview_chunk(
                 text=text,
                 tenant_id=doc_tenant,
@@ -79,7 +90,18 @@ class MarkdownChunker:
             document_id=path.stem.lower().replace(" ", "_"),
         )
 
-        if tenant_val.lower() in ("infra_builder", "edusaas") and (inferred_category in ("projects", "courses") or "catalog" in path.name.lower()):
+        # For Infra Builder, only the dedicated overview_catalog.md creates
+        # the shared project_catalog entry. Project detail files create detail
+        # chunks only, preventing Redis catalog-ID overwrites during ingestion.
+        is_infra_catalog = (
+            tenant_val.lower() == "infra_builder"
+            and path.name.lower() == "overview_catalog.md"
+        )
+        is_legacy_edusaas_catalog = (
+            tenant_val.lower() == "edusaas"
+            and (inferred_category in ("projects", "courses") or "catalog" in path.name.lower())
+        )
+        if is_infra_catalog or is_legacy_edusaas_catalog:
             catalog_chunk = self._extract_catalog_overview_chunk(
                 text=raw_text,
                 tenant_id=tenant_val,
@@ -159,9 +181,49 @@ class MarkdownChunker:
         )
 
     def _extract_document_title(self, text: str) -> str:
-        match = re.search(r"^#\s+(.+?)\s*$", text, re.MULTILINE)
-        if match:
-            return match.group(1).strip()
+        """Return the document title from Markdown or plain-text source.
+
+        Prefer an explicit Markdown H1. For supplied knowledge-base documents
+        that use a plain-text title, use the first meaningful non-empty line.
+        Skip common introductory labels that are not document titles.
+        """
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+        # Prefer an explicit H1 anywhere in the document.
+        for line in lines:
+            match = re.match(r"^#\s+(.+?)\s*#*\s*$", line)
+            if match:
+                title = match.group(1).strip()
+                if title:
+                    return title
+
+        # Plain-text knowledge documents begin with their title, followed by
+        # labels such as "Purpose and Grounding" or "Overview".
+        generic_headings = {
+            "purpose and grounding",
+            "purpose",
+            "grounding",
+            "overview",
+            "introduction",
+            "document overview",
+            "company overview",
+            "project overview",
+            "frequently asked questions",
+            "faq",
+            "contents",
+            "table of contents",
+        }
+        for line in lines:
+            candidate = re.sub(r"^#{1,6}\s*", "", line).strip()
+            candidate = re.sub(r"\s+#+\s*$", "", candidate).strip()
+            if not candidate:
+                continue
+            if candidate.lower() in generic_headings:
+                continue
+            if len(candidate) > 160:
+                continue
+            return candidate
+
         return "Untitled Document"
 
     def _split_into_sections(self, text: str) -> List[Dict[str, str]]:

@@ -12,7 +12,7 @@ Executes multi-stage hybrid retrieval:
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from src.rag.config import rag_config
 from src.rag.embeddings import BaseEmbeddingProvider, get_embedding_provider
@@ -49,20 +49,15 @@ class RAGRetriever:
     @staticmethod
     def _expand_query(query: str, domain: Optional[Any] = None) -> str:
         """Semantically enrich voice queries with domain context."""
+        if not query or not query.strip():
+            return query
+
         normalized = query.lower().strip().rstrip("?!.,;:")
 
-        real_estate_cues = (
-            "project", "projects", "property", "properties", "apartment", "apartments",
-            "flat", "flats", "villa", "villas", "bhk", "amenities", "pricing", "price",
-            "cost", "possession", "rera", "location", "site visit", "visit", "tour",
-            "payment plan", "booking", "down payment", "loan", "developer", "builder",
-            "whitefield", "sarjapur", "electronic city", "urban heights", "skyline towers",
-            "green valley", "brochure", "whatsapp",
-        )
         dom_val = domain.value.lower() if hasattr(domain, "value") else (str(domain).lower() if domain else "")
-        if dom_val in ("infra_builder", "default", ""):
-            if any(cue in normalized for cue in real_estate_cues) and "infra builder" not in normalized:
-                return f"{query} Infra Builder real estate apartments villas Bangalore projects"
+        # Only expand queries for infra_builder (or default/unspecified domain)
+        if dom_val not in ("infra_builder", "default", ""):
+            return query
 
         company_queries = {
             "what is infra builder",
@@ -72,7 +67,56 @@ class RAGRetriever:
             "infra builder overview",
         }
         if normalized in company_queries:
-            return f"{query} Infra Builder company overview real estate developer experience RERA"
+            return f"{query} company overview real estate developer experience RERA"
+
+        # If the query is already specific to a known project, preserve it unchanged.
+        known_projects = (
+            "jb pride",
+            "jb's pride",
+            "jbs pride",
+            "nature valley",
+            "jb's nature valley",
+            "jbs nature valley",
+            "pristine city",
+            "jb's pristine city",
+            "jbs pristine city",
+            "serene city",
+            "jb's serene city",
+            "jbs serene city",
+        )
+        if any(p in normalized for p in known_projects):
+            return query
+
+        # If the query already has the brand or developer identity, preserve it unchanged.
+        if "infra builder" in normalized or "jb infra" in normalized:
+            return query
+
+        # If the query mentions an explicit location, preserve it without injecting contradictory locations.
+        known_locations = (
+            "ibrahimpatnam",
+            "choutuppal",
+            "tspa",
+            "appa junction",
+            "vikarabad",
+            "peddamberpet",
+            "hayatnagar",
+            "hyderabad",
+            "telangana",
+        )
+        if any(loc in normalized for loc in known_locations):
+            return query
+
+        # Genuine real estate cues without hardcoded Bangalore or dummy project names
+        real_estate_cues = (
+            "project", "projects", "property", "properties", "plot", "plots",
+            "layout", "layouts", "apartment", "apartments", "flat", "flats",
+            "villa", "villas", "bhk", "amenities", "pricing", "price",
+            "cost", "possession", "rera", "location", "site visit", "visit",
+            "tour", "payment plan", "booking", "down payment", "loan",
+            "developer", "builder", "brochure", "whatsapp",
+        )
+        if any(cue in normalized for cue in real_estate_cues):
+            return f"{query} Infra Builder"
 
         return query
 
@@ -192,6 +236,14 @@ class RAGRetriever:
                 "reranked": bool(self.reranker),
             },
         )
+
+    def warmup(self) -> bool:
+        """Warm up underlying embedding provider."""
+        return self.embedding_provider.warmup()
+
+    async def async_warmup(self) -> bool:
+        """Warm up underlying embedding provider asynchronously in worker thread."""
+        return await self.embedding_provider.async_warmup()
 
 
 @lru_cache(maxsize=1)

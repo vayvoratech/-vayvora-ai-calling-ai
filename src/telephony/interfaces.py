@@ -105,3 +105,13 @@ class CallSessionRepository(ABC):
     async def list_summaries(self, limit: int = 100) -> List[CallSummary]:
         """List historical call session summaries."""
         pass
+
+    async def save_call_interaction(
+        self,
+        session_id: str,
+        speaker: str,
+        text: str,
+    ) -> Optional[int]:
+        """Persist an individual dialogue turn interaction. Optional default implementation."""
+        return None
+

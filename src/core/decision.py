@@ -6,7 +6,7 @@ distinguishing proposed actions, grounding queries, and stage advancements.
 
 import re
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
 from src.core.errors import DecisionValidationError
 from src.core.types import ConversationStage, DomainType
@@ -45,8 +45,8 @@ class ConversationalDecision(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     detected_domain: DomainType = Field(
-        ...,
-        description="Business domain identified from caller's latest utterance",
+        default=DomainType.INFRA_BUILDER,
+        description="Business domain identified from caller's latest utterance or trusted state",
     )
     detected_intent: Optional[str] = Field(
         default=None,
@@ -65,9 +65,8 @@ class ConversationalDecision(BaseModel):
         description="Recommended conversation stage progression",
     )
     user_facing_response: str = Field(
-        ...,
-        min_length=1,
-        description="Natural conversational utterance to be voiced to the caller",
+        default="",
+        description="Natural conversational utterance to be voiced to the caller (empty when knowledge_required is True)",
     )
     knowledge_required: bool = Field(
         default=False,
@@ -77,14 +76,28 @@ class ConversationalDecision(BaseModel):
         default=None,
         description="Semantic search query text for RAG retrieval if knowledge is required",
     )
-    action_proposed: bool = Field(
-        default=False,
-        description="True if an authorized external action is proposed (WhatsApp, calendar, CRM, etc.)",
-    )
     proposed_action: Optional[ProposedAction] = Field(
         default=None,
         description="Details of proposed action; MUST NOT be treated as already executed",
     )
+
+    @computed_field
+    @property
+    def action_proposed(self) -> bool:
+        """Authoritatively derived from proposed_action presence."""
+        return self.proposed_action is not None
+
+    @action_proposed.setter
+    def action_proposed(self, value: bool) -> None:
+        """Compatibility setter ensuring action_proposed never diverges from proposed_action.
+
+        Setting action_proposed=False clears proposed_action.
+        Setting action_proposed=True is a no-op if proposed_action is already set,
+        and never fabricates an action if proposed_action is None.
+        """
+        if not value:
+            self.proposed_action = None
+
     needs_clarification: bool = Field(
         default=False,
         description="True if caller's intent was ambiguous or underspecified",
@@ -98,11 +111,29 @@ class ConversationalDecision(BaseModel):
         description="Advisory signal from LLM; must still pass explicit termination validation",
     )
 
+    @field_validator("user_facing_response", mode="before")
+    @classmethod
+    def normalize_user_facing_response(cls, value: Any) -> str:
+        if value is None:
+            return ""
+        return str(value)
+
+    @model_validator(mode="after")
+    def validate_user_facing_response_presence(self) -> "ConversationalDecision":
+        """Ensure non-RAG turns provide a spoken response unless terminating."""
+        if not self.knowledge_required and not self.suggested_termination:
+            if not self.user_facing_response or not self.user_facing_response.strip():
+                raise ValueError("user_facing_response must not be blank when knowledge_required is false")
+        return self
+
 
     @field_validator("detected_domain", mode="before")
     @classmethod
     def normalize_domain(cls, value: Any) -> Any:
         """Accept only the active business and shared routing states."""
+        if value is None:
+            return DomainType.INFRA_BUILDER
+
         if isinstance(value, DomainType):
             if value in (DomainType.INFRA_BUILDER, DomainType.GENERAL, DomainType.UNKNOWN):
                 return value
@@ -314,6 +345,8 @@ class DecisionValidator:
             "send_email",
             "find_available_slots",
             "create_calendar_event",
+            "cancel_calendar_event",
+            "calendar_cancel_event",
             "update_lead",
             "create_hr_followup",
             "send_message",
@@ -329,12 +362,17 @@ class DecisionValidator:
                 decision.detected_domain == DomainType.INFRA_BUILDER
                 and tool_name in infra_builder_blocked_actions
             )
+            unconfirmed_cancellation = (
+                tool_name in ("cancel_calendar_event", "calendar_cancel_event")
+                and decision.proposed_action.arguments.get("confirmed") is not True
+            )
 
             # A current-turn refusal overrides a proposed message. The trusted
             # tool/engine layer must independently enforce affirmative consent.
             if (
                 tool_name not in supported_actions
                 or blocked_for_domain
+                or unconfirmed_cancellation
                 or (tool_name == "send_message" and sanitized_slots.get("whatsapp_consent") is False)
                 or unsupported_intent
             ):

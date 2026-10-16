@@ -217,4 +217,10 @@ class SessionPersistenceError(Exception):
     pass
 
 
+class StreamingCallbackError(Exception):
+    """Raised when on_grounded_chunk consumer callback encounters an unhandled exception."""
+
+    pass
+
+
 

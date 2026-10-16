@@ -28,13 +28,38 @@ BASE_DIR = Path(__file__).resolve().parent
 TEMPLATES_DIR = BASE_DIR / "templates"
 STATIC_DIR = BASE_DIR / "static"
 
+from contextlib import asynccontextmanager
 from fastapi.middleware.cors import CORSMiddleware
 from src.api.routes import chat, health, voice
+from src.rag.embeddings import get_embedding_provider
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """FastAPI application lifespan manager.
+
+    Initializes and warms up the FastEmbed ONNX embedding model in a background
+    worker thread during application startup, eliminating first-query latency penalty.
+    """
+    logger.info("Application startup: warming up FastEmbed ONNX embedding model...")
+    try:
+        provider = get_embedding_provider()
+        success = await provider.async_warmup()
+        if success:
+            logger.info("FastEmbed ONNX embedding model startup warmup succeeded.")
+        else:
+            logger.warning("FastEmbed ONNX startup warmup returned False; queries will use standard error handling.")
+    except Exception as exc:
+        logger.error("FastEmbed ONNX startup warmup encountered an error: %s", exc)
+    yield
+    logger.info("Application shutdown.")
+
 
 app = FastAPI(
     title="Unified AI Voice Agent Testing Workbench & API Engine",
     description="Interactive conversational testing console and real-time voice media streaming engine.",
     version="2.0.0",
+    lifespan=lifespan,
 )
 
 # CORS configuration

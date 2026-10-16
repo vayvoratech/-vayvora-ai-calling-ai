@@ -367,6 +367,13 @@ def bootstrap_workbench(
             logger.warning("Could not pre-seed in-memory knowledge: %s", ingest_err)
             notes.append(f"RAG: In-memory store unseeded ({ingest_err})")
 
+    # Warm up embedding model if not already warmed up
+    if knowledge_provider and hasattr(knowledge_provider, "warmup"):
+        try:
+            knowledge_provider.warmup()
+        except Exception as wu_err:
+            logger.warning("RAG provider warmup failed during bootstrap: %s", wu_err)
+
     # -------------------------------------------------------------------------
     # 3. Tool Provider (MCP) & Email Provider (SMTP)
     # -------------------------------------------------------------------------

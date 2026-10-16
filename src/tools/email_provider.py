@@ -23,6 +23,7 @@ from src.core.decision import is_valid_email
 from src.logging import get_logger
 
 logger = get_logger("tools.email_provider")
+from src.database.repository import mask_email
 
 
 class EmailSendResult(BaseModel):
@@ -122,7 +123,7 @@ class SMTPEmailProvider(EmailProvider):
     ) -> EmailSendResult:
         """Synchronous SMTP worker invoked within asyncio.to_thread."""
         if not recipient or not is_valid_email(recipient):
-            logger.error("Attempted to dispatch email to invalid or prohibited recipient: %s", recipient)
+            logger.error("Attempted to dispatch email to invalid or prohibited recipient: %s", mask_email(recipient))
             return EmailSendResult(
                 success=False,
                 error="Invalid, missing, or prohibited recipient email address",
@@ -190,7 +191,7 @@ class SMTPEmailProvider(EmailProvider):
 
             logger.info(
                 "Email accepted by SMTP server for %s (Message-ID: %s)",
-                recipient,
+                mask_email(recipient),
                 message_id,
             )
             return EmailSendResult(
@@ -438,7 +439,7 @@ class MockEmailProvider(EmailProvider):
                 "timestamp": time.time(),
             }
             self.sent_messages.append(record)
-            logger.info("MockEmailProvider recorded sent email to %s (id: %s)", recipient, msg_id)
+            logger.info("MockEmailProvider recorded sent email to %s (id: %s)", mask_email(recipient), msg_id)
             return EmailSendResult(
                 success=True,
                 message_id=msg_id,

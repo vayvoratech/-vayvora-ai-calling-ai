@@ -283,6 +283,8 @@ def create_mcp_server(
 
     @server.tool(name="mail_read_recent", description="Read recent emails from IMAP inbox.")
     async def mail_read_recent(limit: int = 5, **kwargs: Any) -> Dict[str, Any]:
+        if not kwargs.get("caller_verified_sensitive", False):
+            raise PermissionError("Access denied: Reading private email records requires verified caller identity.")
         if limit < 1:
             raise ValueError("Limit must be at least 1.")
         res = await mail.read_recent_emails(limit=limit)
@@ -317,6 +319,8 @@ def create_mcp_server(
 
     @server.tool(name="calendar_get_events", description="Retrieve scheduled appointments.")
     async def calendar_get_events(**kwargs: Any) -> Dict[str, Any]:
+        if not kwargs.get("caller_verified_sensitive", False):
+            raise PermissionError("Access denied: Accessing appointment calendar records requires verified caller identity.")
         events = cal.get_events()
         if not events:
             summary = "You have no upcoming appointments on your calendar."
@@ -342,6 +346,9 @@ def create_mcp_server(
         title: Optional[str] = "Property Site Visit",
         attendee_name: Optional[str] = None,
         attendee_email: Optional[str] = None,
+        phone: Optional[str] = None,
+        phone_number: Optional[str] = None,
+        property_name: Optional[str] = None,
         confirmed: bool = False,
         **kwargs: Any,
     ) -> Dict[str, Any]:
@@ -351,20 +358,210 @@ def create_mcp_server(
         if confirmed is not True:
             raise ValueError("Calendar Safety Violation: Cannot create calendar event before caller explicitly confirms the slot.")
 
+        raw_phone = phone or phone_number or kwargs.get("caller_phone")
+        from src.database.repository import normalize_lead_phone
+        clean_phone = normalize_lead_phone(raw_phone)
+
+        if not clean_phone:
+            raise ValueError("A valid caller phone number is required to persist the appointment.")
+        if db_repo is None:
+            raise RuntimeError(
+                "Appointment booking is unavailable because the database repository is not initialized."
+            )
+
+        # 1. External store write: Add event to calendar provider
         res = cal.add_event(
             title=title or "Property Site Visit",
             slot=target_slot,
             attendee_name=attendee_name,
             attendee_email=attendee_email,
+            phone_number=clean_phone,
+            lead_id=kwargs.get("lead_id"),
         )
+        ext_event_id = res.get("event_id")
+
+        # 2. Database store write: Persist to PostgreSQL if db_repo is available and valid phone present
+        appointment_id = None
+        if db_repo is not None and clean_phone:
+            try:
+                event_date = res.get("date") or (target_slot.split()[0] if " " in target_slot else "Upcoming")
+                event_time = res.get("time") or (" ".join(target_slot.split()[1:]) if " " in target_slot else target_slot)
+                proj = property_name or kwargs.get("project_name") or title
+
+                appt_record = await db_repo.create_appointment(
+                    phone_number=clean_phone,
+                    title=title or "Property Site Visit",
+                    event_date=event_date,
+                    event_time=event_time,
+                    slot=target_slot,
+                    project_name=proj,
+                    external_event_id=ext_event_id,
+                    lead_id=kwargs.get("lead_id"),
+                    attendee_name=attendee_name,
+                    attendee_email=attendee_email,
+                )
+                if appt_record:
+                    appointment_id = appt_record.get("id")
+                else:
+                    # Bounded compensation: Roll back calendar event to prevent untracked partial creation
+                    if ext_event_id:
+                        try:
+                            cal.delete_event(ext_event_id)
+                        except Exception as comp_err:
+                            logger.error("Failed to compensate calendar event %s: %s", ext_event_id, comp_err)
+                    raise RuntimeError("Database failure persisting appointment: rolled back calendar event.")
+            except Exception as exc:
+                if ext_event_id:
+                    try:
+                        cal.delete_event(ext_event_id)
+                    except Exception as comp_err:
+                        logger.error("Failed to rollback calendar event %s on database exception: %s", ext_event_id, comp_err)
+                logger.error("Appointment creation aborted due to database error: %s", exc)
+                raise RuntimeError(f"Failed to persist appointment to database: {exc}") from exc
+
         return {
-            "event_id": res["event_id"],
-            "id": res["event_id"],
-            "external_reference": res["event_id"],
+            "event_id": ext_event_id,
+            "id": ext_event_id,
+            "appointment_id": appointment_id,
+            "external_reference": ext_event_id,
             "status": "confirmed",
             "slot": target_slot,
             "message": res.get("message", f"Successfully scheduled site visit for {target_slot}."),
         }
+
+    @server.tool(name="cancel_calendar_event", description="Cancel and delete an existing property site visit appointment.")
+    async def cancel_calendar_event(
+        appointment_id: Optional[int] = None,
+        event_id: Optional[str] = None,
+        external_event_id: Optional[str] = None,
+        phone: Optional[str] = None,
+        phone_number: Optional[str] = None,
+        confirmed: bool = False,
+        **kwargs: Any,
+    ) -> Dict[str, Any]:
+        # 1. Authorization check: sensitive action verification gate
+        # Do not treat phone-number recognition or returning_caller=True as authorization!
+        if kwargs.get("caller_verified_sensitive") is not True:
+            raise PermissionError(
+                "Access denied: Cancelling an appointment requires verified caller identity."
+            )
+
+        # 2. Confirmation check: explicit caller confirmation
+        if confirmed is not True:
+            raise ValueError("Cancellation Safety Violation: Explicit caller confirmation is required before deleting an appointment.")
+
+        # 3. Caller phone verification
+        raw_phone = phone or phone_number or kwargs.get("caller_phone")
+        from src.database.repository import normalize_lead_phone
+
+        clean_phone = normalize_lead_phone(raw_phone)
+        if not clean_phone:
+            raise ValueError("A verified caller phone number is required to cancel an appointment.")
+
+        target_ext_id = external_event_id or event_id
+
+        # 4. Resolve the exact appointment owned by this verified caller.
+        if db_repo is None:
+            raise RuntimeError(
+                "Appointment cancellation is unavailable because the database repository is not initialized."
+            )
+
+        target_appt = None
+        if appointment_id is not None:
+            target_appt = await db_repo.get_appointment_by_id(
+                appointment_id, phone_number=clean_phone
+            )
+        elif target_ext_id:
+            caller_appts = await db_repo.get_appointments_by_phone(clean_phone)
+            for appointment in caller_appts:
+                if appointment.get("external_event_id") == target_ext_id:
+                    target_appt = appointment
+                    appointment_id = appointment.get("id")
+                    break
+
+        if not target_appt:
+            return {
+                "cancelled": False,
+                "status": "not_found",
+                "error": "No matching active appointment found for this caller.",
+                "appointment_id": appointment_id,
+            }
+
+        # Use the stored event ID, not an untrusted caller-supplied ID.
+        stored_event_id = target_appt.get("external_event_id")
+        if not stored_event_id:
+            raise RuntimeError(
+                "The appointment has no linked calendar event ID; cancellation was not performed."
+            )
+        target_ext_id = stored_event_id
+
+        # Step 4b: Delete from calendar provider first
+        if target_ext_id:
+            try:
+                cal.delete_event(target_ext_id)
+            except Exception as cal_err:
+                logger.warning("Calendar provider deletion failed for %s: %s", target_ext_id, cal_err)
+                # Calendar deletion failed or ambiguous -> retain PostgreSQL row and report failure!
+                return {
+                    "cancelled": False,
+                    "status": "failed",
+                    "error": "Calendar provider deletion could not be confirmed. Appointment retained in database.",
+                    "appointment_id": appointment_id,
+                }
+
+        # Step 4c: Delete PostgreSQL row with ownership-constrained query
+        deleted_row = None
+        if db_repo is not None and appointment_id:
+            deleted_row = await db_repo.delete_appointment(appointment_id, clean_phone)
+            if not deleted_row:
+                # Distinguish an already-completed/concurrent cancellation from a genuine database deletion failure
+                existing = await db_repo.get_appointment_by_id(appointment_id, clean_phone)
+                if not existing:
+                    # The record is already absent/deleted; desired deletion outcome is satisfied.
+                    logger.info(
+                        "Appointment %s for caller phone ending %s was already deleted or absent.",
+                        appointment_id,
+                        clean_phone[-4:],
+                    )
+                    return {
+                        "cancelled": True,
+                        "status": "cancelled",
+                        "appointment_id": appointment_id,
+                        "event_id": target_ext_id,
+                        "external_reference": str(appointment_id or target_ext_id or "cancelled"),
+                        "message": "Appointment has already been successfully cancelled.",
+                    }
+
+                # PostgreSQL deletion failed while appointment still exists! Record recoverable inconsistency!
+                await db_repo.record_reconciliation_inconsistency(
+                    appointment_id=appointment_id,
+                    external_event_id=target_ext_id,
+                    phone_number=clean_phone,
+                    action="delete_sync_failed",
+                    details="Calendar event deleted from provider, but PostgreSQL row deletion failed while row is still present.",
+                )
+                return {
+                    "cancelled": False,
+                    "status": "inconsistent",
+                    "error": "Failed to complete database appointment deletion after calendar cancellation. Inconsistency recorded.",
+                    "appointment_id": appointment_id,
+                }
+
+        deleted_date = deleted_row.get("event_date") if deleted_row else (target_appt.get("event_date") if target_appt else "the scheduled date")
+        deleted_time = deleted_row.get("event_time") if deleted_row else (target_appt.get("event_time") if target_appt else "the scheduled time")
+
+        return {
+            "cancelled": True,
+            "status": "cancelled",
+            "appointment_id": appointment_id,
+            "event_id": target_ext_id,
+            "external_reference": str(appointment_id or target_ext_id or "cancelled"),
+            "message": f"Successfully cancelled appointment on {deleted_date} at {deleted_time}.",
+        }
+
+    @server.tool(name="calendar_cancel_event", description="Alias for cancel_calendar_event.")
+    async def calendar_cancel_event(**kwargs: Any) -> Dict[str, Any]:
+        return await cancel_calendar_event(**kwargs)
 
     @server.tool(name="calendar_add_event", description="Alias for scheduling calendar appointment with date and time strings.")
     async def calendar_add_event(
@@ -372,21 +569,17 @@ def create_mcp_server(
         date_str: str,
         time_str: str,
         description: str = "",
+        confirmed: bool = False,
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        res = cal.add_event(
+        slot = f"{date_str} {time_str}".strip()
+        return await create_calendar_event(
+            slot=slot,
             title=title,
-            date_str=date_str,
-            time_str=time_str,
             description=description,
+            confirmed=confirmed,
+            **kwargs,
         )
-        return {
-            "event_id": res["event_id"],
-            "id": res["event_id"],
-            "external_reference": res["event_id"],
-            "status": "confirmed",
-            "message": res.get("message", f"Successfully scheduled '{title}' on {date_str} at {time_str}."),
-        }
 
     # -------------------------------------------------------------------------
     # 3. WhatsApp & Messaging Tools (send_message & whatsapp_send_message)
@@ -404,9 +597,11 @@ def create_mcp_server(
             raise ValueError("Action 'send_message' requires a recipient phone number.")
         if not message:
             raise ValueError("Message content cannot be empty.")
-        if whatsapp_consent is False:
-            raise ValueError("WhatsApp Safety Violation: Caller has not authorized WhatsApp messaging.")
-
+        if whatsapp_consent is not True:
+            raise PermissionError(
+                "WhatsApp Safety Violation: Explicit caller consent is required "
+                "before sending a WhatsApp message."
+            )
         res = await msg.send_message(recipient=target_phone, message=message)
         if not res.success or not res.message_id:
             raise RuntimeError(res.error or "Failed to deliver message.")
@@ -436,33 +631,52 @@ def create_mcp_server(
         email: Optional[str] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        lead_id = None
-        if db_repo is not None:
-            try:
-                db_id = await db_repo.upsert_lead(
-                    name=name or kwargs.get("caller_name") or "Lead Prospect",
-                    phone_number=phone or kwargs.get("caller_phone") or kwargs.get("phone_number"),
-                    email=email or kwargs.get("caller_email"),
-                    status=status or "updated",
-                    interested_in=kwargs.get("interested_in") or kwargs.get("course") or kwargs.get("service"),
-                    metadata={"notes": notes, **kwargs} if (notes or kwargs) else None,
-                )
-                if db_id is not None:
-                    lead_id = f"lead_crm_{db_id}"
-            except Exception as exc:
-                logger.warning("Postgres lead upsert fallback to local ID: %s", exc)
+        if kwargs.get("returning_caller") is True and not kwargs.get("caller_verified_sensitive", False):
+            if kwargs.get("sensitive_action") is True or kwargs.get("overwrite_registered_profile") is True:
+                raise PermissionError("Access denied: Modifying registered profile details requires verified caller identity.")
 
-        if not lead_id:
-            lead_id = f"lead_crm_{os.getpid()}_{int(asyncio.get_event_loop().time() * 1000)}"
+        lead_id = None
+
+        if db_repo is None:
+            raise RuntimeError(
+                "CRM update failed: database repository is unavailable."
+            )
+
+        try:
+            db_id = await db_repo.upsert_lead(
+                name=name or kwargs.get("caller_name") or "Lead Prospect",
+                phone_number=(
+                    phone
+                    or kwargs.get("caller_phone")
+                    or kwargs.get("phone_number")
+                ),
+                email=email or kwargs.get("caller_email"),
+                status=status or "updated",
+                interested_in=(
+                    kwargs.get("interested_in")
+                    or kwargs.get("course")
+                    or kwargs.get("service")
+                ),
+                metadata={"notes": notes, **kwargs} if (notes or kwargs) else None,
+            )
+
+            if db_id is None:
+                raise RuntimeError("CRM repository did not confirm the lead update.")
+
+            lead_id = f"lead_crm_{db_id}"
+
+        except Exception as exc:
+            logger.error("CRM lead update failed: %s", exc)
+            raise RuntimeError(
+                "CRM lead update failed; no successful update was confirmed."
+            ) from exc
 
         return {
             "lead_id": lead_id,
             "id": lead_id,
             "external_reference": lead_id,
-            "updated": True,
-            "status": status or "updated",
-            "notes": notes or "",
-            "message": "CRM lead updated successfully.",
+            "status": "updated",
+            "message": "Lead record was updated successfully.",
         }
 
     @server.tool(name="create_hr_followup", description="Queue HR recruiter callback for applicant or student.")
@@ -478,46 +692,59 @@ def create_mcp_server(
             raise ValueError("Action 'create_hr_followup' requires candidate name or identification.")
 
         ticket_id = None
-        if db_repo is not None:
-            try:
-                session_id = kwargs.get("session_id") or kwargs.get("call_id") or f"session_{os.getpid()}"
-                phone_num = phone or kwargs.get("phone_number") or kwargs.get("caller_phone")
-                email_addr = kwargs.get("email") or kwargs.get("caller_email")
-                reason = notes or kwargs.get("reason") or "HR callback requested"
-                db_ticket = await db_repo.create_hr_followup(
-                    candidate_name=c_name,
-                    session_id=session_id,
-                    phone_number=phone_num,
-                    email=email_addr,
-                    reason=reason,
-                    status="queued",
-                )
-                if db_ticket is not None:
-                    ticket_id = f"ticket_hr_{db_ticket}"
-            except Exception as exc:
-                logger.warning("Postgres HR followup fallback to local ticket: %s", exc)
 
-        if not ticket_id:
-            ticket_id = f"ticket_hr_{int(asyncio.get_event_loop().time() * 1000)}"
+        if db_repo is None:
+            raise RuntimeError(
+                "Follow-up creation failed: database repository is unavailable."
+            )
+
+        try:
+            session_id = (
+                kwargs.get("session_id")
+                or kwargs.get("call_id")
+                or f"session_{os.getpid()}"
+            )
+            phone_num = phone or kwargs.get("phone_number") or kwargs.get("caller_phone")
+            email_addr = kwargs.get("email") or kwargs.get("caller_email")
+            reason = notes or kwargs.get("reason") or "HR callback requested"
+
+            db_ticket = await db_repo.create_hr_followup(
+                candidate_name=c_name,
+                session_id=session_id,
+                phone_number=phone_num,
+                email=email_addr,
+                reason=reason,
+                status="queued",
+            )
+
+            if db_ticket is None:
+                raise RuntimeError("Repository did not confirm follow-up creation.")
+
+            ticket_id = f"ticket_hr_{db_ticket}"
+
+        except Exception as exc:
+            logger.error("HR follow-up creation failed: %s", exc)
+            raise RuntimeError(
+                "Follow-up creation failed; no successful ticket creation was confirmed."
+            ) from exc
 
         return {
             "ticket_id": ticket_id,
             "id": ticket_id,
             "external_reference": ticket_id,
-            "candidate_name": c_name,
             "status": "queued",
-            "message": f"Queued HR follow-up ticket for {c_name}.",
+            "message": "HR follow-up was queued successfully.",
         }
 
-    @server.tool(name="update_business_status", description="Update domain business disposition status.")
+    @server.tool(
+        name="update_business_status",
+        description="Update domain business disposition status.",
+    )
     async def update_business_status(status: str, **kwargs: Any) -> Dict[str, Any]:
-        if not status:
-            raise ValueError("Action 'update_business_status' requires a valid status string.")
-        return {
-            "status": status,
-            "external_reference": f"status_{status}",
-            "message": f"Business status updated to {status}.",
-        }
+        raise RuntimeError(
+            "Business status update is not connected to a persistent repository. "
+            "No status update was performed."
+        )
 
     return server
 

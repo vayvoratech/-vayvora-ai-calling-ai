@@ -177,7 +177,6 @@ class PromptSynthesizer:
             "agent/session_context.txt",
             stage=state.stage.value,
             current_intent=state.current_intent or "None",
-            current_sub_intent=state.current_sub_intent or "None",
             primary_domain=state.primary_domain.value,
             current_domain=state.current_domain.value,
             domain_locked=str(state.domain_locked).lower(),
@@ -326,7 +325,6 @@ class PromptSynthesizer:
         prompt_parts.append(
             f"""=== CURRENT STATE ===
 Current intent: {state.current_intent or "None"}
-Current sub-intent: {state.current_sub_intent or "None"}
 Current stage: {state.stage.value}
 Active domain: {state.current_domain.value}
 Pending question: {state.pending_question or "None"}
@@ -341,14 +339,6 @@ Pending action: {state.pending_action or "None"}"""
             f"""=== LATEST CALLER MESSAGE
 (PRIMARY SIGNAL FOR CURRENT INTENT) ===
 "{latest_message}" """
-        )
-
-        # ---------------------------------------------------------------------
-        # Decision instructions
-        # ---------------------------------------------------------------------
-
-        prompt_parts.append(
-            load_prompt("agent/decision_instructions.txt").strip()
         )
 
         return "\n\n".join(prompt_parts)

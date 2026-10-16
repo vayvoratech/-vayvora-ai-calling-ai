@@ -92,6 +92,13 @@ class Settings(BaseSettings):
         alias="GEMINI_TEMPERATURE",
         description="Sampling temperature for LLM generation",
     )
+    gemini_max_decision_tokens: int = Field(
+        default=512,
+        ge=64,
+        le=8192,
+        alias="GEMINI_MAX_DECISION_TOKENS",
+        description="Maximum output tokens for Gemini conversational decision generation",
+    )
     # LLM Provider Settings
     llm_provider: str = Field(
         default="gemini",

@@ -193,6 +193,11 @@ class ConversationState(BaseModel):
             self.pending_question = None
 
     @property
+    def session_id(self) -> str:
+        """Convenience property returning call/session ID from metadata."""
+        return self.metadata.call_id
+
+    @property
     def domain(self) -> DomainType:
         """Alias for current_domain to match domain state convention."""
         return self.current_domain
@@ -245,9 +250,12 @@ class ConversationState(BaseModel):
 
     def update_slot(self, key: str, value: Any, sync_caller: bool = True) -> None:
         """Record or update an extracted slot and synchronize caller profile."""
-        if value is None or not str(value).strip():
-            return
         clean_key = key.strip()
+        if value is None:
+            self.extracted_slots.pop(clean_key, None)
+            return
+        if not str(value).strip():
+            return
         str_val = str(value).strip()
 
         prohibited = {
@@ -287,6 +295,10 @@ class ConversationState(BaseModel):
     def get_slot(self, key: str, default: Any = None) -> Any:
         """Return a previously collected conversation slot."""
         return self.extracted_slots.get(key.strip(), default)
+
+    def clear_slot(self, key: str) -> None:
+        """Remove a previously collected conversation slot."""
+        self.extracted_slots.pop(key.strip(), None)
 
     def set_pending_question(self, question: Optional[str]) -> None:
         """Register a question asked to the user awaiting response."""

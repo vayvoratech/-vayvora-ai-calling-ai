@@ -7,10 +7,12 @@ with LRU caching, L2 normalization, batching, and deterministic mock embeddings 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import asyncio
 from collections import OrderedDict
 import hashlib
 import math
-from typing import List, Optional
+import threading
+from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 
 from src.config import Settings, get_settings
@@ -42,6 +44,18 @@ class BaseEmbeddingProvider(ABC):
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
         """Compatibility alias for batch embedding."""
         return self.embed_batch(texts)
+
+    def is_warmed_up(self) -> bool:
+        """Return whether the embedding model is already warmed up."""
+        return True
+
+    def warmup(self, sample_text: str = "warmup") -> bool:
+        """Warm up embedding model synchronously. Default no-op for mock/base classes."""
+        return True
+
+    async def async_warmup(self, sample_text: str = "warmup") -> bool:
+        """Warm up embedding model asynchronously in worker thread."""
+        return await asyncio.to_thread(self.warmup, sample_text)
 
 
 class MockEmbeddingProvider(BaseEmbeddingProvider):
@@ -83,6 +97,9 @@ class MockEmbeddingProvider(BaseEmbeddingProvider):
 class EmbeddingProvider(BaseEmbeddingProvider):
     """Production embedding provider with LRU cache and L2 normalization."""
 
+    _MODEL_CACHE: Dict[str, Any] = {}
+    _model_lock: threading.Lock = threading.Lock()
+
     def __init__(
         self,
         model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
@@ -96,28 +113,75 @@ class EmbeddingProvider(BaseEmbeddingProvider):
         self.batch_size = batch_size
         self._cache: OrderedDict[str, List[float]] = OrderedDict()
         self._model = None
+        self._is_warmed_up: bool = False
+        self._warmup_lock: threading.Lock = threading.Lock()
 
     def _ensure_model(self):
         if self._model is not None:
             return
 
-        # Attempt sentence_transformers first if installed
-        try:
-            from sentence_transformers import SentenceTransformer
-            logger.info("Initializing SentenceTransformer model: %s", self.model_name)
-            self._model = SentenceTransformer(self.model_name)
-            return
-        except ImportError:
-            pass
+        with self._model_lock:
+            if self._model is not None:
+                return
+            if self.model_name in self._MODEL_CACHE:
+                self._model = self._MODEL_CACHE[self.model_name]
+                return
 
-        # Use FastEmbed ONNX runtime
-        try:
-            from fastembed import TextEmbedding
-            logger.info("Initializing FastEmbed embedding model: %s", self.model_name)
-            self._model = TextEmbedding(model_name=self.model_name)
-        except Exception as exc:
-            logger.error("Failed to load embedding model '%s': %s", self.model_name, exc)
-            raise RuntimeError(f"Could not initialize embedding provider: {exc}") from exc
+            # Attempt sentence_transformers first if installed
+            try:
+                from sentence_transformers import SentenceTransformer
+                logger.info("Initializing SentenceTransformer model: %s", self.model_name)
+                loaded_model = SentenceTransformer(self.model_name)
+                self._MODEL_CACHE[self.model_name] = loaded_model
+                self._model = loaded_model
+                return
+            except ImportError:
+                pass
+
+            # Use FastEmbed ONNX runtime
+            try:
+                from fastembed import TextEmbedding
+                logger.info("Initializing FastEmbed embedding model: %s", self.model_name)
+                loaded_model = TextEmbedding(model_name=self.model_name)
+                self._MODEL_CACHE[self.model_name] = loaded_model
+                self._model = loaded_model
+            except Exception as exc:
+                logger.error("Failed to load embedding model '%s': %s", self.model_name, exc)
+                raise RuntimeError(f"Could not initialize embedding provider: {exc}") from exc
+
+    def is_warmed_up(self) -> bool:
+        """Check if model has been warmed up."""
+        return self._is_warmed_up
+
+    def warmup(self, sample_text: str = "warmup") -> bool:
+        """Warm up FastEmbed ONNX model synchronously using harmless fixed input.
+
+        Executes model loading and an initial inference pass so that ONNX execution
+        graph compilation and runtime memory allocations occur before user queries.
+        Thread-safe, idempotent, and privacy-safe.
+        """
+        with self._warmup_lock:
+            if self._is_warmed_up:
+                return True
+            try:
+                self._ensure_model()
+                # Perform single inference pass using harmless fixed string
+                _ = self.embed_text(sample_text)
+                self._is_warmed_up = True
+                logger.info("FastEmbed ONNX embedding model warmup complete for '%s'", self.model_name)
+                return True
+            except Exception as exc:
+                # Log privacy-safe error without any caller utterances
+                logger.error("FastEmbed ONNX embedding model warmup failed for '%s': %s", self.model_name, exc)
+                self._is_warmed_up = False
+                return False
+
+    async def async_warmup(self, sample_text: str = "warmup") -> bool:
+        """Asynchronously warm up embedding model in a background worker thread.
+
+        Does not block the asyncio event loop.
+        """
+        return await asyncio.to_thread(self.warmup, sample_text)
 
     @property
     def dimension(self) -> int:
@@ -202,19 +266,38 @@ class EmbeddingProvider(BaseEmbeddingProvider):
 FastEmbedProvider = EmbeddingProvider
 
 
+_embedding_provider_instances: Dict[Tuple[str, int, bool], BaseEmbeddingProvider] = {}
+_provider_lock: threading.Lock = threading.Lock()
+
+
 def get_embedding_provider(
     settings: Optional[Settings] = None, force_mock: bool = False
 ) -> BaseEmbeddingProvider:
-    """Factory creating configured embedding provider with LRU cache."""
+    """Factory creating configured embedding provider with LRU cache and singleton reuse."""
     cfg = settings or get_settings()
     if force_mock:
         return MockEmbeddingProvider(dimension=cfg.rag_embedding_dimension)
 
-    try:
-        return EmbeddingProvider(
-            model_name=cfg.rag_embedding_model,
-            dimension=cfg.rag_embedding_dimension,
-        )
-    except Exception as exc:
-        logger.warning("Falling back to MockEmbeddingProvider due to: %s", exc)
-        return MockEmbeddingProvider(dimension=cfg.rag_embedding_dimension)
+    key = (cfg.rag_embedding_model, cfg.rag_embedding_dimension, force_mock)
+    with _provider_lock:
+        if key in _embedding_provider_instances:
+            return _embedding_provider_instances[key]
+
+        try:
+            provider = EmbeddingProvider(
+                model_name=cfg.rag_embedding_model,
+                dimension=cfg.rag_embedding_dimension,
+            )
+        except Exception as exc:
+            logger.warning("Falling back to MockEmbeddingProvider due to: %s", exc)
+            provider = MockEmbeddingProvider(dimension=cfg.rag_embedding_dimension)
+        _embedding_provider_instances[key] = provider
+        return provider
+
+
+def clear_embedding_provider_cache() -> None:
+    """Clear cached embedding providers and models for test isolation."""
+    with _provider_lock:
+        _embedding_provider_instances.clear()
+    with EmbeddingProvider._model_lock:
+        EmbeddingProvider._MODEL_CACHE.clear()

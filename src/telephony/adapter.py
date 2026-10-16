@@ -121,13 +121,21 @@ class TelephonyVoiceAdapter:
             )
         )
 
-        # 2. Create inbound ConversationState (supports unknown caller)
-        state = self.state_manager.create_inbound_state(
-            call_id=self.transport.call_id,
-            caller_phone=self.transport.caller_number,
-            domain=domain,
-            caller_name=caller_name,
-        )
+        # 2. Create inbound ConversationState (supports returning caller rehydration)
+        if hasattr(self.state_manager, "create_inbound_state_async"):
+            state = await self.state_manager.create_inbound_state_async(
+                call_id=self.transport.call_id,
+                caller_phone=self.transport.caller_number,
+                domain=domain,
+                caller_name=caller_name,
+            )
+        else:
+            state = self.state_manager.create_inbound_state(
+                call_id=self.transport.call_id,
+                caller_phone=self.transport.caller_number,
+                domain=domain,
+                caller_name=caller_name,
+            )
         self.conversation_state = state
 
         # 3. Assemble VoicePipeline and VoiceSession

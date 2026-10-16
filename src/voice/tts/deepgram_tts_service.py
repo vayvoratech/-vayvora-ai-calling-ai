@@ -116,29 +116,26 @@ class DeepgramFluxTTS(TTSProvider):
 
 
         self.websocket = None
-
         self.receive_task: Optional[asyncio.Task] = None
-
         self.connected = False
-
         self._mock_mode = not bool(self.api_key)
 
-
-
-        self.audio_callback: Optional[Callable[[bytes], Any]] = None
-
+        self.audio_callback: Optional[Callable[..., Any]] = None
         self.event_callback: Optional[Callable[[dict], Any]] = None
 
+        self.current_turn_id: int = 0
+        self._active_connection_id: int = 0
+        self._retired_connections: set[int] = set()
 
+        self._active_generation_id: int = 0
+        self._retired_turn_generations: set[int] = set()
+        self._generation_turn_map: dict[int, int] = {}
+        self._generation_completed: set[int] = set()
 
         self.turn_started_at: Optional[float] = None
-
         self.first_speak_sent_at: Optional[float] = None
-
         self.first_audio_received = False
-
         self.first_audio_event_reported = False
-
         self._accumulated_text: list[str] = []
 
         # Automatic reconnect state.
@@ -152,7 +149,6 @@ class DeepgramFluxTTS(TTSProvider):
             self._reconnect_base_delay,
             float(os.getenv("DEEPGRAM_TTS_RECONNECT_MAX_DELAY", "8.0")),
         )
-
 
 
     def is_open(self) -> bool:
@@ -238,12 +234,14 @@ class DeepgramFluxTTS(TTSProvider):
                     ping_timeout=5,
                     max_size=None,
                 )
+                self._active_connection_id += 1
+                conn_id = self._active_connection_id
                 self.websocket = websocket
                 self.connected = True
                 self._mock_mode = False
                 self._reconnect_attempts = 0
-                logger.info("Deepgram TTS (%s) connected successfully.", self.model)
-                self.receive_task = asyncio.create_task(self._receive_loop())
+                logger.info("Deepgram TTS (%s) connected successfully (conn_id=%d).", self.model, conn_id)
+                self.receive_task = asyncio.create_task(self._receive_loop(websocket, conn_id))
             except Exception as e:
                 self.connected = False
                 self.websocket = None
@@ -307,133 +305,169 @@ class DeepgramFluxTTS(TTSProvider):
                 return False
         return self.is_open()
 
-    async def _receive_loop(self) -> None:
-
-        """Listen for binary audio frames and control events from Deepgram."""
-
-        websocket = None
+    async def _close_socket_safely(self, ws: Any, task: Optional[asyncio.Task] = None) -> None:
+        """Safely close an old socket and cancel its receive task in the background."""
         try:
-
-            websocket = self.websocket
-            if not websocket:
-
-                return
-
-
-
-            async for message in self.websocket:
-
-                if isinstance(message, bytes):
-
-                    now = time.perf_counter()
-
-
-
-                    if not self.first_audio_received:
-
-                        self.first_audio_received = True
-
-                        if self.first_speak_sent_at:
-
-                            latency = now - self.first_speak_sent_at
-
-                            logger.info("DEEPGRAM FIRST AUDIO | Speak -> Audio: %.3fs", latency)
-
-
-
-                    if not self.first_audio_event_reported:
-
-                        self.first_audio_event_reported = True
-
-                        if self.event_callback:
-
-                            res = self.event_callback({
-
-                                "type": "FirstAudio",
-
-                                "timestamp": now,
-
-                                "audio_bytes": len(message),
-
-                            })
-
-                            if asyncio.iscoroutine(res):
-
-                                await res
-
-
-
-                    if self.audio_callback:
-
-                        res = self.audio_callback(message)
-
-                        if asyncio.iscoroutine(res):
-
-                            await res
-
-                    continue
-
-
-
+            if ws and not getattr(ws, "closed", False):
+                cmd = "Clear" if self.model.startswith("aura-") else "Interrupt"
                 try:
-
-                    event = json.loads(message)
-
+                    await ws.send(json.dumps({"type": cmd}))
                 except Exception:
+                    pass
+                await ws.close()
+        except Exception:
+            pass
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
 
-                    continue
+    async def _retire_active_connection(self) -> None:
+        """Retire and close the active connection so trailing audio cannot leak."""
+        conn = self.websocket
+        task = self.receive_task
+        conn_id = self._active_connection_id
 
+        if conn_id:
+            self._retired_connections.add(conn_id)
 
+        self.connected = False
+        self.websocket = None
+        self.receive_task = None
 
-                event_type = event.get("type")
+        if conn:
+            cmd = "Clear" if self.model.startswith("aura-") else "Interrupt"
+            try:
+                if not getattr(conn, "closed", False):
+                    await conn.send(json.dumps({"type": cmd}))
+            except Exception:
+                pass
+            try:
+                if not getattr(conn, "closed", False):
+                    await conn.close()
+            except Exception:
+                pass
 
-                if event_type in ["Flushed", "Metadata", "SpeechMetadata"]:
+        if task and not task.done():
+            task.cancel()
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=0.05)
+            except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+                pass
 
-                    if self.event_callback:
+    async def _receive_loop(self, websocket: Any = None, connection_id: Optional[int] = None) -> None:
+        """Listen for binary audio frames and control events from Deepgram."""
+        if websocket is None:
+            websocket = self.websocket
+        if connection_id is None:
+            connection_id = self._active_connection_id
 
-                        res = self.event_callback({"type": "SpeechMetadata"})
-
-                        if asyncio.iscoroutine(res):
-
-                            await res
-
-                elif event_type in ["Cleared", "SpeechInterrupted"]:
-
-                    if self.event_callback:
-
-                        res = self.event_callback({"type": "SpeechInterrupted"})
-
-                        if asyncio.iscoroutine(res):
-
-                            await res
-
-
-
-        except asyncio.CancelledError:
-
+        if not websocket:
             return
 
+        try:
+            async for message in websocket:
+                # 1. Connection check: exit loop if connection has been retired
+                if connection_id in self._retired_connections or connection_id != self._active_connection_id:
+                    logger.debug("Connection %d retired; exiting receive loop.", connection_id)
+                    break
+
+                if isinstance(message, bytes):
+                    # 2. Generation check: discard if active generation was retired
+                    gen_id = self._active_generation_id
+                    if gen_id in self._retired_turn_generations:
+                        logger.debug("Discarding audio frame from retired generation %d", gen_id)
+                        continue
+
+                    # 3. Resolve turn ID strictly bound to this generation
+                    frame_turn_id = self._generation_turn_map.get(gen_id, 0)
+                    if frame_turn_id == 0 or gen_id in self._retired_turn_generations:
+                        logger.debug("Discarding audio frame: no active valid turn for generation %d", gen_id)
+                        continue
+
+                    now = time.perf_counter()
+                    if not self.first_audio_received:
+                        self.first_audio_received = True
+                        if self.first_speak_sent_at:
+                            latency = now - self.first_speak_sent_at
+                            logger.info("DEEPGRAM FIRST AUDIO | Speak -> Audio: %.3fs", latency)
+
+                    if not self.first_audio_event_reported:
+                        self.first_audio_event_reported = True
+                        if self.event_callback:
+                            res = self.event_callback({
+                                "type": "FirstAudio",
+                                "timestamp": now,
+                                "audio_bytes": len(message),
+                                "turn_id": frame_turn_id,
+                            })
+                            if asyncio.iscoroutine(res):
+                                await res
+
+                    if self.audio_callback:
+                        try:
+                            res = self.audio_callback(message, frame_turn_id)
+                        except TypeError:
+                            res = self.audio_callback(message)
+
+                        if asyncio.iscoroutine(res):
+                            await res
+
+                    continue
+
+                try:
+                    event = json.loads(message)
+                except Exception:
+                    continue
+
+                event_type = event.get("type")
+                if event_type in ["Flushed", "Metadata", "SpeechMetadata"]:
+                    gen_id = self._active_generation_id
+                    if gen_id and gen_id not in self._retired_turn_generations:
+                        self._generation_completed.add(gen_id)
+                    if self.event_callback:
+                        res = self.event_callback({"type": "SpeechMetadata", "event_type": event_type})
+                        if asyncio.iscoroutine(res):
+                            await res
+                elif event_type in ["Cleared", "SpeechInterrupted"]:
+                    gen_id = self._active_generation_id
+                    if gen_id:
+                        self._retired_turn_generations.add(gen_id)
+                    if self.event_callback:
+                        res = self.event_callback({"type": "SpeechInterrupted"})
+                        if asyncio.iscoroutine(res):
+                            await res
+
+        except asyncio.CancelledError:
+            return
         except websockets.ConnectionClosed:
-
             pass
-
         except Exception as exc:
-
-            logger.warning("Deepgram receive loop error: %s", exc)
-
+            logger.warning("Deepgram receive loop error (conn_id=%s): %s", connection_id, exc)
         finally:
-            self.connected = False
             if self.websocket is websocket:
+                self.connected = False
                 self.websocket = None
-            if not self._closing and self.api_key and not self._mock_mode:
+            if (
+                not self._closing
+                and self.api_key
+                and not self._mock_mode
+                and connection_id == self._active_connection_id
+                and connection_id not in self._retired_connections
+            ):
                 self._start_reconnect()
 
 
 
-    async def send_text(self, text: str) -> None:
+    async def send_text(self, text: str, turn_id: Optional[int] = None) -> None:
         """Stream an incremental text chunk to Deepgram TTS engine."""
         if not text:
             return
+
+        if turn_id is not None and (turn_id != self.current_turn_id or self._active_generation_id not in self._generation_turn_map):
+            self.reset_turn(turn_id=turn_id)
 
         now = time.perf_counter()
         if self.first_speak_sent_at is None:
@@ -444,6 +478,34 @@ class DeepgramFluxTTS(TTSProvider):
 
         if self._mock_mode:
             self._accumulated_text.append(text)
+            gen_id = self._active_generation_id
+            effective_turn_id = self._generation_turn_map.get(gen_id, self.current_turn_id)
+            if gen_id not in self._retired_turn_generations:
+                if self.audio_callback:
+                    import numpy as np
+                    duration = max(0.05, min(0.5, len(text) * 0.02))
+                    num_samples = int(self.sample_rate * duration)
+                    t = np.linspace(0, duration, num_samples, endpoint=False)
+                    sine = (np.sin(2 * np.pi * 440.0 * t) * 8000).astype(np.int16)
+                    audio_payload = sine.tobytes()
+                    try:
+                        res = self.audio_callback(audio_payload, effective_turn_id)
+                    except TypeError:
+                        res = self.audio_callback(audio_payload)
+                    if asyncio.iscoroutine(res):
+                        await res
+
+                if not self.first_audio_received:
+                    self.first_audio_received = True
+                    if self.event_callback:
+                        res = self.event_callback({
+                            "type": "FirstAudio",
+                            "timestamp": now,
+                            "audio_bytes": 1024,
+                            "turn_id": effective_turn_id,
+                        })
+                        if asyncio.iscoroutine(res):
+                            await res
             return
 
         if not await self._ensure_connected():
@@ -474,26 +536,42 @@ class DeepgramFluxTTS(TTSProvider):
             now = time.perf_counter()
             full_text = " ".join(self._accumulated_text)
             self._accumulated_text.clear()
+            gen_id = self._active_generation_id
+            effective_turn_id = self._generation_turn_map.get(gen_id, self.current_turn_id)
 
-            if self.event_callback:
-                res = self.event_callback({"type": "FirstAudio", "timestamp": now, "audio_bytes": 1024})
-                if asyncio.iscoroutine(res):
-                    await res
+            if gen_id not in self._retired_turn_generations:
+                if not self.first_audio_received:
+                    self.first_audio_received = True
+                    if self.event_callback:
+                        res = self.event_callback({
+                            "type": "FirstAudio",
+                            "timestamp": now,
+                            "audio_bytes": 1024,
+                            "turn_id": effective_turn_id,
+                        })
+                        if asyncio.iscoroutine(res):
+                            await res
 
-            if self.audio_callback:
-                import numpy as np
-                duration = max(0.2, min(2.0, len(full_text) * 0.05))
-                num_samples = int(self.sample_rate * duration)
-                t = np.linspace(0, duration, num_samples, endpoint=False)
-                sine = (np.sin(2 * np.pi * 440.0 * t) * 8000).astype(np.int16)
-                res = self.audio_callback(sine.tobytes())
-                if asyncio.iscoroutine(res):
-                    await res
+                    if self.audio_callback:
+                        import numpy as np
+                        duration = max(0.2, min(2.0, len(full_text) * 0.05))
+                        num_samples = int(self.sample_rate * duration)
+                        t = np.linspace(0, duration, num_samples, endpoint=False)
+                        sine = (np.sin(2 * np.pi * 440.0 * t) * 8000).astype(np.int16)
+                        try:
+                            res = self.audio_callback(sine.tobytes(), effective_turn_id)
+                        except TypeError:
+                            res = self.audio_callback(sine.tobytes())
+                        if asyncio.iscoroutine(res):
+                            await res
 
-            if self.event_callback:
-                res = self.event_callback({"type": "SpeechMetadata"})
-                if asyncio.iscoroutine(res):
-                    await res
+                if gen_id:
+                    self._generation_completed.add(gen_id)
+
+                if self.event_callback:
+                    res = self.event_callback({"type": "SpeechMetadata"})
+                    if asyncio.iscoroutine(res):
+                        await res
             return
 
         if not await self._ensure_connected():
@@ -510,67 +588,73 @@ class DeepgramFluxTTS(TTSProvider):
 
 
     async def interrupt(self) -> None:
-
         """Halt active synthesis and purge queued TTS frames (instant barge-in)."""
+        # 1. Immediately retire the active turn generation
+        if self._active_generation_id:
+            self._retired_turn_generations.add(self._active_generation_id)
 
         self._accumulated_text.clear()
 
         if self._mock_mode:
-
-            self.reset_turn()
-
+            self.reset_turn(turn_id=0)
             if self.event_callback:
-
                 res = self.event_callback({"type": "SpeechInterrupted"})
-
                 if asyncio.iscoroutine(res):
-
                     await res
-
             return
 
+        # 2. Retire and close the active connection to discard all in-flight TCP/protocol audio
+        await self._retire_active_connection()
 
+        self.reset_turn(turn_id=0)
 
-        if self.websocket and self.connected:
+    def reset_turn(self, turn_id: int = 0) -> None:
+        """Reset turn metrics, cancellation states, and isolate turn generations."""
+        # Check if the previous turn was superseded before completing cleanly
+        if (
+            turn_id != 0
+            and self.current_turn_id != 0
+            and turn_id != self.current_turn_id
+            and self._active_generation_id
+            and self._active_generation_id not in self._generation_completed
+        ):
+            # Superseded before completion! Retire the unfinished generation
+            self._retired_turn_generations.add(self._active_generation_id)
+            if self._active_connection_id:
+                self._retired_connections.add(self._active_connection_id)
+            if self.websocket:
+                ws_to_close = self.websocket
+                task_to_cancel = self.receive_task
+                self.websocket = None
+                self.connected = False
+                self.receive_task = None
+                try:
+                    asyncio.create_task(self._close_socket_safely(ws_to_close, task_to_cancel))
+                except RuntimeError:
+                    pass
 
-            cmd = "Clear" if self.model.startswith("aura-") else "Interrupt"
-
-            try:
-
-                await self.websocket.send(json.dumps({"type": cmd}))
-
-                logger.info("Deepgram %s sent for barge-in interruption.", cmd)
-
-            except Exception:
-
-                pass
-
-
-
-        self.reset_turn()
-
-
-
-    def reset_turn(self) -> None:
-
-        """Reset turn metrics and cancellation states."""
-
+        self.current_turn_id = turn_id
         self.turn_started_at = None
-
         self.first_speak_sent_at = None
-
         self.first_audio_received = False
-
         self.first_audio_event_reported = False
-
         self._accumulated_text.clear()
 
+        if turn_id != 0:
+            self._active_generation_id += 1
+            gen_id = self._active_generation_id
+            self._generation_turn_map[gen_id] = turn_id
 
 
     async def close(self) -> None:
         """Close the WebSocket and stop all reconnect activity cleanly."""
         self._closing = True
         self.connected = False
+
+        if self._active_generation_id:
+            self._retired_turn_generations.add(self._active_generation_id)
+        if self._active_connection_id:
+            self._retired_connections.add(self._active_connection_id)
 
         if self._reconnect_task and not self._reconnect_task.done():
             self._reconnect_task.cancel()
@@ -651,16 +735,14 @@ class DeepgramFluxTTS(TTSProvider):
 
 
 
-        async def on_audio(chunk: bytes):
-
+        async def on_audio(chunk: bytes, *args, **kwargs):
             await queue.put(chunk)
-
             if old_audio_cb:
-
-                res = old_audio_cb(chunk)
-
+                try:
+                    res = old_audio_cb(chunk, *args, **kwargs)
+                except TypeError:
+                    res = old_audio_cb(chunk)
                 if asyncio.iscoroutine(res):
-
                     await res
 
 
@@ -749,16 +831,14 @@ class DeepgramFluxTTS(TTSProvider):
 
 
 
-        async def on_audio(chunk: bytes):
-
+        async def on_audio(chunk: bytes, *args, **kwargs):
             await queue.put(chunk)
-
             if old_audio_cb:
-
-                res = old_audio_cb(chunk)
-
+                try:
+                    res = old_audio_cb(chunk, *args, **kwargs)
+                except TypeError:
+                    res = old_audio_cb(chunk)
                 if asyncio.iscoroutine(res):
-
                     await res
 
 

@@ -1,11 +1,16 @@
 """Conversation state manager and session lifecycle factory.
 
 Provides factory methods for Inbound and Outbound conversation initialization
-and provides session persistence adhering to the MemoryProvider contract.
+with returning-caller profile restoration from PostgreSQL and session persistence
+adhering to the MemoryProvider contract.
 """
 
+from __future__ import annotations
+
+import asyncio
 import time
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
+
 from src.config import Settings
 from src.core.interfaces import MemoryProvider
 from src.core.types import (
@@ -16,8 +21,10 @@ from src.core.types import (
     DialogueTurn,
     DomainType,
 )
+from src.logging import get_logger
 from src.state.models import CallerProfile, ConversationState
 
+logger = get_logger("state.manager")
 
 PROHIBITED_CALLER_PLACEHOLDERS = {
     "default caller",
@@ -25,6 +32,11 @@ PROHIBITED_CALLER_PLACEHOLDERS = {
     "unknown@example.com",
     "john doe",
     "jane doe",
+    "unknown",
+    "none",
+    "null",
+    "n/a",
+    "undefined",
 }
 
 
@@ -39,33 +51,154 @@ def sanitize_caller_value(val: Optional[str]) -> Optional[str]:
 
 
 class ConversationStateManager(MemoryProvider):
-    """Factory and repository for conversation sessions with trusted caller profile lookup."""
+    """Factory and repository for conversation sessions with returning caller profile lookup."""
 
-    def __init__(self, settings: Optional[Settings] = None) -> None:
+    def __init__(
+        self,
+        settings: Optional[Settings] = None,
+        postgres_repo: Any = "default",
+    ) -> None:
         self.settings = settings
+        if postgres_repo == "default":
+            try:
+                from src.database.repository import PostgresRepository
+                self.postgres_repo = PostgresRepository()
+            except Exception:
+                self.postgres_repo = None
+        else:
+            self.postgres_repo = postgres_repo
+
         self._sessions: Dict[str, ConversationState] = {}
         self._trusted_profiles: Dict[str, CallerProfile] = {}
 
     def register_trusted_profile(self, phone: str, profile: CallerProfile) -> None:
-        """Register a verified trusted caller profile keyed by phone number."""
+        """Register a verified trusted caller profile keyed by normalized phone number."""
         if phone:
-            clean_phone = sanitize_caller_value(phone)
+            from src.database.repository import normalize_lead_phone
+            clean_phone = normalize_lead_phone(phone) or sanitize_caller_value(phone)
             if clean_phone:
                 self._trusted_profiles[clean_phone] = profile.model_copy(deep=True)
 
-    def lookup_trusted_profile(self, phone: Optional[str]) -> Optional[CallerProfile]:
-        """Lookup an existing verified caller profile by phone number."""
+    async def lookup_trusted_profile_async(
+        self, phone: Optional[str], timeout: float = 0.150
+    ) -> Optional[CallerProfile]:
+        """Lookup an existing verified caller profile by normalized phone number from memory or PostgreSQL."""
         if not phone:
             return None
-        clean_phone = sanitize_caller_value(phone)
+
+        from src.database.repository import mask_phone_number, normalize_lead_phone
+
+        clean_phone = normalize_lead_phone(phone)
         if not clean_phone:
             return None
+
+        # 1. In-memory profile check
         profile = self._trusted_profiles.get(clean_phone)
-        return profile.model_copy(deep=True) if profile else None
+        if profile:
+            return profile.model_copy(deep=True)
+
+        # 2. Query PostgreSQL with bounded timeout
+        if self.postgres_repo is not None:
+            try:
+                lead = await asyncio.wait_for(
+                    self.postgres_repo.get_lead_by_phone(clean_phone),
+                    timeout=timeout,
+                )
+                if lead:
+                    caller_name = sanitize_caller_value(lead.get("name"))
+                    caller_email = sanitize_caller_value(lead.get("email"))
+                    preferred_proj = sanitize_caller_value(lead.get("interested_in"))
+                    caller_type = "known" if (caller_name or caller_email) else "unknown"
+
+                    profile = CallerProfile(
+                        name=caller_name,
+                        phone=clean_phone,
+                        email=caller_email,
+                        caller_type=caller_type,
+                        known_purpose=preferred_proj,
+                    )
+                    self._trusted_profiles[clean_phone] = profile
+                    logger.info(
+                        "Restored returning caller profile from PostgreSQL (phone: %s)",
+                        mask_phone_number(clean_phone),
+                    )
+                    return profile.model_copy(deep=True)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "PostgreSQL caller lookup timed out (>%.0fms) for phone %s; proceeding as anonymous.",
+                    timeout * 1000,
+                    mask_phone_number(clean_phone),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "PostgreSQL caller lookup failed (%s); proceeding as anonymous.",
+                    type(exc).__name__,
+                )
+
+        return None
+
+    def lookup_trusted_profile(self, phone: Optional[str]) -> Optional[CallerProfile]:
+        """Lookup an existing verified caller profile by phone number (memory + sync DB fallback if no active loop)."""
+        if not phone:
+            return None
+        from src.database.repository import normalize_lead_phone
+
+        clean_phone = normalize_lead_phone(phone) or sanitize_caller_value(phone)
+        if not clean_phone:
+            return None
+
+        profile = self._trusted_profiles.get(clean_phone)
+        if profile:
+            return profile.model_copy(deep=True)
+
+        if self.postgres_repo is not None:
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop is None:
+                try:
+                    return asyncio.run(self.lookup_trusted_profile_async(clean_phone, timeout=0.150))
+                except Exception:
+                    pass
+
+        return None
 
     # -------------------------------------------------------------------------
     # Factory Methods
     # -------------------------------------------------------------------------
+
+    async def create_inbound_state_async(
+        self,
+        call_id: str,
+        caller_phone: Optional[str] = None,
+        domain: DomainType = DomainType.UNKNOWN,
+        caller_name: Optional[str] = None,
+        caller_email: Optional[str] = None,
+        caller_company: Optional[str] = None,
+        domain_locked: bool = False,
+        lookup_timeout: float = 0.150,
+    ) -> ConversationState:
+        """Create a fresh conversation state for an incoming call, restoring caller from PostgreSQL if returning."""
+        from src.database.repository import normalize_lead_phone
+
+        clean_phone = normalize_lead_phone(caller_phone) or sanitize_caller_value(caller_phone)
+
+        trusted_profile = None
+        if clean_phone and (not caller_name or not caller_email):
+            trusted_profile = await self.lookup_trusted_profile_async(clean_phone, timeout=lookup_timeout)
+
+        return self._build_inbound_state(
+            call_id=call_id,
+            caller_phone=clean_phone,
+            domain=domain,
+            caller_name=caller_name,
+            caller_email=caller_email,
+            caller_company=caller_company,
+            domain_locked=domain_locked,
+            trusted_profile=trusted_profile,
+        )
 
     def create_inbound_state(
         self,
@@ -76,24 +209,41 @@ class ConversationStateManager(MemoryProvider):
         caller_email: Optional[str] = None,
         caller_company: Optional[str] = None,
         domain_locked: bool = False,
+        caller_profile: Optional[CallerProfile] = None,
     ) -> ConversationState:
-        """Create a fresh conversation state for an incoming call.
+        """Create a fresh conversation state for an incoming call."""
+        from src.database.repository import normalize_lead_phone
 
-        Rules:
-        - Domain starts as UNKNOWN with domain_locked=False by default.
-        - The only caller identity guaranteed at initialization is caller_phone.
-        - Never silently invent or populate placeholder names or emails.
-        - If a trusted caller profile exists for caller_phone, populate from it.
-        - Otherwise, name, email, and company remain None until provided by caller.
-        - Phone number is not proof of name or email.
-        """
-        clean_phone = sanitize_caller_value(caller_phone)
+        clean_phone = normalize_lead_phone(caller_phone) or sanitize_caller_value(caller_phone)
+
+        trusted_profile = caller_profile or (self.lookup_trusted_profile(clean_phone) if clean_phone else None)
+
+        return self._build_inbound_state(
+            call_id=call_id,
+            caller_phone=clean_phone,
+            domain=domain,
+            caller_name=caller_name,
+            caller_email=caller_email,
+            caller_company=caller_company,
+            domain_locked=domain_locked,
+            trusted_profile=trusted_profile,
+        )
+
+    def _build_inbound_state(
+        self,
+        call_id: str,
+        caller_phone: Optional[str],
+        domain: DomainType,
+        caller_name: Optional[str],
+        caller_email: Optional[str],
+        caller_company: Optional[str],
+        domain_locked: bool,
+        trusted_profile: Optional[CallerProfile],
+    ) -> ConversationState:
         clean_name = sanitize_caller_value(caller_name)
         clean_email = sanitize_caller_value(caller_email)
         clean_company = sanitize_caller_value(caller_company)
 
-        # Lookup trusted profile by phone if explicit attributes were not supplied
-        trusted_profile = self.lookup_trusted_profile(clean_phone) if clean_phone else None
         if trusted_profile:
             final_name = clean_name or trusted_profile.name
             final_email = clean_email or trusted_profile.email
@@ -111,7 +261,7 @@ class ConversationStateManager(MemoryProvider):
             call_id=call_id,
             direction=CallDirection.INBOUND,
             primary_domain=domain,
-            caller_phone=clean_phone,
+            caller_phone=caller_phone,
             caller_name=final_name,
             status=CallStatus.ACTIVE,
             start_time=time.time(),
@@ -119,7 +269,7 @@ class ConversationStateManager(MemoryProvider):
 
         caller = CallerProfile(
             name=final_name,
-            phone=clean_phone,
+            phone=caller_phone,
             email=final_email,
             company=final_company,
             caller_type=caller_type,
@@ -136,6 +286,20 @@ class ConversationStateManager(MemoryProvider):
             business_status="new",
             conversation_active=True,
         )
+
+        # Restore verified structured profile slots into current session memory
+        if final_name:
+            state.extracted_slots["caller_name"] = final_name
+        if final_email:
+            state.extracted_slots["email"] = final_email
+        if known_purpose:
+            state.extracted_slots["preferred_project"] = known_purpose
+            state.current_interest = known_purpose
+
+        if trusted_profile and (final_name or final_email or known_purpose):
+            state.extracted_slots["returning_caller"] = True
+            # Identity Safety Gate: phone number match alone does NOT authorize sensitive actions
+            state.extracted_slots["returning_caller_verified_sensitive"] = False
 
         self.save(state)
         return state
@@ -209,6 +373,42 @@ class ConversationStateManager(MemoryProvider):
         """Store or update session state in the repository."""
         self._sessions[state.metadata.call_id] = state
 
+    async def create_session_async(
+        self,
+        session_id: str,
+        domain: DomainType = DomainType.UNKNOWN,
+        direction: CallDirection = CallDirection.INBOUND,
+        caller_profile: Optional[CallerProfile] = None,
+        agent_name: Optional[str] = None,
+        contact_name: Optional[str] = None,
+        lookup_timeout: float = 0.150,
+    ) -> ConversationState:
+        """Asynchronously create a session with returning caller lookup for inbound calls."""
+        if direction == CallDirection.OUTBOUND:
+            return self.create_outbound_state(
+                call_id=session_id,
+                caller_phone=caller_profile.phone if caller_profile else None,
+                domain=domain if domain != DomainType.UNKNOWN else DomainType.INFRA_BUILDER,
+                caller_name=caller_profile.name if caller_profile else None,
+                campaign_id=caller_profile.campaign if caller_profile else None,
+                campaign_objective=caller_profile.campaign_objective if caller_profile else None,
+                caller_email=caller_profile.email if caller_profile else None,
+                company=caller_profile.company if caller_profile else None,
+                known_purpose=caller_profile.known_purpose if caller_profile else None,
+                agent_name=agent_name,
+                contact_name=contact_name or (caller_profile.name if caller_profile else None),
+            )
+        else:
+            return await self.create_inbound_state_async(
+                call_id=session_id,
+                caller_phone=caller_profile.phone if caller_profile else None,
+                domain=DomainType.UNKNOWN,
+                caller_name=caller_profile.name if caller_profile else None,
+                caller_email=caller_profile.email if caller_profile else None,
+                caller_company=caller_profile.company if caller_profile else None,
+                lookup_timeout=lookup_timeout,
+            )
+
     def create_session(
         self,
         session_id: str,
@@ -218,12 +418,7 @@ class ConversationStateManager(MemoryProvider):
         agent_name: Optional[str] = None,
         contact_name: Optional[str] = None,
     ) -> ConversationState:
-        """Create or initialize a session respecting inbound/outbound identity rules.
-        
-        For inbound calls, frontend/API-provided domain must NOT override dynamic routing.
-        Initial domain is always UNKNOWN and domain_locked is False.
-        For outbound calls, campaign domain context is preserved.
-        """
+        """Create or initialize a session respecting inbound/outbound identity rules."""
         if direction == CallDirection.OUTBOUND:
             return self.create_outbound_state(
                 call_id=session_id,
@@ -246,6 +441,7 @@ class ConversationStateManager(MemoryProvider):
                 caller_name=caller_profile.name if caller_profile else None,
                 caller_email=caller_profile.email if caller_profile else None,
                 caller_company=caller_profile.company if caller_profile else None,
+                caller_profile=caller_profile,
             )
 
     def get(self, call_id: str) -> Optional[ConversationState]:

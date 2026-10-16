@@ -102,12 +102,20 @@ async def start_session(
         campaign_objective=payload.campaign_objective,
     )
 
-    state = state_manager.create_session(
-        session_id=session_id,
-        domain=initial_domain,
-        direction=direction,
-        caller_profile=profile,
-    )
+    if hasattr(state_manager, "create_session_async"):
+        state = await state_manager.create_session_async(
+            session_id=session_id,
+            domain=initial_domain,
+            direction=direction,
+            caller_profile=profile,
+        )
+    else:
+        state = state_manager.create_session(
+            session_id=session_id,
+            domain=initial_domain,
+            direction=direction,
+            caller_profile=profile,
+        )
 
     opening_msg = None
     if direction == CallDirection.OUTBOUND:
@@ -135,6 +143,7 @@ async def stop_session(
     sid: Optional[str] = Query(default=None, alias="session_id"),
     reason: str = Query(default="caller_hung_up"),
     state_manager: ConversationStateManager = Depends(get_state_manager),
+    manager: VoiceSessionManager = Depends(get_voice_session_manager),
 ) -> SessionResponse:
     """Terminate an active voice session."""
     target_id = session_id or sid
@@ -147,6 +156,11 @@ async def stop_session(
 
     state.conversation_active = False
     state.termination_reason = reason
+
+    try:
+        await manager.finalize_session(target_id, reason=reason)
+    except Exception as exc:
+        logger.warning("Error finalizing session %s in stop_session: %s", target_id, type(exc).__name__)
 
     return SessionResponse(
         session_id=target_id,

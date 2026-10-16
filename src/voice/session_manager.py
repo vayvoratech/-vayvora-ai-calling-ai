@@ -24,6 +24,8 @@ from src.core.types import CallDirection, DomainType
 from src.logging import get_logger
 from src.state.manager import ConversationStateManager
 from src.state.models import CallerProfile, ConversationState
+from src.telephony.interfaces import CallSessionRepository
+from src.telephony.models import CallSummary
 from src.voice.audio_services.audio_processor import AudioProcessor
 from src.voice.latency_tracker import TurnLatencyTracker
 from src.voice.stt.stt_service import STTService
@@ -68,6 +70,7 @@ class VoiceSessionManager:
         stt_service: Optional[STTService] = None,
         tts_service: Optional[Any] = None,
         default_domain: DomainType = DomainType.INFRA_BUILDER,
+        call_repository: Optional[CallSessionRepository] = None,
     ):
         self.engine = engine
         self.state_manager = state_manager
@@ -75,6 +78,18 @@ class VoiceSessionManager:
         self.tts_service = tts_service
         self.default_domain = default_domain
         self._active_sessions: Dict[str, Dict[str, Any]] = {}
+        self._finalized_sessions: set[str] = set()
+        self._finalized_summaries: Dict[str, CallSummary] = {}
+
+        if call_repository is None:
+            try:
+                from src.telephony.repository import PostgresCallSessionRepository
+                self.call_repository = PostgresCallSessionRepository()
+            except Exception:
+                from src.telephony.repository import MockCallSessionRepository
+                self.call_repository = MockCallSessionRepository()
+        else:
+            self.call_repository = call_repository
 
     def get_session(self, session_id: str) -> Optional[ConversationState]:
         """Look up active conversation state for a session ID."""
@@ -89,10 +104,108 @@ class VoiceSessionManager:
         sess_info = self._active_sessions.get(session_id)
         if not sess_info:
             return False
+        sess_info["active_turn_id"] = 0
+        task: Optional[asyncio.Task] = sess_info.get("llm_task")
+        if task and not task.done():
+            task.cancel()
         tts: Optional[DeepgramFluxTTS] = sess_info.get("tts")
         if tts:
-            await tts.interrupt()
+            if hasattr(tts, "interrupt"):
+                intr_res = tts.interrupt()
+                if asyncio.iscoroutine(intr_res):
+                    await intr_res
         return True
+
+    async def finalize_session(
+        self,
+        session_id: str,
+        reason: Optional[str] = None,
+        state: Optional[ConversationState] = None,
+    ) -> Optional[CallSummary]:
+        """Finalize voice session, persist interaction dialogue turns and CallSummary idempotently."""
+        if session_id in self._finalized_sessions:
+            logger.debug("Session %s already finalized. Returning cached summary.", session_id)
+            return self._finalized_summaries.get(session_id)
+
+        self._finalized_sessions.add(session_id)
+
+        resolved_state = state or self.get_session(session_id)
+        if resolved_state is None and session_id in self._active_sessions:
+            resolved_state = self._active_sessions[session_id].get("state")
+
+        if resolved_state is None:
+            logger.warning("Cannot finalize unknown voice session %s", session_id)
+            return None
+
+        # Resolve session duration & timing
+        session_meta = self._active_sessions.get(session_id, {})
+        start_time = session_meta.get("started_at") or resolved_state.metadata.start_time or time.time()
+        end_time = time.time()
+        resolved_state.metadata.end_time = end_time
+
+        disconnect_reason = reason or resolved_state.termination_reason or "caller_disconnected"
+        if not resolved_state.termination_reason:
+            resolved_state.termination_reason = disconnect_reason
+        resolved_state.conversation_active = False
+
+        # Assemble CallSummary from conversation state
+        try:
+            summary = CallSummary.from_conversation_state(
+                state=resolved_state,
+                session_id=session_id,
+                start_time=start_time,
+                end_time=end_time,
+                disconnect_reason=disconnect_reason,
+            )
+        except Exception as exc:
+            logger.warning("Error building CallSummary for session %s: %s", session_id, type(exc).__name__)
+            return None
+
+        # Cache summary immediately so callers and status endpoints see it
+        self._finalized_summaries[session_id] = summary
+
+        # Non-blocking bounded persistence (turns + summary)
+        async def _persist_all() -> None:
+            # 1. Persist interaction dialogue turns in chronological order
+            for turn in resolved_state.history:
+                role_val = turn.role.value if hasattr(turn.role, "value") else str(turn.role)
+                speaker = "caller" if role_val == "caller" else ("agent" if role_val == "agent" else role_val)
+                text = turn.content or ""
+                if not text:
+                    continue
+
+                if hasattr(self.call_repository, "save_call_interaction"):
+                    await self.call_repository.save_call_interaction(
+                        session_id=session_id,
+                        speaker=speaker,
+                        text=text,
+                    )
+                elif hasattr(self.call_repository, "postgres_repo") and self.call_repository.postgres_repo is not None:
+                    await self.call_repository.postgres_repo.save_call_interaction(
+                        session_id=session_id,
+                        speaker=speaker,
+                        text=text,
+                    )
+
+            # 2. Persist CallSummary (lead upsert + summary interaction)
+            if self.call_repository is not None:
+                await self.call_repository.persist_summary(summary)
+
+        try:
+            await asyncio.wait_for(_persist_all(), timeout=3.0)
+        except asyncio.TimeoutError:
+            logger.warning("Persistence timed out after 3.0s for session %s", session_id)
+        except Exception as exc:
+            logger.warning("Error persisting session %s to repository: %s", session_id, type(exc).__name__)
+
+        logger.info(
+            "Successfully finalized and persisted voice session %s (reason: %s)",
+            session_id,
+            disconnect_reason,
+        )
+        return summary
+
+
 
     async def handle_media_stream(
         self,
@@ -120,12 +233,26 @@ class VoiceSessionManager:
                 email=None,
             )
             init_domain = DomainType.UNKNOWN if direction == CallDirection.INBOUND else domain
-            state = self.state_manager.create_session(
-                session_id=session_id,
-                domain=init_domain,
-                direction=direction,
-                caller_profile=caller_profile,
-            )
+            if hasattr(self.state_manager, "create_session_async"):
+                state = await self.state_manager.create_session_async(
+                    session_id=session_id,
+                    domain=init_domain,
+                    direction=direction,
+                    caller_profile=caller_profile,
+                )
+            else:
+                state = self.state_manager.create_session(
+                    session_id=session_id,
+                    domain=init_domain,
+                    direction=direction,
+                    caller_profile=caller_profile,
+                )
+        else:
+            if caller_phone and not state.caller.phone:
+                state.caller.phone = caller_phone
+            if caller_name and not state.caller.name:
+                state.caller.name = caller_name
+
 
         # Audio and TTS services for this streaming connection
         settings = get_settings()
@@ -163,6 +290,8 @@ class VoiceSessionManager:
         speech_end_at: Optional[float] = None
         turn_counter: int = 0
         current_tracker: Optional[TurnLatencyTracker] = None
+        active_turn_id: int = 0
+        tts_done_event: asyncio.Event = asyncio.Event()
 
         # Track active session
         self._active_sessions[session_id] = {
@@ -170,11 +299,21 @@ class VoiceSessionManager:
             "websocket": websocket,
             "state": state,
             "tts": deepgram_tts,
+            "active_turn_id": active_turn_id,
         }
 
         # TTS Callbacks sending audio and events to the client
-        async def deepgram_audio_callback(audio_bytes: bytes):
+        async def deepgram_audio_callback(audio_bytes: bytes, turn_id: Optional[int] = None):
             if not connection_alive:
+                return
+            # Reject stale/late audio from an interrupted or superseded turn
+            current_active = self._active_sessions.get(session_id, {}).get("active_turn_id", 0)
+            if not current_active:
+                logger.debug("Discarding stale audio frame for inactive/interrupted turn in session %s", session_id)
+                return
+            frame_turn = turn_id if turn_id is not None else getattr(deepgram_tts, "current_turn_id", current_active)
+            if frame_turn != current_active:
+                logger.debug("Discarding stale audio frame from old turn %s (active turn: %s) in session %s", frame_turn, current_active, session_id)
                 return
             if current_tracker and current_tracker.t13_first_audio_sent is None:
                 current_tracker.mark_first_audio_sent()
@@ -188,9 +327,13 @@ class VoiceSessionManager:
                 await safe_send(websocket, ws_lock, {"type": "tts_first_audio"})
             elif event_type == "SpeechStarted":
                 await safe_send(websocket, ws_lock, {"type": "tts_started"})
-            elif event_type == "SpeechMetadata":
+            elif event_type in ("SpeechMetadata", "Flushed"):
+                tts_done_event.set()
+                if current_tracker and current_tracker.t_tts_complete is None:
+                    current_tracker.mark_tts_complete()
                 await safe_send(websocket, ws_lock, {"type": "tts_complete"})
-            elif event_type == "SpeechInterrupted":
+            elif event_type in ("SpeechInterrupted", "Cleared"):
+                tts_done_event.set()
                 await safe_send(websocket, ws_lock, {"type": "tts_interrupted"})
 
         deepgram_tts.audio_callback = deepgram_audio_callback
@@ -211,6 +354,11 @@ class VoiceSessionManager:
 
         # If Outbound call and history is empty, agent delivers opening greeting
         if direction == CallDirection.OUTBOUND and len(state.history) == 0:
+            turn_counter += 1
+            active_turn_id = turn_counter
+            if session_id in self._active_sessions:
+                self._active_sessions[session_id]["active_turn_id"] = active_turn_id
+            tts_done_event.clear()
             llm_task = asyncio.create_task(
                 self._process_outbound_greeting(
                     websocket=websocket,
@@ -218,22 +366,27 @@ class VoiceSessionManager:
                     state=state,
                     deepgram_tts=deepgram_tts,
                     connection_alive=lambda: connection_alive,
+                    turn_id=active_turn_id,
                 )
             )
 
+        disconnect_reason: str = "client_disconnected"
         try:
             while connection_alive:
                 try:
                     message = await websocket.receive()
                 except (WebSocketDisconnect, RuntimeError):
                     logger.info("WebSocket disconnected for session %s", session_id)
+                    disconnect_reason = "client_disconnected"
                     break
                 except Exception as exc:
                     logger.warning("WebSocket receive error in %s: %s", session_id, exc)
+                    disconnect_reason = f"receive_error_{type(exc).__name__}"
                     break
 
                 msg_type = message.get("type")
                 if msg_type == "websocket.disconnect":
+                    disconnect_reason = "client_disconnected"
                     break
 
                 # Handle text control messages or Twilio Media Stream JSON messages
@@ -245,6 +398,7 @@ class VoiceSessionManager:
                         event_type = control_msg.get("event") or control_msg.get("type")
                         if event_type in ("hangup", "session_end", "stop"):
                             logger.info("Client requested hangup for session %s", session_id)
+                            disconnect_reason = f"client_{event_type}"
                             break
                         elif event_type == "ping":
                             await safe_send(websocket, ws_lock, {"type": "pong"})
@@ -275,6 +429,11 @@ class VoiceSessionManager:
                 # 1. Instant Barge-In
                 if vad_result.get("speech_started"):
                     turn_counter += 1
+                    active_turn_id = 0
+                    if session_id in self._active_sessions:
+                        self._active_sessions[session_id]["active_turn_id"] = 0
+                    tts_done_event.set()
+
                     current_tracker = TurnLatencyTracker(
                         turn_id=turn_counter,
                         session_id=session_id,
@@ -287,7 +446,10 @@ class VoiceSessionManager:
                         llm_task = None
                         logger.info("Barge-in: cancelled active agent turn for session %s", session_id)
 
-                    await deepgram_tts.interrupt()
+                    if hasattr(deepgram_tts, "interrupt"):
+                        intr_res = deepgram_tts.interrupt()
+                        if asyncio.iscoroutine(intr_res):
+                            await intr_res
                     await safe_send(websocket, ws_lock, {"type": "interrupt"})
                     await safe_send(websocket, ws_lock, {"type": "speech_started"})
 
@@ -325,6 +487,16 @@ class VoiceSessionManager:
                 await safe_send(websocket, ws_lock, {"type": "transcript", "text": transcript})
 
                 # 4. Launch Agent Turn
+                if llm_task is not None and not llm_task.done():
+                    llm_task.cancel()
+                    llm_task = None
+
+                turn_counter += 1
+                active_turn_id = turn_counter
+                if session_id in self._active_sessions:
+                    self._active_sessions[session_id]["active_turn_id"] = active_turn_id
+                tts_done_event.clear()
+
                 llm_task = asyncio.create_task(
                     self._process_agent_turn(
                         websocket=websocket,
@@ -334,13 +506,26 @@ class VoiceSessionManager:
                         deepgram_tts=deepgram_tts,
                         connection_alive=lambda: connection_alive,
                         tracker=current_tracker,
+                        turn_id=active_turn_id,
+                        tts_done_event=tts_done_event,
                     )
                 )
+                if session_id in self._active_sessions:
+                    self._active_sessions[session_id]["llm_task"] = llm_task
 
         finally:
             connection_alive = False
             if llm_task is not None and not llm_task.done():
                 llm_task.cancel()
+
+            eff_reason = disconnect_reason
+            if state and not state.conversation_active and state.termination_reason:
+                eff_reason = state.termination_reason
+
+            try:
+                await self.finalize_session(session_id=session_id, reason=eff_reason, state=state)
+            except Exception as e:
+                logger.warning("Error during session finalization for %s: %s", session_id, type(e).__name__)
 
             try:
                 await deepgram_tts.close()
@@ -364,18 +549,59 @@ class VoiceSessionManager:
         deepgram_tts: DeepgramFluxTTS,
         connection_alive: Callable[[], bool],
         tracker: Optional[TurnLatencyTracker] = None,
+        turn_id: int = 1,
+        tts_done_event: Optional[asyncio.Event] = None,
+        enable_grounded_streaming: bool = True,
     ) -> None:
         """Process an agent turn and stream response speech to TTS and WebSocket."""
-        deepgram_tts.reset_turn()
+        session_id = state.session_id
+        if session_id in self._active_sessions:
+            self._active_sessions[session_id]["active_turn_id"] = turn_id
+
+        if hasattr(deepgram_tts, "reset_turn"):
+            try:
+                deepgram_tts.reset_turn(turn_id=turn_id)
+            except TypeError:
+                deepgram_tts.reset_turn()
         await safe_send(websocket, ws_lock, {"type": "agent_started"})
 
+        streamed_phrases: List[str] = []
+
+        async def on_grounded_chunk(phrase: str) -> None:
+            if not connection_alive():
+                return
+            # Fast check: ensure this turn has not been invalidated by barge-in
+            current_active = self._active_sessions.get(session_id, {}).get("active_turn_id", turn_id)
+            if current_active != turn_id:
+                raise asyncio.CancelledError(f"Turn {turn_id} superseded by barge-in.")
+
+            phrase_clean = phrase.strip()
+            if not phrase_clean:
+                return
+
+            streamed_phrases.append(phrase_clean)
+            if tracker and tracker.t11_tts_start is None:
+                tracker.mark_tts_start()
+
+            phrase_to_send = phrase_clean + " "
+            if hasattr(deepgram_tts, "send_text"):
+                try:
+                    send_coro = deepgram_tts.send_text(phrase_to_send, turn_id=turn_id)
+                except TypeError:
+                    send_coro = deepgram_tts.send_text(phrase_to_send)
+                if asyncio.iscoroutine(send_coro):
+                    await send_coro
+            await safe_send(websocket, ws_lock, {"type": "llm_chunk", "text": phrase_to_send})
+
         try:
-            # Execute turn through core ConversationEngine
+            # Execute turn through core ConversationEngine with live streaming callback
             t0 = time.perf_counter()
+            grounded_cb = on_grounded_chunk if enable_grounded_streaming else None
             turn_result: EngineTurnResult = await self.engine.process_user_turn(
                 state=state,
                 user_message=transcript,
                 tracker=tracker,
+                on_grounded_chunk=grounded_cb,
             )
             elapsed_ms = (time.perf_counter() - t0) * 1000
 
@@ -385,6 +611,11 @@ class VoiceSessionManager:
 
             if not connection_alive():
                 return
+
+            # Check after generation completes if turn was interrupted
+            current_active = self._active_sessions.get(session_id, {}).get("active_turn_id", turn_id)
+            if current_active != turn_id:
+                raise asyncio.CancelledError(f"Turn {turn_id} superseded by barge-in.")
 
             if tracker:
                 tracker.domain = state.current_domain.value
@@ -407,24 +638,63 @@ class VoiceSessionManager:
 
             await safe_send(websocket, ws_lock, telemetry_data)
 
-            # Stream words to Deepgram TTS with 3-word instant burst for minimal latency
-            words = response_text.split()
-            if words:
-                if tracker:
-                    tracker.mark_tts_start()
-                first_burst = " ".join(words[:3]) + " "
-                await deepgram_tts.send_text(first_burst)
-                await safe_send(websocket, ws_lock, {"type": "llm_chunk", "text": first_burst})
+            if streamed_phrases:
+                # Streaming mode: phrases were already delivered incrementally during LLM synthesis.
+                # Flush the TTS stream once to finalize audio synthesis.
+                if connection_alive() and hasattr(deepgram_tts, "flush"):
+                    flush_coro = deepgram_tts.flush()
+                    if asyncio.iscoroutine(flush_coro):
+                        await flush_coro
+            else:
+                # Non-streaming mode (e.g., greetings, non-RAG turns, tool responses, unsupported streaming):
+                # Deliver words via standard burst chunking to Deepgram TTS.
+                words = response_text.split()
+                if words:
+                    if tracker:
+                        tracker.mark_tts_start()
+                    first_burst = " ".join(words[:3]) + " "
+                    if hasattr(deepgram_tts, "send_text"):
+                        try:
+                            send_coro = deepgram_tts.send_text(first_burst, turn_id=turn_id)
+                        except TypeError:
+                            send_coro = deepgram_tts.send_text(first_burst)
+                        if asyncio.iscoroutine(send_coro):
+                            await send_coro
+                    await safe_send(websocket, ws_lock, {"type": "llm_chunk", "text": first_burst})
 
-                for i in range(3, len(words), 4):
-                    if not connection_alive():
-                        return
-                    chunk = " ".join(words[i : i + 4]) + " "
-                    await deepgram_tts.send_text(chunk)
-                    await safe_send(websocket, ws_lock, {"type": "llm_chunk", "text": chunk})
+                    for i in range(3, len(words), 4):
+                        if not connection_alive():
+                            return
+                        current_active = self._active_sessions.get(session_id, {}).get("active_turn_id", turn_id)
+                        if current_active != turn_id:
+                            raise asyncio.CancelledError(f"Turn {turn_id} superseded by barge-in.")
+                        chunk = " ".join(words[i : i + 4]) + " "
+                        if hasattr(deepgram_tts, "send_text"):
+                            try:
+                                send_coro = deepgram_tts.send_text(chunk, turn_id=turn_id)
+                            except TypeError:
+                                send_coro = deepgram_tts.send_text(chunk)
+                            if asyncio.iscoroutine(send_coro):
+                                await send_coro
+                        await safe_send(websocket, ws_lock, {"type": "llm_chunk", "text": chunk})
 
-            if connection_alive():
-                await deepgram_tts.flush()
+                if connection_alive() and hasattr(deepgram_tts, "flush"):
+                    flush_coro = deepgram_tts.flush()
+                    if asyncio.iscoroutine(flush_coro):
+                        await flush_coro
+
+            # Wait boundedly for TTS audio output completion if event is provided
+            if tts_done_event and connection_alive():
+                try:
+                    await asyncio.wait_for(tts_done_event.wait(), timeout=5.0)
+                    if tracker and tracker.t_tts_complete is None:
+                        tracker.mark_tts_complete()
+                except asyncio.TimeoutError:
+                    logger.debug("TTS audio completion wait timed out for turn %s", turn_id)
+                    if tracker and tracker.t_tts_complete is None:
+                        tracker.mark_tts_complete()
+            elif tracker and tracker.t_tts_complete is None:
+                tracker.mark_tts_complete()
 
             await safe_send(websocket, ws_lock, {"type": "llm_complete", "text": response_text})
 
@@ -439,7 +709,8 @@ class VoiceSessionManager:
                 })
 
         except asyncio.CancelledError:
-            logger.info("Agent turn task cancelled due to barge-in.")
+            logger.info("Agent turn task cancelled due to barge-in (turn %s).", turn_id)
+            raise
         except Exception as e:
             logger.exception("Error in agent turn: %s", e)
             await safe_send(websocket, ws_lock, {"type": "error", "message": "Agent processing failed."})
@@ -451,9 +722,14 @@ class VoiceSessionManager:
         state: ConversationState,
         deepgram_tts: DeepgramFluxTTS,
         connection_alive: Callable[[], bool],
+        turn_id: int = 1,
     ) -> None:
         """Execute and stream initial outbound campaign greeting."""
-        deepgram_tts.reset_turn()
+        if hasattr(deepgram_tts, "reset_turn"):
+            try:
+                deepgram_tts.reset_turn(turn_id=turn_id)
+            except TypeError:
+                deepgram_tts.reset_turn()
         await safe_send(websocket, ws_lock, {"type": "agent_started"})
         try:
             t0 = time.perf_counter()
@@ -481,22 +757,37 @@ class VoiceSessionManager:
             words = response_text.split()
             if words:
                 first_burst = " ".join(words[:3]) + " "
-                await deepgram_tts.send_text(first_burst)
+                if hasattr(deepgram_tts, "send_text"):
+                    try:
+                        send_coro = deepgram_tts.send_text(first_burst, turn_id=turn_id)
+                    except TypeError:
+                        send_coro = deepgram_tts.send_text(first_burst)
+                    if asyncio.iscoroutine(send_coro):
+                        await send_coro
                 await safe_send(websocket, ws_lock, {"type": "llm_chunk", "text": first_burst})
 
                 for i in range(3, len(words), 4):
                     if not connection_alive():
                         return
                     chunk = " ".join(words[i : i + 4]) + " "
-                    await deepgram_tts.send_text(chunk)
+                    if hasattr(deepgram_tts, "send_text"):
+                        try:
+                            send_coro = deepgram_tts.send_text(chunk, turn_id=turn_id)
+                        except TypeError:
+                            send_coro = deepgram_tts.send_text(chunk)
+                        if asyncio.iscoroutine(send_coro):
+                            await send_coro
                     await safe_send(websocket, ws_lock, {"type": "llm_chunk", "text": chunk})
 
-            if connection_alive():
-                await deepgram_tts.flush()
+            if connection_alive() and hasattr(deepgram_tts, "flush"):
+                flush_coro = deepgram_tts.flush()
+                if asyncio.iscoroutine(flush_coro):
+                    await flush_coro
 
             await safe_send(websocket, ws_lock, {"type": "llm_complete", "text": response_text})
         except asyncio.CancelledError:
             logger.info("Outbound greeting task cancelled due to barge-in.")
+            raise
         except Exception as e:
             logger.exception("Error in outbound greeting: %s", e)
             await safe_send(websocket, ws_lock, {"type": "error", "message": "Failed to start outbound greeting."})

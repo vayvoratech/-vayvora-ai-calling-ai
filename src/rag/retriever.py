@@ -98,6 +98,18 @@ class GroundedKnowledgeProvider(KnowledgeProvider):
             return 0.0
         return float(np.dot(v1, v2) / (norm1 * norm2))
 
+    def warmup(self) -> bool:
+        """Warm up underlying embedding provider."""
+        if hasattr(self.embeddings, "warmup"):
+            return self.embeddings.warmup()
+        return True
+
+    async def async_warmup(self) -> bool:
+        """Warm up underlying embedding provider asynchronously in worker thread."""
+        if hasattr(self.embeddings, "async_warmup"):
+            return await self.embeddings.async_warmup()
+        return True
+
     async def search(self, query: RAGQuery) -> List[RAGChunk]:
         """Execute hybrid search conforming to KnowledgeProvider interface."""
         result = await self.retrieve_grounded_context(query)
@@ -312,40 +324,42 @@ class GroundedKnowledgeProvider(KnowledgeProvider):
                 error_message="Knowledge retrieval service is currently unavailable.",
             )
 
+        # Infra Builder's catalog is indexed as ``project_catalog``. Keep the
+        # legacy catalog types for other domains, without cross-domain fallback.
+        domain_value = getattr(query.domain, "value", query.domain)
+        if str(domain_value).strip().lower() == "infra_builder":
+            catalog_types = ("project_catalog", "overview_catalog")
+        else:
+            catalog_types = ("overview_catalog", "course_catalog")
+
         # 1. Direct metadata query by document_type tag
-        catalog_chunks = await self.store.get_documents_by_type(
-            domain=query.domain,
-            document_type="overview_catalog",
-            limit=1,
-        )
-        if not catalog_chunks:
+        catalog_chunks = []
+        for document_type in catalog_types:
             catalog_chunks = await self.store.get_documents_by_type(
                 domain=query.domain,
-                document_type="course_catalog",
+                document_type=document_type,
                 limit=1,
             )
+            if catalog_chunks:
+                break
         if catalog_chunks:
             primary = catalog_chunks[0]
             primary.score = 1.0
             return self._format_result(query, [primary])
 
-        # 2. Fallback: vector search
+        # 2. Fallback: vector search using the same domain-specific catalog types
         query_vector = self.embeddings.embed_text(query.query_text)
-        vec_catalog_chunks = await self.store.search_vector(
-            domain=query.domain,
-            query_vector=query_vector,
-            top_k=1,
-            relevance_threshold=0.0,
-            document_type="overview_catalog",
-        )
-        if not vec_catalog_chunks:
+        vec_catalog_chunks = []
+        for document_type in catalog_types:
             vec_catalog_chunks = await self.store.search_vector(
                 domain=query.domain,
                 query_vector=query_vector,
                 top_k=1,
                 relevance_threshold=0.0,
-                document_type="course_catalog",
+                document_type=document_type,
             )
+            if vec_catalog_chunks:
+                break
         if vec_catalog_chunks:
             primary = vec_catalog_chunks[0]
             primary.score = 1.0

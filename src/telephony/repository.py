@@ -20,6 +20,7 @@ class MockCallSessionRepository(CallSessionRepository):
     def __init__(self, force_error: bool = False) -> None:
         self.records: Dict[str, CallSummary] = {}
         self.force_error = force_error
+        self.interactions: List[Dict[str, Any]] = []
 
     async def persist_summary(self, summary: CallSummary) -> None:
         """Store CallSummary in memory."""
@@ -35,6 +36,32 @@ class MockCallSessionRepository(CallSessionRepository):
             summary.termination_reason,
         )
 
+    async def save_call_interaction(
+        self,
+        session_id: str,
+        speaker: str,
+        text: str,
+    ) -> Optional[int]:
+        """Store interaction turn in memory."""
+        if self.force_error:
+            raise SessionPersistenceError("Simulated database failure persisting call interaction.")
+        if not hasattr(self, "interactions"):
+            self.interactions = []
+        rec_id = len(self.interactions) + 1
+        self.interactions.append({
+            "id": rec_id,
+            "session_id": session_id,
+            "speaker": speaker,
+            "text": text,
+        })
+        return rec_id
+
+    async def get_interactions(self, session_id: str) -> List[Dict[str, Any]]:
+        """Retrieve stored interaction turns for a session."""
+        if not hasattr(self, "interactions"):
+            return []
+        return [i for i in self.interactions if i.get("session_id") == session_id]
+
     async def get_summary(self, call_id: str) -> Optional[CallSummary]:
         """Fetch summary by call identifier."""
         return self.records.get(call_id)
@@ -46,6 +73,8 @@ class MockCallSessionRepository(CallSessionRepository):
     def clear(self) -> None:
         """Purge stored records."""
         self.records.clear()
+        if hasattr(self, "interactions"):
+            self.interactions.clear()
 
 
 class PostgresCallSessionRepository(CallSessionRepository):
@@ -67,19 +96,57 @@ class PostgresCallSessionRepository(CallSessionRepository):
 
         self.fallback = fallback_repo or MockCallSessionRepository()
 
+    async def save_call_interaction(
+        self,
+        session_id: str,
+        speaker: str,
+        text: str,
+    ) -> Optional[int]:
+        """Store interaction turn in fallback and PostgreSQL."""
+        if hasattr(self.fallback, "save_call_interaction"):
+            await self.fallback.save_call_interaction(session_id, speaker, text)
+
+        if self.postgres_repo is not None:
+            try:
+                return await self.postgres_repo.save_call_interaction(
+                    session_id=session_id,
+                    speaker=speaker,
+                    text=text,
+                )
+            except Exception as exc:
+                logger.warning("Failed to save call interaction to PostgreSQL: %s", type(exc).__name__)
+                return None
+        return None
+
+    async def get_interactions(self, session_id: str) -> List[Dict[str, Any]]:
+        """Retrieve stored interaction turns for a session."""
+        if self.postgres_repo is not None:
+            try:
+                res = await self.postgres_repo.get_call_interactions(session_id)
+                if res:
+                    return res
+            except Exception as exc:
+                logger.warning("Failed to get call interactions from PostgreSQL: %s", type(exc).__name__)
+        if hasattr(self.fallback, "get_interactions"):
+            return await self.fallback.get_interactions(session_id)
+        return []
+
     async def persist_summary(self, summary: CallSummary) -> None:
         """Store CallSummary in memory and persist caller and interaction into PostgreSQL."""
         await self.fallback.persist_summary(summary)
 
         if self.postgres_repo is not None:
             try:
-                # 1. Persist caller as lead if caller details available
-                if summary.caller and (
-                    summary.caller.get("phone") or summary.caller.get("email") or summary.caller.get("name")
-                ):
+                # 1. Persist caller as lead ONLY if valid phone number is available
+                clean_phone = None
+                if summary.caller and summary.caller.get("phone"):
+                    from src.database.repository import normalize_lead_phone
+                    clean_phone = normalize_lead_phone(summary.caller.get("phone"))
+
+                if clean_phone:
                     await self.postgres_repo.upsert_lead(
                         name=summary.caller.get("name"),
-                        phone_number=summary.caller.get("phone"),
+                        phone_number=clean_phone,
                         email=summary.caller.get("email"),
                         status=summary.business_status or "completed",
                         interested_in=summary.important_entities.get("course")

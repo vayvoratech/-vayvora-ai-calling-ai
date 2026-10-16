@@ -37,6 +37,9 @@ class CalendarEventRecord(BaseModel):
     description: str = Field(default="", description="Meeting description or notes")
     attendee_name: Optional[str] = Field(default=None, description="Attendee full name")
     attendee_email: Optional[str] = Field(default=None, description="Attendee email address")
+    phone_number: Optional[str] = Field(default=None, description="Caller normalized phone number")
+    lead_id: Optional[int] = Field(default=None, description="Associated CRM lead ID")
+    status: str = Field(default="confirmed", description="Appointment status")
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat(), description="Creation timestamp")
 
 
@@ -53,8 +56,20 @@ class CalendarProvider(ABC):
         description: str = "",
         attendee_name: Optional[str] = None,
         attendee_email: Optional[str] = None,
+        phone_number: Optional[str] = None,
+        lead_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Book a calendar event and return structured confirmation with event_id."""
+        pass
+
+    @abstractmethod
+    def delete_event(self, event_id: str) -> bool:
+        """Delete or cancel a calendar appointment by its external event identifier."""
+        pass
+
+    @abstractmethod
+    def get_event_by_id(self, event_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a specific calendar event by its identifier."""
         pass
 
     @abstractmethod
@@ -97,7 +112,7 @@ class FileCalendarProvider(CalendarProvider):
         self.settings = settings or get_settings()
         file_path_str = events_path or getattr(self.settings, "calendar_events_path", "data/events.json")
         self.file_path = Path(file_path_str).resolve()
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._ensure_storage_exists()
 
     def _ensure_storage_exists(self) -> None:
@@ -142,6 +157,8 @@ class FileCalendarProvider(CalendarProvider):
         description: str = "",
         attendee_name: Optional[str] = None,
         attendee_email: Optional[str] = None,
+        phone_number: Optional[str] = None,
+        lead_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         """Book an appointment, storing to JSON file and returning verified event_id."""
         if not title or not title.strip():
@@ -168,27 +185,30 @@ class FileCalendarProvider(CalendarProvider):
                 if not date_str.strip() or not time_str.strip():
                     raise ValueError("Invalid date or time format.")
 
-        events = self._load_events()
-        event_num = len(events) + 1
-        event_id = f"evt_cal_{event_num}_{uuid.uuid4().hex[:6]}"
+        with self._lock:
+            events = self._load_events()
+            event_num = len(events) + 1
+            event_id = f"evt_cal_{event_num}_{uuid.uuid4().hex[:6]}"
 
-        new_record: Dict[str, Any] = {
-            "id": event_id,
-            "event_id": event_id,
-            "numeric_id": event_num,
-            "title": title.strip(),
-            "date": effective_date or (effective_slot.split()[0] if effective_slot else "Upcoming"),
-            "time": effective_time or (" ".join(effective_slot.split()[1:]) if " " in effective_slot else effective_slot),
-            "slot": effective_slot,
-            "description": description.strip(),
-            "attendee_name": attendee_name,
-            "attendee_email": attendee_email,
-            "created_at": datetime.now().isoformat(),
-            "status": "confirmed",
-        }
+            new_record: Dict[str, Any] = {
+                "id": event_id,
+                "event_id": event_id,
+                "numeric_id": event_num,
+                "title": title.strip(),
+                "date": effective_date or (effective_slot.split()[0] if effective_slot else "Upcoming"),
+                "time": effective_time or (" ".join(effective_slot.split()[1:]) if " " in effective_slot else effective_slot),
+                "slot": effective_slot,
+                "description": description.strip(),
+                "attendee_name": attendee_name,
+                "attendee_email": attendee_email,
+                "phone_number": phone_number,
+                "lead_id": lead_id,
+                "created_at": datetime.now().isoformat(),
+                "status": "confirmed",
+            }
 
-        events.append(new_record)
-        self._save_events(events)
+            events.append(new_record)
+            self._save_events(events)
 
         logger.info("Calendar event successfully created with ID '%s': %s", event_id, title)
         return {
@@ -201,6 +221,40 @@ class FileCalendarProvider(CalendarProvider):
             "time": new_record["time"],
             "message": f"Successfully scheduled '{title}' on {new_record['date']} at {new_record['time']}.",
         }
+
+    def delete_event(self, event_id: str) -> bool:
+        """Delete an event from JSON storage by its external event_id or id.
+
+        Returns True if the event was found and deleted, or False if already absent.
+        """
+        if not event_id or not str(event_id).strip():
+            return False
+
+        target = str(event_id).strip()
+        with self._lock:
+            events = self._load_events()
+            initial_count = len(events)
+            filtered = [
+                e for e in events
+                if str(e.get("event_id") or e.get("id")).strip() != target
+            ]
+            if len(filtered) == initial_count:
+                logger.info("Event %s not found in calendar file; already absent.", target)
+                return False
+            self._save_events(filtered)
+            logger.info("Successfully deleted event %s from calendar persistence.", target)
+            return True
+
+    def get_event_by_id(self, event_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a specific event from persistence by its identifier."""
+        if not event_id or not str(event_id).strip():
+            return None
+        target = str(event_id).strip()
+        events = self._load_events()
+        for e in events:
+            if str(e.get("event_id") or e.get("id")).strip() == target:
+                return dict(e)
+        return None
 
     def get_events(self) -> List[Dict[str, Any]]:
         """Retrieve all scheduled events from persistence."""
@@ -273,6 +327,8 @@ class MockCalendarProvider(CalendarProvider):
         description: str = "",
         attendee_name: Optional[str] = None,
         attendee_email: Optional[str] = None,
+        phone_number: Optional[str] = None,
+        lead_id: Optional[int] = None,
     ) -> Dict[str, Any]:
         if self.force_failure:
             raise RuntimeError("Simulated calendar provider outage")
@@ -291,6 +347,10 @@ class MockCalendarProvider(CalendarProvider):
             "date": date_str or "Tomorrow",
             "time": time_str or "10:00 AM",
             "description": description,
+            "attendee_name": attendee_name,
+            "attendee_email": attendee_email,
+            "phone_number": phone_number,
+            "lead_id": lead_id,
             "status": "confirmed",
         }
         self.events.append(record)
@@ -302,6 +362,24 @@ class MockCalendarProvider(CalendarProvider):
             "slot": effective_slot,
             "message": f"Successfully scheduled '{title}' for {effective_slot}.",
         }
+
+    def delete_event(self, event_id: str) -> bool:
+        if self.force_failure:
+            raise RuntimeError("Simulated calendar provider outage during deletion")
+        target = str(event_id or "").strip()
+        initial_len = len(self.events)
+        self.events = [
+            e for e in self.events
+            if str(e.get("event_id") or e.get("id")).strip() != target
+        ]
+        return len(self.events) < initial_len
+
+    def get_event_by_id(self, event_id: str) -> Optional[Dict[str, Any]]:
+        target = str(event_id or "").strip()
+        for e in self.events:
+            if str(e.get("event_id") or e.get("id")).strip() == target:
+                return dict(e)
+        return None
 
     def get_events(self) -> List[Dict[str, Any]]:
         return list(self.events)

@@ -53,6 +53,7 @@ class GeminiLLMProvider(LLMProvider):
         self.model = self.settings.gemini_model
         self.timeout = self.settings.gemini_timeout_seconds
         self.temperature = self.settings.gemini_temperature
+        self.max_decision_tokens = getattr(self.settings, "gemini_max_decision_tokens", 512)
         self._client = client
         self.validator = DecisionValidator()
 
@@ -233,6 +234,7 @@ class GeminiLLMProvider(LLMProvider):
             "generationConfig": {
                 "temperature": self.temperature,
                 "responseMimeType": "application/json",
+                "maxOutputTokens": self.max_decision_tokens,
             },
         }
 
@@ -241,13 +243,24 @@ class GeminiLLMProvider(LLMProvider):
             try:
                 response = await self._send_request(payload, stream=False)
                 data = response.json()
-                text = data["candidates"][0]["content"]["parts"][0]["text"]
+                candidates = data.get("candidates", [])
+                if not candidates:
+                    raise LLMMalformedResponseError("No candidates returned by Gemini.")
+                candidate = candidates[0]
+                if candidate.get("finishReason") == "MAX_TOKENS":
+                    raise LLMMalformedResponseError(
+                        "Gemini decision output was truncated (finishReason=MAX_TOKENS)."
+                    )
+                text = candidate["content"]["parts"][0]["text"]
                 clean_json = extract_json_block(text)
                 decision_dict = json.loads(clean_json)
                 decision = ConversationalDecision.model_validate(decision_dict)
                 return self.validator.validate_and_filter(decision)
-            except (json.JSONDecodeError, KeyError, IndexError) as exc:
-                last_error = LLMMalformedResponseError(f"Could not parse valid JSON from LLM: {exc}")
+            except (json.JSONDecodeError, KeyError, IndexError, LLMMalformedResponseError) as exc:
+                if isinstance(exc, LLMMalformedResponseError):
+                    last_error = exc
+                else:
+                    last_error = LLMMalformedResponseError(f"Could not parse valid JSON from LLM: {exc}")
                 logger.warning("Malformed JSON on attempt %d: %s", attempt + 1, exc)
             except Exception as exc:
                 last_error = exc
@@ -263,9 +276,11 @@ class MockLLMProvider(LLMProvider):
         self,
         canned_responses: Optional[List[str]] = None,
         canned_decisions: Optional[List[ConversationalDecision]] = None,
+        canned_streams: Optional[List[List[str]]] = None,
     ) -> None:
         self.canned_responses = list(canned_responses or [])
         self.canned_decisions = list(canned_decisions or [])
+        self.canned_streams = list(canned_streams or [])
         self.invocations: List[Dict[str, Any]] = []
         self.validator = DecisionValidator()
 
@@ -276,6 +291,10 @@ class MockLLMProvider(LLMProvider):
     def add_decision(self, decision: ConversationalDecision) -> None:
         """Queue a canned structured ConversationalDecision."""
         self.canned_decisions.append(decision)
+
+    def add_stream(self, stream_chunks: List[str]) -> None:
+        """Queue a canned list of incremental token fragments."""
+        self.canned_streams.append(list(stream_chunks))
 
     async def generate_response(
         self,
@@ -298,6 +317,18 @@ class MockLLMProvider(LLMProvider):
         system_instruction: Optional[str] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncIterator[str]:
+        self.invocations.append({
+            "prompt": prompt,
+            "system_instruction": system_instruction,
+            "tools": tools,
+            "streaming": True,
+        })
+        if self.canned_streams:
+            chunks = self.canned_streams.pop(0)
+            for chunk in chunks:
+                yield chunk
+            return
+
         response = await self.generate_response(prompt, system_instruction, tools)
         words = response.split(" ")
         for word in words:

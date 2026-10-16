@@ -230,11 +230,6 @@ class HuggingFaceLLMProvider(LLMProvider):
 
             The JSON object MUST contain:
 
-            "detected_domain":
-                exactly one of:
-                "infra_builder"
-                "general"
-
             "proposed_stage":
                 exactly one of:
                 "greeting"
@@ -250,11 +245,8 @@ class HuggingFaceLLMProvider(LLMProvider):
                 "completed"
 
             "detected_intent":
-                a short lowercase intent identifier appropriate for the detected domain,
+                a short lowercase intent identifier appropriate for the active domain,
                 or null if no specific intent can be determined.
-
-            "detected_sub_intent":
-                a short lowercase sub-intent identifier, or null.
 
             "extracted_slots":
                 JSON object containing only entities actually present in the conversation.
@@ -272,9 +264,6 @@ class HuggingFaceLLMProvider(LLMProvider):
                 - Do NOT invent facts or properties.
                 - If knowledge_required is false, set to null.
 
-            "action_proposed":
-                true only when an external action is genuinely needed and recipient details are available.
-
             "proposed_action":
                 an action object or null.
                 If present, "tool_name" MUST be strictly one of:
@@ -289,41 +278,27 @@ class HuggingFaceLLMProvider(LLMProvider):
 
             "needs_clarification":
                 true only when the caller's request is genuinely ambiguous.
-
-            "clarification_question":
-                clarification question or null.
-
-            "suggested_termination":
-                true only when the caller explicitly indicates they want to end
-                the conversation.
+                When true, formulate user_facing_response directly as the clarification question.
 
             "user_facing_response":
                 the natural response that should be given to the caller.
 
-            IMPORTANT DOMAIN RULES:
+            IMPORTANT RULES:
 
-            - Infra Builder is represented only by "infra_builder".
-            - General/unknown requests use "general".
-            - Never use descriptions such as "Real Estate Services" as a domain.
             - Never use descriptions such as "Initial information request" as a stage.
             - Use the exact enum strings above.
 
             EXAMPLE:
 
             {{
-                "detected_domain": "infra_builder",
                 "detected_intent": "property_inquiry",
-                "detected_sub_intent": "project_overview",
                 "extracted_slots": {{"project_name": "Skyline Towers"}},
                 "proposed_stage": "information",
                 "user_facing_response": "Skyline Towers in Whitefield offers premium 2 and 3 BHK luxury apartments starting from 1.2 Crores with modern amenities and possession by December 2026.",
                 "knowledge_required": true,
                 "knowledge_query": "Skyline Towers Whitefield 2 BHK 3 BHK pricing amenities possession",
-                "action_proposed": false,
                 "proposed_action": null,
-                "needs_clarification": false,
-                "clarification_question": null,
-                "suggested_termination": false
+                "needs_clarification": false
             }}
             """
         last_error: Optional[Exception] = None

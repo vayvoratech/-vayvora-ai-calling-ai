@@ -53,6 +53,12 @@ class TurnLatencyTracker:
     t12_tts_first_audio: Optional[float] = None
     t13_first_audio_sent: Optional[float] = None
 
+    # Streaming monotonic timestamps (Phase 5C)
+    t_grounded_synth_start: Optional[float] = None
+    t_first_grounded_phrase: Optional[float] = None
+    t_grounded_gen_end: Optional[float] = None
+    t_tts_complete: Optional[float] = None
+
     # Contextual metadata
     domain: str = ""
     intent: str = ""
@@ -106,6 +112,19 @@ class TurnLatencyTracker:
         if self.t13_first_audio_sent is None:
             self.t13_first_audio_sent = ts or time.perf_counter()
 
+    def mark_grounded_synth_start(self, ts: Optional[float] = None) -> None:
+        self.t_grounded_synth_start = ts or time.perf_counter()
+
+    def mark_first_grounded_phrase(self, ts: Optional[float] = None) -> None:
+        if self.t_first_grounded_phrase is None:
+            self.t_first_grounded_phrase = ts or time.perf_counter()
+
+    def mark_grounded_gen_end(self, ts: Optional[float] = None) -> None:
+        self.t_grounded_gen_end = ts or time.perf_counter()
+
+    def mark_tts_complete(self, ts: Optional[float] = None) -> None:
+        self.t_tts_complete = ts or time.perf_counter()
+
     @property
     def vad_latency_ms(self) -> float:
         if self.t0_speech_start and self.t1_speech_end:
@@ -144,12 +163,87 @@ class TurnLatencyTracker:
 
     @property
     def total_time_to_first_audio_ms(self) -> float:
-        """Measure speech_end -> first_audio sent (or first audio produced)."""
+        """Measure speech_end / stt_end -> first_audio sent (or first audio produced)."""
         ref_end = self.t13_first_audio_sent or self.t12_tts_first_audio or self.t10_response_ready
-        ref_start = self.t1_speech_end or self.t2_stt_start
+        ref_start = self.t3_stt_end or self.t1_speech_end or self.t2_stt_start or self.t4_decision_start
         if ref_start and ref_end and ref_end >= ref_start:
             return round((ref_end - ref_start) * 1000, 2)
         return 0.0
+
+    @property
+    def time_to_first_grounded_phrase_ms(self) -> float:
+        """Measure grounded synthesis start -> first grounded phrase emitted."""
+        if self.t_first_grounded_phrase and self.t_grounded_synth_start:
+            return round((self.t_first_grounded_phrase - self.t_grounded_synth_start) * 1000, 2)
+        return 0.0
+
+    @property
+    def tts_phrase_to_first_audio_ms(self) -> float:
+        """Measure first grounded phrase -> first audio sent (TTS delivery latency)."""
+        ref_phrase = self.t_first_grounded_phrase or self.t11_tts_start
+        ref_audio = self.t13_first_audio_sent or self.t12_tts_first_audio
+        if ref_phrase and ref_audio and ref_audio >= ref_phrase:
+            return round((ref_audio - ref_phrase) * 1000, 2)
+        return 0.0
+
+    @property
+    def streaming_overlap(self) -> bool:
+        """True if first audio frame was delivered to client before grounded text generation concluded."""
+        return bool(
+            self.t13_first_audio_sent
+            and self.t_grounded_gen_end
+            and self.t13_first_audio_sent < self.t_grounded_gen_end
+        )
+
+    @property
+    def total_response_time_ms(self) -> float:
+        """Total turn time from user speech/turn start to TTS audio completion."""
+        ref_start = self.t3_stt_end or self.t1_speech_end or self.t2_stt_start or self.t4_decision_start
+        ref_end = self.t_tts_complete or self.t13_first_audio_sent or self.t10_response_ready
+        if ref_start and ref_end and ref_end >= ref_start:
+            return round((ref_end - ref_start) * 1000, 2)
+        return 0.0
+
+    # Monotonic benchmark timestamp aliases (T0 - T9)
+    @property
+    def t0_turn_start(self) -> Optional[float]:
+        return self.t3_stt_end or self.t1_speech_end or self.t4_decision_start
+
+    @property
+    def t1_decision_start(self) -> Optional[float]:
+        return self.t4_decision_start
+
+    @property
+    def t2_decision_end(self) -> Optional[float]:
+        return self.t5_decision_end
+
+    @property
+    def t3_retrieval_start(self) -> Optional[float]:
+        return self.t6_rag_start
+
+    @property
+    def t4_retrieval_end(self) -> Optional[float]:
+        return self.t7_rag_end
+
+    @property
+    def t5_grounded_synth_start(self) -> Optional[float]:
+        return self.t_grounded_synth_start
+
+    @property
+    def t6_first_grounded_phrase(self) -> Optional[float]:
+        return self.t_first_grounded_phrase
+
+    @property
+    def t7_first_audio_sent(self) -> Optional[float]:
+        return self.t13_first_audio_sent
+
+    @property
+    def t8_grounded_gen_end(self) -> Optional[float]:
+        return self.t_grounded_gen_end
+
+    @property
+    def t9_playback_complete(self) -> Optional[float]:
+        return self.t_tts_complete
 
     def to_dict(self) -> Dict[str, Any]:
         """Export serialized latency metrics dict."""
@@ -167,7 +261,21 @@ class TurnLatencyTracker:
             "rag_latency_ms": self.rag_latency_ms,
             "tool_latency_ms": self.tool_latency_ms,
             "tts_first_audio_latency_ms": self.tts_first_audio_latency_ms,
+            "tts_phrase_to_first_audio_ms": self.tts_phrase_to_first_audio_ms,
             "speech_end_to_first_audio_ms": self.total_time_to_first_audio_ms,
+            "time_to_first_grounded_phrase_ms": self.time_to_first_grounded_phrase_ms,
+            "streaming_overlap": self.streaming_overlap,
+            "total_response_time_ms": self.total_response_time_ms,
+            "t0_turn_start": self.t0_turn_start,
+            "t1_decision_start": self.t1_decision_start,
+            "t2_decision_end": self.t2_decision_end,
+            "t3_retrieval_start": self.t3_retrieval_start,
+            "t4_retrieval_end": self.t4_retrieval_end,
+            "t5_grounded_synth_start": self.t5_grounded_synth_start,
+            "t6_first_grounded_phrase": self.t6_first_grounded_phrase,
+            "t7_first_audio_sent": self.t7_first_audio_sent,
+            "t8_grounded_gen_end": self.t8_grounded_gen_end,
+            "t9_playback_complete": self.t9_playback_complete,
         }
 
     def log_summary(self) -> None:

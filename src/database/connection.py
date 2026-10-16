@@ -94,7 +94,12 @@ class DatabasePool:
         lock = self._get_lock()
         async with lock:
             if self._engine is None:
-                logger.info("Initializing SQLAlchemy async engine for %s", self.url)
+                logger.info(
+                    "Initializing SQLAlchemy async engine for PostgreSQL at %s:%s/%s",
+                    self.settings.postgres_host,
+                    self.settings.postgres_port,
+                    self.settings.postgres_db,
+                )
                 self._engine = create_async_engine(
                     self.url,
                     pool_pre_ping=True,
